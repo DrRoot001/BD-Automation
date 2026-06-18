@@ -1,30 +1,28 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import settings
 
-def create_app() -> FastAPI:
-    app = FastAPI(
-        title=settings.APP_NAME,
-        description="FastAPI Central Orchestrator for BD Automator Agent",
-        version="1.0.0",
-    )
+from app.routers import candidates, resumes, jobs, applications, analytics, auth, companies
 
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+app = FastAPI(title="BD Automation API", version="1.0.0")
 
-    @app.get("/api/health")
-    def health_check():
-        return {"status": "ok", "app_name": settings.APP_NAME}
+# CORS — Module 5 (Next.js frontend) needs this
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-    # Routers will be registered here by team members
-    # app.include_router(candidates.router, prefix="/api/candidates", tags=["Candidates"])
-    # app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
-    
-    return app
+# Register all routers
+app.include_router(auth.router)
+app.include_router(candidates.router)
+app.include_router(resumes.router)
+app.include_router(jobs.router)
+app.include_router(applications.router)
+app.include_router(analytics.router)
+app.include_router(companies.router)
 
-app = create_app()
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok", "module": "data_orchestration"}

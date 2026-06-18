@@ -72,6 +72,7 @@ class CandidateBase(BaseModel):
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
 
+
 class Candidate(CandidateBase):
     id: UUID
     created_at: datetime

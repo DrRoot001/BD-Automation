@@ -11,8 +11,5 @@ celery[redis]==5.*
 redis[hiredis]
 python-multipart
 pgvector
-google-auth>=2.0
-google-api-python-client
-google-auth-oauthlib
-openai>=1.0
-websockets
+python-dotenv
+structlog
