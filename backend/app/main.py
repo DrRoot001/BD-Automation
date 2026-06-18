@@ -24,6 +24,13 @@ def create_app() -> FastAPI:
     # Routers will be registered here by team members
     # app.include_router(candidates.router, prefix="/api/candidates", tags=["Candidates"])
     # app.include_router(jobs.router, prefix="/api/jobs", tags=["Jobs"])
+    # Module2 integration
+    try:
+        from app.routers.module2_routes import router as module2_router
+        app.include_router(module2_router)
+    except Exception:
+        # ignore if module2 isn't available during imports
+        pass
     
     return app
 
