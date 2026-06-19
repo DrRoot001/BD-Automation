@@ -116,7 +116,7 @@ class ApplicationExecutor:
             }
             
             try:
-                async with httpx.AsyncClient(timeout=120.0) as client:
+                async with httpx.AsyncClient(timeout=300.0) as client:
                     m3_resp = await client.post(prepare_url, json=payload)
                     if m3_resp.status_code == 200:
                         m3_data = m3_resp.json()
