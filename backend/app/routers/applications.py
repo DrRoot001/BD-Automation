@@ -8,11 +8,52 @@ from app.database import get_db
 from app.redis_client import redis_client
 from app.models.application import Application
 from app.models.application_history import ApplicationHistory
-from app.schemas.application import StatusUpdateRequest, ApplicationResponse
+from app.schemas.application import StatusUpdateRequest, ApplicationResponse, ApplicationCreate
 from app.services.state_machine import validate_transition, InvalidTransitionError
 from app.services.events import publish_event
+from typing import List
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
+
+@router.post("", response_model=ApplicationResponse, status_code=201)
+async def create_application(
+    application: ApplicationCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    # Check if application already exists for this candidate and job
+    result = await db.execute(
+        select(Application).where(
+            (Application.candidate_id == application.candidate_id) &
+            (Application.job_id == application.job_id)
+        )
+    )
+    existing = result.scalar_one_or_none()
+    if existing:
+        return existing
+        
+    db_application = Application(**application.model_dump())
+    db.add(db_application)
+    await db.commit()
+    await db.refresh(db_application)
+    
+    # Audit history log
+    history = ApplicationHistory(
+        application_id=db_application.id,
+        from_status=None,
+        to_status=db_application.status,
+        metadata={"info": "Application created via API"}
+    )
+    db.add(history)
+    await db.commit()
+    
+    return db_application
+
+@router.get("", response_model=List[ApplicationResponse])
+async def list_applications(
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(select(Application))
+    return result.scalars().all()
 
 @router.patch("/{application_id}/status", response_model=ApplicationResponse)
 async def update_status(
@@ -40,6 +81,17 @@ async def update_status(
     app.status = update.status.value
     if update.status.value == "SUBMITTED":
         app.submitted_at = datetime.utcnow()
+        
+    if update.resume_id is not None:
+        app.resume_id = update.resume_id
+    if update.cover_letter_url is not None:
+        app.cover_letter_url = update.cover_letter_url
+    if update.fit_score is not None:
+        app.fit_score = update.fit_score
+    if update.ats_score is not None:
+        app.ats_score = update.ats_score
+    if update.combined_score is not None:
+        app.combined_score = update.combined_score
     
     # 4. Write audit history
     history = ApplicationHistory(
@@ -61,3 +113,51 @@ async def update_status(
     })
     
     return app
+
+
+from pydantic import BaseModel
+from typing import List, Dict, Optional
+
+class PreparePackageRequest(BaseModel):
+    candidate_id: str
+    job_id: str
+    needs_cover_letter: bool
+    screening_questions: List[str]
+
+class PreparePackageResponse(BaseModel):
+    should_apply: bool
+    reason: Optional[str] = None
+    resume_pdf_url: Optional[str] = None
+    cover_letter_pdf_url: Optional[str] = None
+    screening_answers: Optional[Dict[str, str]] = None
+
+@router.post("/prepare-package", response_model=PreparePackageResponse)
+async def prepare_package(request: PreparePackageRequest):
+    """
+    Synchronous endpoint for M4 to request custom tailored resume,
+    cover letter (if needed), and screening question answers.
+    """
+    from module3.orchestrator import prepare_package_for_live_application
+    try:
+        result = await prepare_package_for_live_application(
+            candidate_id=request.candidate_id,
+            job_id=request.job_id,
+            needs_cover_letter=request.needs_cover_letter,
+            screening_questions=request.screening_questions
+        )
+        return PreparePackageResponse(**result)
+    except ValueError as ve:
+        if "No base resume" in str(ve):
+            raise HTTPException(
+                status_code=422,
+                detail={"error": "no_base_resume", "message": str(ve)}
+            )
+        raise HTTPException(
+            status_code=400,
+            detail=str(ve)
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error preparing application package: {str(e)}"
+        )

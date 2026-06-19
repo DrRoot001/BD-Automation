@@ -1,3 +1,12 @@
+import sys
+import os
+from pathlib import Path
+
+# Add project root (parent of backend/) to sys.path so module3, module4, etc. are importable
+_project_root = str(Path(__file__).resolve().parent.parent.parent)
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import get_settings

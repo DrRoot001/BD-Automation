@@ -79,7 +79,6 @@ celerybeat.pid
 *.bak
 *.tmp
 
-alembic.ini
 !app/migrations/
 !app/migrations/env.py
 !app/migrations/script.py.mako

@@ -1,3 +1,4 @@
+import ssl
 from celery import Celery
 from app.config import get_settings
 
@@ -7,15 +8,11 @@ celery_app = Celery(
     "bd_automation",
     broker=settings.redis_url,
     backend=settings.redis_url,
+    broker_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE} if "rediss://" in settings.redis_url else None,
+    redis_backend_use_ssl={"ssl_cert_reqs": ssl.CERT_NONE} if "rediss://" in settings.redis_url else None,
     include=[
-        # Module 2 tasks (will be defined in M2, registered here)
         "app.tasks.job_discovery",
-        # Module 3 tasks
         "app.tasks.resume_generation",
-        # Module 4 tasks
-        "app.tasks.application_execution",
-        # Module 5 tasks
-        "app.tasks.email_scan",
     ]
 )
 

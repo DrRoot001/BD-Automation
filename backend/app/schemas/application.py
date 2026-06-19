@@ -23,6 +23,20 @@ class ApplicationStatus(str, Enum):
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus
     metadata: Optional[dict] = None
+    resume_id: Optional[UUID] = None
+    cover_letter_url: Optional[str] = None
+    fit_score: Optional[float] = None
+    ats_score: Optional[float] = None
+    combined_score: Optional[float] = None
+
+class ApplicationCreate(BaseModel):
+    candidate_id: UUID
+    job_id: UUID
+    status: Optional[ApplicationStatus] = ApplicationStatus.FOUND
+    resume_id: Optional[UUID] = None
+    fit_score: Optional[float] = None
+    ats_score: Optional[float] = None
+    combined_score: Optional[float] = None
 
 class ApplicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -39,4 +53,4 @@ class ApplicationResponse(BaseModel):
     error_message: Optional[str] = None
     retry_count: int
     created_at: datetime
-    updated_at: datetime
+    updated_at: Optional[datetime] = None
