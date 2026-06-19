@@ -23,7 +23,7 @@ class JobResponse(JobCreate):
     model_config = ConfigDict(from_attributes=True)
     
     id: UUID
-    is_duplicate: bool = False
+    is_duplicate: Optional[bool] = False
     duplicate_of: Optional[UUID] = None
     created_at: datetime
 
