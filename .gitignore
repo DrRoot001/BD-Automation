@@ -84,3 +84,15 @@ celerybeat.pid
 !app/migrations/script.py.mako
 !app/migrations/README
 !app/migrations/versions/*.py
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/package-lock.json
+
+# Old venv
+backend/venv_old/
+
+# Test screenshots
+screenshots/
+backend/app/scripts/screenshots/
