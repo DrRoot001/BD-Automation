@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    @page { size: A4; margin: 22mm 20mm 22mm 20mm; }
+    body { font-family: Georgia, "Times New Roman", serif; font-size: 11pt; color: #1a1a1a; line-height: 1.65; }
+    .salutation { font-size: 11pt; font-weight: bold; margin-bottom: 12pt; }
+    .body p { font-size: 11pt; text-align: justify; margin-bottom: 12pt; }
+    .sign-off { margin-top: 12pt; font-size: 11pt; margin-bottom: 2pt; }
+    .signature { font-weight: bold; font-size: 11pt; color: #1a3a5c; text-transform: uppercase; }
+  </style>
+</head>
+<body>
+  <div class="salutation">
+    Dear {{ letter.hiring_manager | default("Hiring Team") }},
+  </div>
+  <div class="body">
+    {% for paragraph in letter.paragraphs %}
+      <p>{{ paragraph }}</p>
+    {% endfor %}
+  </div>
+  <div class="sign-off">Sincerely,</div>
+  <div class="signature">{{ resume.basics.name }}</div>
+</body>
+</html>

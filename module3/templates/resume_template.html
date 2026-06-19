@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>
+    @page { size: A4; margin: 15mm 15mm 15mm 15mm; }
+    body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10pt; color: #000000; line-height: 1.4; }
+    .header { text-align: center; border-bottom: 1.5pt solid #000; padding-bottom: 8pt; margin-bottom: 12pt; }
+    .header h1 { font-size: 22pt; font-weight: bold; color: #000; margin: 0 0 4pt 0; }
+    .contact { font-size: 9pt; color: #333; }
+    .contact a { color: #333; text-decoration: none; }
+    .section { margin-bottom: 14pt; }
+    .section-title { font-size: 11pt; font-weight: bold; text-transform: uppercase; color: #000; border-bottom: 1pt solid #000; padding-bottom: 2pt; margin-bottom: 8pt; }
+    .summary { font-size: 9.5pt; text-align: justify; margin-top: 0; }
+    .skills-table { width: 100%; font-size: 9.5pt; border-collapse: collapse; }
+    .skills-table td { padding: 2pt 0; vertical-align: top; }
+    .skill-category { font-weight: bold; width: 25%; padding-right: 10pt; }
+    .item-block { margin-bottom: 10pt; }
+    .item-header { display: table; width: 100%; font-size: 10pt; margin-bottom: 2pt; }
+    .item-header-left { display: table-cell; text-align: left; font-weight: bold; }
+    .item-header-right { display: table-cell; text-align: right; white-space: nowrap; }
+    .item-sub { font-style: italic; font-size: 9.5pt; margin-bottom: 3pt; color: #333; }
+    .tech-used { font-size: 9pt; color: #444; margin-bottom: 4pt; }
+    .item-block ul { margin: 0 0 0 16pt; padding: 0; }
+    .item-block ul li { font-size: 9.5pt; margin-bottom: 3pt; text-align: justify; }
+    .edu-block { display: table; width: 100%; margin-bottom: 6pt; }
+    .edu-left { display: table-cell; text-align: left; }
+    .edu-right { display: table-cell; text-align: right; white-space: nowrap; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>{{ resume.basics.name }}</h1>
+    <div class="contact">
+      {% if resume.basics.location %}{{ resume.basics.location }} | {% endif %}
+      {{ resume.basics.email }}
+      {% if resume.basics.phone %} | {{ resume.basics.phone }}{% endif %}
+      {% if resume.basics.linkedin %} | {{ resume.basics.linkedin }}{% endif %}
+      {% if resume.basics.github_portfolio %} | {{ resume.basics.github_portfolio }}{% endif %}
+    </div>
+  </div>
+
+  {% if resume.summary %}
+  <div class="section">
+    <div class="section-title">Professional Summary</div>
+    <p class="summary">{{ resume.summary }}</p>
+  </div>
+  {% endif %}
+
+  {% if resume.skills and resume.skills|length > 0 %}
+  <div class="section">
+    <div class="section-title">Skills</div>
+    <table class="skills-table">
+      {% for skill_group in resume.skills %}
+      <tr>
+        <td class="skill-category">{{ skill_group.category }}:</td>
+        <td>{{ skill_group.keywords | join(', ') }}</td>
+      </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% endif %}
+
+  {% if resume.experience and resume.experience|length > 0 %}
+  <div class="section">
+    <div class="section-title">Professional Experience</div>
+    {% for job in resume.experience %}
+    <div class="item-block">
+      <div class="item-header">
+        <div class="item-header-left">{{ job.company }} {% if job.location %} | {{ job.location }}{% endif %}</div>
+        <div class="item-header-right">{{ job.date }}</div>
+      </div>
+      <div class="item-sub">{{ job.title }}</div>
+      {% if job.technologies_used and job.technologies_used|length > 0 %}
+      <div class="tech-used"><b>Technologies:</b> {{ job.technologies_used | join(', ') }}</div>
+      {% endif %}
+      {% if job.bullets and job.bullets|length > 0 %}
+      <ul>
+        {% for bullet in job.bullets %}
+          <li>{{ bullet }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if resume.projects and resume.projects|length > 0 %}
+  <div class="section">
+    <div class="section-title">Key Projects</div>
+    {% for project in resume.projects %}
+    <div class="item-block">
+      <div class="item-header">
+        <div class="item-header-left">{{ project.name }}</div>
+      </div>
+      {% if project.technologies_used and project.technologies_used|length > 0 %}
+      <div class="tech-used"><b>Technologies:</b> {{ project.technologies_used | join(', ') }}</div>
+      {% endif %}
+      {% if project.bullets and project.bullets|length > 0 %}
+      <ul>
+        {% for bullet in project.bullets %}
+          <li>{{ bullet }}</li>
+        {% endfor %}
+      </ul>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  {% if resume.certifications and resume.certifications|length > 0 %}
+  <div class="section">
+    <div class="section-title">Certifications</div>
+    <ul style="margin: 0 0 0 16pt; padding: 0;">
+      {% for cert in resume.certifications %}
+        <li style="font-size: 9.5pt; margin-bottom: 2pt;">{{ cert }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+  {% endif %}
+
+  {% if resume.education and resume.education|length > 0 %}
+  <div class="section">
+    <div class="section-title">Education</div>
+    {% for edu in resume.education %}
+    <div class="edu-block">
+      <div class="edu-left">
+        <b>{{ edu.institution }}</b><br>
+        {{ edu.degree }}
+      </div>
+      <div class="edu-right">{{ edu.date }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+</body>
+</html>
