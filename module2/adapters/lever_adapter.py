@@ -111,8 +111,14 @@ class LeverAdapter(BaseSourceAdapter):
         }
         req = Request(url, headers=headers)
         
+        import ssl
         try:
-            with urlopen(req, timeout=10) as response:
+            context = ssl._create_unverified_context()
+        except AttributeError:
+            context = None
+            
+        try:
+            with urlopen(req, timeout=10, context=context) as response:
                 content = response.read().decode("utf-8")
                 return json.loads(content)
         except (URLError, HTTPError) as e:

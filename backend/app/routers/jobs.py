@@ -8,7 +8,7 @@ from app.schemas.job import JobCreate, JobResponse
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
 
-@router.post("", status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=List[JobResponse], status_code=status.HTTP_201_CREATED)
 async def create_jobs(
     jobs: List[JobCreate],
     db: AsyncSession = Depends(get_db)
@@ -31,7 +31,7 @@ async def create_jobs(
     
     return created
 
-@router.get("")
+@router.get("", response_model=List[JobResponse])
 async def get_jobs(
     skip: int = 0,
     limit: int = 100,

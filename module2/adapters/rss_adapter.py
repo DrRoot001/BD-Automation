@@ -106,7 +106,18 @@ class RssAdapter(BaseSourceAdapter):
     @staticmethod
     def _fetch_feed(url: str) -> bytes:
         """Fetch RSS feed content."""
-        with urlopen(url, timeout=10) as response:
+        from urllib.request import Request
+        import ssl
+        try:
+            context = ssl._create_unverified_context()
+        except AttributeError:
+            context = None
+            
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+        req = Request(url, headers=headers)
+        with urlopen(req, timeout=10, context=context) as response:
             return response.read()
     
     @staticmethod

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 from datetime import datetime
 from typing import Optional, List
 from uuid import UUID
@@ -26,3 +26,12 @@ class JobResponse(JobCreate):
     is_duplicate: bool = False
     duplicate_of: Optional[UUID] = None
     created_at: datetime
+
+    @field_validator('embedding', mode='before')
+    @classmethod
+    def convert_embedding(cls, v):
+        if v is None:
+            return None
+        if hasattr(v, 'tolist'):
+            return v.tolist()
+        return v

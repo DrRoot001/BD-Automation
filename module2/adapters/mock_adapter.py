@@ -6,7 +6,7 @@ Useful for integration testing and demos.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List
 
 from .base import BaseSourceAdapter, RawJobData
@@ -25,7 +25,7 @@ class MockAdapter(BaseSourceAdapter):
     
     async def discover_jobs(self, filters: Dict[str, Any]) -> List[RawJobData]:
         """Return sample jobs for testing."""
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         
         sample_jobs = [
             RawJobData(

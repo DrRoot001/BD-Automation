@@ -1,11 +1,13 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.config import settings
+from app.config import get_settings
 from app.routers import candidates, resumes, jobs, applications, analytics, auth, companies
+
+settings = get_settings()
 
 def create_app() -> FastAPI:
     app = FastAPI(
-        title=settings.APP_NAME,
+        title="BD Automator API",
         description="FastAPI Central Orchestrator for BD Automator Agent",
         version="1.0.0",
     )
@@ -37,7 +39,7 @@ def create_app() -> FastAPI:
 
     @app.get("/api/health")
     def health_check():
-        return {"status": "ok", "app_name": settings.APP_NAME, "module": "data_orchestration"}
+        return {"status": "ok", "app_name": "BD Automator API", "module": "data_orchestration"}
         
     return app
 

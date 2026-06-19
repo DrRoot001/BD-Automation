@@ -4,7 +4,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 
 DB_PATH = Path(__file__).parent / "jobs.db"
@@ -12,7 +12,7 @@ DB_PATH = Path(__file__).parent / "jobs.db"
 class JobStore:
     def __init__(self, db_path: Optional[Path] = None):
         self.db_path = db_path or DB_PATH
-        self.conn = sqlite3.connect(str(self.db_path))
+        self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self._ensure_schema()
 
     def _ensure_schema(self):
@@ -53,7 +53,7 @@ class JobStore:
                 job.url,
                 job.canonical_url,
                 job.posted_at.isoformat() if job.posted_at else None,
-                datetime.utcnow().isoformat(),
+                datetime.now(timezone.utc).isoformat(),
                 job.salary_min,
                 job.salary_max,
                 job.pay_period,

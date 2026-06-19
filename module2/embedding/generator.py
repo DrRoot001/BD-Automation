@@ -44,8 +44,13 @@ def generate_embedding(texts: List[str]) -> List[List[float]]:
         # Use OpenAI embeddings API (text-embedding-3-small or similar)
         try:
             model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-            resp = openai.Embedding.create(model=model, input=texts)
-            return [r["embedding"] for r in resp["data"]]
+            if hasattr(openai, "OpenAI"):
+                client = openai.OpenAI()
+                resp = client.embeddings.create(model=model, input=texts)
+                return [r.embedding for r in resp.data]
+            else:
+                resp = openai.Embedding.create(model=model, input=texts)
+                return [r["embedding"] for r in resp["data"]]
         except Exception:
             # Fallback to pseudo
             return [_pseudo_embedding(t) for t in texts]
