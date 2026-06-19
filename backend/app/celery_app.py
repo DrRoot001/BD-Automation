@@ -1,3 +1,26 @@
+# Monkey patch redis.Redis and redis.client.PubSub to fix AttributeError: 'NoneType' object has no attribute '_sock' compatibility bug in Celery/Kombu with newer redis versions
+try:
+    import redis
+    class RedisConnectionProperty:
+        def __get__(self, instance, owner):
+            if instance is None:
+                return self
+            val = getattr(instance, '_patched_connection', None)
+            if val is None:
+                try:
+                    val = instance.connection_pool.get_connection()
+                    instance._patched_connection = val
+                except Exception:
+                    pass
+            return val
+        def __set__(self, instance, value):
+            instance._patched_connection = value
+
+    redis.Redis.connection = RedisConnectionProperty()
+    redis.client.PubSub.connection = RedisConnectionProperty()
+except Exception:
+    pass
+
 import ssl
 from celery import Celery
 from app.config import get_settings
@@ -13,6 +36,8 @@ celery_app = Celery(
     include=[
         "app.tasks.job_discovery",
         "app.tasks.resume_generation",
+        "app.tasks.browser_automation",
+        "app.tasks.email_scan",
     ]
 )
 

@@ -247,6 +247,9 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                 value_to_fill = special_values.get(matched_key, "")
             else:
                 value_to_fill = profile.get(matched_key, "")
+            
+            if matched_key == "linkedin_url" and not value_to_fill:
+                value_to_fill = "N/A"
             logger.debug(f"Rule match: '{label}' -> key '{matched_key}' -> value '{value_to_fill}'")
 
         # ── Step 2: Fall back to screening answers (fuzzy) ──

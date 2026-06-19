@@ -1,0 +1,213 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── CSS Variables ──────────────────────────────────────────────────────── */
+:root {
+  --bg-primary:   #0a0a0f;
+  --bg-secondary: #12121a;
+  --bg-card:      #16161f;
+  --bg-hover:     #1e1e2a;
+  --bg-border:    #252535;
+
+  --accent:       #6366f1;
+  --accent-light: #818cf8;
+  --accent-glow:  rgba(99, 102, 241, 0.25);
+
+  --success:      #10b981;
+  --warning:      #f59e0b;
+  --danger:       #ef4444;
+  --info:         #3b82f6;
+  --purple:       #a855f7;
+
+  --text-primary:   #f1f5f9;
+  --text-secondary: #94a3b8;
+  --text-muted:     #64748b;
+}
+
+/* ── Base ───────────────────────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: 'Inter', system-ui, sans-serif;
+  min-height: 100vh;
+  line-height: 1.6;
+}
+
+/* ── Scrollbar ──────────────────────────────────────────────────────────── */
+::-webkit-scrollbar       { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--bg-secondary); }
+::-webkit-scrollbar-thumb {
+  background: var(--bg-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover { background: #363650; }
+
+/* ── Selection ──────────────────────────────────────────────────────────── */
+::selection {
+  background: var(--accent-glow);
+  color: var(--text-primary);
+}
+
+/* ── Component Layers ───────────────────────────────────────────────────── */
+@layer components {
+
+  /* Cards */
+  .card {
+    @apply bg-bg-card border border-bg-border rounded-xl;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+  .card:hover {
+    box-shadow: 0 8px 40px rgba(0, 0, 0, 0.5);
+    border-color: #363650;
+  }
+
+  /* Accent glow card */
+  .card-glow {
+    @apply card;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4), 0 0 40px rgba(99, 102, 241, 0.08);
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-medium text-sm transition-all duration-200 cursor-pointer;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-white;
+    box-shadow: 0 0 20px rgba(99, 102, 241, 0.3);
+  }
+  .btn-primary:hover {
+    @apply bg-accent-dark;
+    box-shadow: 0 0 30px rgba(99, 102, 241, 0.5);
+    transform: translateY(-1px);
+  }
+  .btn-secondary {
+    @apply btn bg-bg-hover border border-bg-border text-text-secondary;
+  }
+  .btn-secondary:hover {
+    @apply border-accent text-accent;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent text-text-secondary;
+  }
+  .btn-ghost:hover {
+    @apply bg-bg-hover text-text-primary;
+  }
+  .btn-success {
+    @apply btn bg-success/10 text-success border border-success/20;
+  }
+  .btn-success:hover {
+    @apply bg-success/20;
+  }
+
+  /* Badges / Status chips */
+  .badge {
+    @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium;
+  }
+  .badge-confirmed    { @apply badge bg-info/10    text-info    border border-info/20;    }
+  .badge-submitted    { @apply badge bg-accent/10  text-accent  border border-accent/20;  }
+  .badge-queued       { @apply badge bg-warning/10 text-warning border border-warning/20; }
+  .badge-interview_r1 { @apply badge bg-purple/10  text-purple  border border-purple/20;  }
+  .badge-interview_r2 { @apply badge bg-purple/10  text-purple  border border-purple/20;  }
+  .badge-rejected     { @apply badge bg-danger/10  text-danger  border border-danger/20;  }
+  .badge-offer        { @apply badge bg-success/10 text-success border border-success/20; }
+  .badge-found        { @apply badge bg-bg-hover   text-text-muted; }
+
+  /* Stat number */
+  .stat-value {
+    @apply text-4xl font-bold tabular-nums;
+    background: linear-gradient(135deg, #f1f5f9 0%, #94a3b8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* Live dot */
+  .live-dot {
+    @apply w-2 h-2 rounded-full bg-success;
+    animation: dotPulse 1.4s ease-in-out infinite;
+    box-shadow: 0 0 6px rgba(16, 185, 129, 0.6);
+  }
+
+  /* Skeleton shimmer */
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      var(--bg-card) 25%,
+      var(--bg-hover) 50%,
+      var(--bg-card) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+
+  /* Table rows */
+  .table-row-hover {
+    @apply transition-colors duration-150;
+  }
+  .table-row-hover:hover {
+    background: rgba(99, 102, 241, 0.04);
+  }
+
+  /* Funnel bar */
+  .funnel-bar {
+    @apply rounded-lg transition-all duration-700 ease-out;
+    height: 36px;
+  }
+}
+
+/* ── Utilities ──────────────────────────────────────────────────────────── */
+@layer utilities {
+  .text-gradient-accent {
+    background: linear-gradient(135deg, #6366f1, #a855f7);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .text-gradient-success {
+    background: linear-gradient(135deg, #10b981, #34d399);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .border-glow {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent-glow);
+  }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+}
+
+/* ── Keyframes (referenced in Tailwind config) ──────────────────────────── */
+@keyframes dotPulse {
+  0%, 80%, 100% { transform: scale(0.8); opacity: 0.5; }
+  40%           { transform: scale(1);   opacity: 1;   }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0);    }
+}
+@keyframes numberCount {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0);   }
+}

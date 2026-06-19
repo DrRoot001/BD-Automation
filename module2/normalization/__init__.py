@@ -14,6 +14,7 @@ from .helpers import (
     extract_required_years,
     tokenize,
     is_remote_job,
+    is_usa_location,
 )
 
 __all__ = [
@@ -30,4 +31,5 @@ __all__ = [
     "extract_required_years",
     "tokenize",
     "is_remote_job",
+    "is_usa_location",
 ]

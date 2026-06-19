@@ -55,6 +55,19 @@ async def list_applications(
     result = await db.execute(select(Application))
     return result.scalars().all()
 
+@router.get("/{application_id}", response_model=ApplicationResponse)
+async def get_application(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(Application).where(Application.id == application_id)
+    )
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(404, "Application not found")
+    return app
+
 @router.patch("/{application_id}/status", response_model=ApplicationResponse)
 async def update_status(
     application_id: UUID,
@@ -92,6 +105,13 @@ async def update_status(
         app.ats_score = update.ats_score
     if update.combined_score is not None:
         app.combined_score = update.combined_score
+
+    # Store screenshot_url and error_message in local DB if present in metadata
+    meta = update.metadata or {}
+    if "screenshot_url" in meta and meta["screenshot_url"] is not None:
+        app.screenshot_url = meta["screenshot_url"]
+    if "error_message" in meta and meta["error_message"] is not None:
+        app.error_message = meta["error_message"]
     
     # 4. Write audit history
     history = ApplicationHistory(

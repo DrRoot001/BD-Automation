@@ -1524,6 +1524,17 @@ eval("\nmodule.exports = __webpack_require__(/*! ../../module.compiled */ \"(ssr
 
 /***/ }),
 
+/***/ "(ssr)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/ssr/react-jsx-dev-runtime.js":
+/*!***********************************************************************************************************!*\
+  !*** ./node_modules/next/dist/server/future/route-modules/app-page/vendored/ssr/react-jsx-dev-runtime.js ***!
+  \***********************************************************************************************************/
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+eval("\nmodule.exports = __webpack_require__(/*! ../../module.compiled */ \"(ssr)/./node_modules/next/dist/server/future/route-modules/app-page/module.compiled.js?e149\").vendored[\"react-ssr\"].ReactJsxDevRuntime;\n\n//# sourceMappingURL=react-jsx-dev-runtime.js.map//# sourceURL=[module]\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiKHNzcikvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L3NlcnZlci9mdXR1cmUvcm91dGUtbW9kdWxlcy9hcHAtcGFnZS92ZW5kb3JlZC9zc3IvcmVhY3QtanN4LWRldi1ydW50aW1lLmpzIiwibWFwcGluZ3MiOiJBQUFhO0FBQ2IseU1BQTBGOztBQUUxRiIsInNvdXJjZXMiOlsid2VicGFjazovL2JkLWF1dG9tYXRvci1kYXNoYm9hcmQvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L3NlcnZlci9mdXR1cmUvcm91dGUtbW9kdWxlcy9hcHAtcGFnZS92ZW5kb3JlZC9zc3IvcmVhY3QtanN4LWRldi1ydW50aW1lLmpzP2U5YmYiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5tb2R1bGUuZXhwb3J0cyA9IHJlcXVpcmUoXCIuLi8uLi9tb2R1bGUuY29tcGlsZWRcIikudmVuZG9yZWRbXCJyZWFjdC1zc3JcIl0uUmVhY3RKc3hEZXZSdW50aW1lO1xuXG4vLyMgc291cmNlTWFwcGluZ1VSTD1yZWFjdC1qc3gtZGV2LXJ1bnRpbWUuanMubWFwIl0sIm5hbWVzIjpbXSwic291cmNlUm9vdCI6IiJ9\n//# sourceURL=webpack-internal:///(ssr)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/ssr/react-jsx-dev-runtime.js\n");
+
+/***/ }),
+
 /***/ "(ssr)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/ssr/react-jsx-runtime.js":
 /*!*******************************************************************************************************!*\
   !*** ./node_modules/next/dist/server/future/route-modules/app-page/vendored/ssr/react-jsx-runtime.js ***!
@@ -1807,17 +1818,6 @@ module.exports = createProxy("/Users/sabihhaider/Documents/BD-Automator-Agent/fr
 
 /***/ }),
 
-/***/ "(rsc)/./node_modules/next/dist/client/components/default-layout.js":
-/*!********************************************************************!*\
-  !*** ./node_modules/next/dist/client/components/default-layout.js ***!
-  \********************************************************************/
-/***/ ((module, exports, __webpack_require__) => {
-
-"use strict";
-eval("\nObject.defineProperty(exports, \"__esModule\", ({\n    value: true\n}));\nObject.defineProperty(exports, \"default\", ({\n    enumerable: true,\n    get: function() {\n        return DefaultLayout;\n    }\n}));\nconst _interop_require_default = __webpack_require__(/*! @swc/helpers/_/_interop_require_default */ \"(rsc)/./node_modules/@swc/helpers/esm/_interop_require_default.js\");\nconst _jsxruntime = __webpack_require__(/*! react/jsx-runtime */ \"(rsc)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/rsc/react-jsx-runtime.js\");\nconst _react = /*#__PURE__*/ _interop_require_default._(__webpack_require__(/*! react */ \"(rsc)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/rsc/react.js\"));\nfunction DefaultLayout(param) {\n    let { children } = param;\n    return /*#__PURE__*/ (0, _jsxruntime.jsx)(\"html\", {\n        children: /*#__PURE__*/ (0, _jsxruntime.jsx)(\"body\", {\n            children: children\n        })\n    });\n}\nif ((typeof exports.default === \"function\" || typeof exports.default === \"object\" && exports.default !== null) && typeof exports.default.__esModule === \"undefined\") {\n    Object.defineProperty(exports.default, \"__esModule\", {\n        value: true\n    });\n    Object.assign(exports.default, exports);\n    module.exports = exports.default;\n} //# sourceMappingURL=default-layout.js.map\n//# sourceURL=[module]\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiKHJzYykvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L2NsaWVudC9jb21wb25lbnRzL2RlZmF1bHQtbGF5b3V0LmpzIiwibWFwcGluZ3MiOiI7Ozs7MkNBRUE7OztlQUF3QkE7Ozs7OzRFQUZOO0FBRUgsU0FBU0EsY0FBY0MsS0FJckM7SUFKcUMsTUFDcENDLFFBQVEsRUFHVCxHQUpxQ0Q7SUFLcEMsT0FDRSxXQURGLEdBQ0UsSUFBQUUsWUFBQUMsR0FBQSxFQUFDQyxRQUFBQTtrQkFDQyxrQkFBQUYsWUFBQUMsR0FBQSxFQUFDRSxRQUFBQTtzQkFBTUo7OztBQUdiIiwic291cmNlcyI6WyJ3ZWJwYWNrOi8vYmQtYXV0b21hdG9yLWRhc2hib2FyZC8uLi8uLi8uLi9zcmMvY2xpZW50L2NvbXBvbmVudHMvZGVmYXVsdC1sYXlvdXQudHN4PzRlNGMiXSwibmFtZXMiOlsiRGVmYXVsdExheW91dCIsInBhcmFtIiwiY2hpbGRyZW4iLCJfanN4cnVudGltZSIsImpzeCIsImh0bWwiLCJib2R5Il0sInNvdXJjZVJvb3QiOiIifQ==\n//# sourceURL=webpack-internal:///(rsc)/./node_modules/next/dist/client/components/default-layout.js\n");
-
-/***/ }),
-
 /***/ "(rsc)/./node_modules/next/dist/client/components/error-boundary.js":
 /*!********************************************************************!*\
   !*** ./node_modules/next/dist/client/components/error-boundary.js ***!
@@ -2050,6 +2050,17 @@ eval("\nif (false) {} else {\n    if (false) {} else {\n        if (true) {\n   
 
 "use strict";
 eval("\nmodule.exports = __webpack_require__(/*! ../../module.compiled */ \"(ssr)/./node_modules/next/dist/server/future/route-modules/app-page/module.compiled.js?d969\").vendored[\"react-rsc\"].ReactDOM;\n\n//# sourceMappingURL=react-dom.js.map//# sourceURL=[module]\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiKHJzYykvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L3NlcnZlci9mdXR1cmUvcm91dGUtbW9kdWxlcy9hcHAtcGFnZS92ZW5kb3JlZC9yc2MvcmVhY3QtZG9tLmpzIiwibWFwcGluZ3MiOiJBQUFhO0FBQ2IsK0xBQWdGOztBQUVoRiIsInNvdXJjZXMiOlsid2VicGFjazovL2JkLWF1dG9tYXRvci1kYXNoYm9hcmQvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L3NlcnZlci9mdXR1cmUvcm91dGUtbW9kdWxlcy9hcHAtcGFnZS92ZW5kb3JlZC9yc2MvcmVhY3QtZG9tLmpzPzBmMTciXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5tb2R1bGUuZXhwb3J0cyA9IHJlcXVpcmUoXCIuLi8uLi9tb2R1bGUuY29tcGlsZWRcIikudmVuZG9yZWRbXCJyZWFjdC1yc2NcIl0uUmVhY3RET007XG5cbi8vIyBzb3VyY2VNYXBwaW5nVVJMPXJlYWN0LWRvbS5qcy5tYXAiXSwibmFtZXMiOltdLCJzb3VyY2VSb290IjoiIn0=\n//# sourceURL=webpack-internal:///(rsc)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/rsc/react-dom.js\n");
+
+/***/ }),
+
+/***/ "(rsc)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.js":
+/*!***********************************************************************************************************!*\
+  !*** ./node_modules/next/dist/server/future/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.js ***!
+  \***********************************************************************************************************/
+/***/ ((module, __unused_webpack_exports, __webpack_require__) => {
+
+"use strict";
+eval("\nmodule.exports = __webpack_require__(/*! ../../module.compiled */ \"(ssr)/./node_modules/next/dist/server/future/route-modules/app-page/module.compiled.js?d969\").vendored[\"react-rsc\"].ReactJsxDevRuntime;\n\n//# sourceMappingURL=react-jsx-dev-runtime.js.map//# sourceURL=[module]\n//# sourceMappingURL=data:application/json;charset=utf-8;base64,eyJ2ZXJzaW9uIjozLCJmaWxlIjoiKHJzYykvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L3NlcnZlci9mdXR1cmUvcm91dGUtbW9kdWxlcy9hcHAtcGFnZS92ZW5kb3JlZC9yc2MvcmVhY3QtanN4LWRldi1ydW50aW1lLmpzIiwibWFwcGluZ3MiOiJBQUFhO0FBQ2IseU1BQTBGOztBQUUxRiIsInNvdXJjZXMiOlsid2VicGFjazovL2JkLWF1dG9tYXRvci1kYXNoYm9hcmQvLi9ub2RlX21vZHVsZXMvbmV4dC9kaXN0L3NlcnZlci9mdXR1cmUvcm91dGUtbW9kdWxlcy9hcHAtcGFnZS92ZW5kb3JlZC9yc2MvcmVhY3QtanN4LWRldi1ydW50aW1lLmpzP2YyZWMiXSwic291cmNlc0NvbnRlbnQiOlsiXCJ1c2Ugc3RyaWN0XCI7XG5tb2R1bGUuZXhwb3J0cyA9IHJlcXVpcmUoXCIuLi8uLi9tb2R1bGUuY29tcGlsZWRcIikudmVuZG9yZWRbXCJyZWFjdC1yc2NcIl0uUmVhY3RKc3hEZXZSdW50aW1lO1xuXG4vLyMgc291cmNlTWFwcGluZ1VSTD1yZWFjdC1qc3gtZGV2LXJ1bnRpbWUuanMubWFwIl0sIm5hbWVzIjpbXSwic291cmNlUm9vdCI6IiJ9\n//# sourceURL=webpack-internal:///(rsc)/./node_modules/next/dist/server/future/route-modules/app-page/vendored/rsc/react-jsx-dev-runtime.js\n");
 
 /***/ }),
 

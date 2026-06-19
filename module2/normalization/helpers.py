@@ -194,6 +194,83 @@ def tokenize(text: str) -> set[str]:
     return set(words)
 
 
+# ─── US State & Territory Abbreviations ───────────────────────────────────────
+_US_STATE_ABBREVS = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA",
+    "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD",
+    "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ",
+    "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC",
+    "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY",
+    # Territories
+    "DC", "PR", "GU", "VI", "AS", "MP",
+}
+
+_US_STATE_NAMES = {
+    "alabama", "alaska", "arizona", "arkansas", "california", "colorado",
+    "connecticut", "delaware", "florida", "georgia", "hawaii", "idaho",
+    "illinois", "indiana", "iowa", "kansas", "kentucky", "louisiana",
+    "maine", "maryland", "massachusetts", "michigan", "minnesota",
+    "mississippi", "missouri", "montana", "nebraska", "nevada",
+    "new hampshire", "new jersey", "new mexico", "new york",
+    "north carolina", "north dakota", "ohio", "oklahoma", "oregon",
+    "pennsylvania", "rhode island", "south carolina", "south dakota",
+    "tennessee", "texas", "utah", "vermont", "virginia",
+    "washington", "west virginia", "wisconsin", "wyoming",
+    # DC + territories
+    "district of columbia", "washington d.c.", "washington dc",
+    "puerto rico",
+}
+
+_US_KEYWORDS = {
+    "usa", "u.s.a.", "united states", "u.s.", "us ", "remote",
+    "anywhere in the us", "anywhere us", "work from home", "wfh",
+    "remote-friendly",
+}
+
+
+def is_usa_location(location: str) -> bool:
+    """Return True if the location string indicates a US-based job.
+
+    Handles:
+    - State abbreviations appended after a comma (e.g., "New York, NY")
+    - State full names anywhere in the string
+    - Remote / WFH positions (treated as US-eligible by default)
+    - Explicit "USA" / "United States" keywords
+    - Multi-location strings joined by ";" or "|"
+    """
+    if not location:
+        return False
+
+    loc_lower = location.lower().strip()
+
+    # Direct US keyword match
+    for kw in _US_KEYWORDS:
+        if kw in loc_lower:
+            return True
+
+    # Full state name anywhere in string
+    for state in _US_STATE_NAMES:
+        if state in loc_lower:
+            return True
+
+    # State abbreviation after comma — e.g., "New York, NY" or "Chicago, IL"
+    # Also handle multi-location strings like "New York, Ny; San Francisco, Ca"
+    # Split on common separators first
+    for segment in re.split(r"[;|]", location):
+        segment = segment.strip()
+        if "," in segment:
+            parts = [p.strip() for p in segment.split(",")]
+            for part in parts:
+                # 2-letter abbreviation
+                if len(part) == 2 and part.upper() in _US_STATE_ABBREVS:
+                    return True
+                # Title-cased abbreviation like "Ny" or "Ca" (from normalize_location)
+                if len(part) == 2 and part.upper() in _US_STATE_ABBREVS:
+                    return True
+
+    return False
+
+
 def is_remote_job(title: str, location: str, description: str) -> bool:
     """Determine if a job is remote.
     

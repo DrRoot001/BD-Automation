@@ -2,6 +2,8 @@
 
 Greenhouse provides a public JSON feed for company job boards.
 API: https://boards-api.greenhouse.io/v1/boards/{company}/jobs
+
+NOTE: Only US-based jobs (including Remote) are returned.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from urllib.error import URLError, HTTPError
 
 from .base import BaseSourceAdapter, RawJobData
 from .registry import register_adapter
+from module2.normalization.helpers import is_usa_location
 
 
 @register_adapter
@@ -59,6 +62,7 @@ class GreenhouseAdapter(BaseSourceAdapter):
             return []
         
         items = []
+        skipped_non_usa = 0
         for job_data in payload.get("jobs", []):
             title = job_data.get("title", "").strip()
             location_obj = job_data.get("location", {})
@@ -70,6 +74,12 @@ class GreenhouseAdapter(BaseSourceAdapter):
             if not title or not job_url:
                 continue
             
+            # ── USA-only enforcement ─────────────────────────────────────────
+            if not is_usa_location(location or ""):
+                skipped_non_usa += 1
+                continue
+            # ────────────────────────────────────────────────────────────────
+            
             items.append(RawJobData(
                 title=title,
                 company=company,
@@ -80,6 +90,9 @@ class GreenhouseAdapter(BaseSourceAdapter):
                 raw_json=job_data,
                 source_platform=self.platform_name,
             ))
+        
+        if skipped_non_usa:
+            print(f"[GreenhouseAdapter] Skipped {skipped_non_usa} non-USA jobs for {company}")
         
         return items
     

@@ -15,5 +15,6 @@ class Candidate(Base):
     tech_stack = Column(ARRAY(Text), nullable=False, default=list)
     years_exp = Column(Integer)
     linkedin_url = Column(String(500))
+    google_refresh_token = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

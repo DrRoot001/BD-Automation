@@ -4,6 +4,7 @@ from typing import Optional, List
 from uuid import UUID
 
 class CandidateCreate(BaseModel):
+    id: Optional[UUID] = None
     name: str
     email: str
     phone: Optional[str] = None
