@@ -21,6 +21,8 @@ class ApplicationStatus(str, Enum):
     INTERVIEW_R2 = 'INTERVIEW_R2'
     REJECTED = 'REJECTED'
     OFFER = 'OFFER'
+    FAILED = 'FAILED'
+    BLOCKED = 'BLOCKED'
 
 class EmailClassification(str, Enum):
     APPLIED_CONFIRMATION = 'APPLIED_CONFIRMATION'
@@ -34,18 +36,22 @@ class EmailClassification(str, Enum):
 # --- State Machine Configuration & Validator ---
 
 VALID_TRANSITIONS: Dict[ApplicationStatus, List[ApplicationStatus]] = {
-    ApplicationStatus.FOUND: [ApplicationStatus.ANALYZED],
-    ApplicationStatus.ANALYZED: [ApplicationStatus.MATCHED],
-    ApplicationStatus.MATCHED: [ApplicationStatus.RESUME_UPDATED],
-    ApplicationStatus.RESUME_UPDATED: [ApplicationStatus.COVER_LETTER_CREATED],
-    ApplicationStatus.COVER_LETTER_CREATED: [ApplicationStatus.QUEUED],
-    ApplicationStatus.QUEUED: [ApplicationStatus.APPLICATION_STARTED],
-    ApplicationStatus.APPLICATION_STARTED: [ApplicationStatus.FORM_COMPLETED, ApplicationStatus.QUEUED],
-    ApplicationStatus.FORM_COMPLETED: [ApplicationStatus.SUBMITTED, ApplicationStatus.QUEUED],
+    ApplicationStatus.FOUND: [ApplicationStatus.ANALYZED, ApplicationStatus.FAILED],
+    ApplicationStatus.ANALYZED: [ApplicationStatus.MATCHED, ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.FAILED],
+    ApplicationStatus.MATCHED: [ApplicationStatus.RESUME_UPDATED, ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
+    ApplicationStatus.RESUME_UPDATED: [ApplicationStatus.COVER_LETTER_CREATED, ApplicationStatus.FORM_COMPLETED, ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
+    ApplicationStatus.COVER_LETTER_CREATED: [ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
+    ApplicationStatus.QUEUED: [ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.FORM_COMPLETED, ApplicationStatus.FAILED],
+    ApplicationStatus.APPLICATION_STARTED: [ApplicationStatus.FORM_COMPLETED, ApplicationStatus.QUEUED, ApplicationStatus.ANALYZED, ApplicationStatus.FAILED, ApplicationStatus.BLOCKED],
+    ApplicationStatus.FORM_COMPLETED: [ApplicationStatus.SUBMITTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
     ApplicationStatus.SUBMITTED: [ApplicationStatus.CONFIRMED, ApplicationStatus.REJECTED],
     ApplicationStatus.CONFIRMED: [ApplicationStatus.INTERVIEW_R1, ApplicationStatus.REJECTED],
     ApplicationStatus.INTERVIEW_R1: [ApplicationStatus.INTERVIEW_R2, ApplicationStatus.REJECTED],
     ApplicationStatus.INTERVIEW_R2: [ApplicationStatus.OFFER, ApplicationStatus.REJECTED],
+    ApplicationStatus.FAILED: [],
+    ApplicationStatus.BLOCKED: [ApplicationStatus.QUEUED],
+    ApplicationStatus.REJECTED: [],
+    ApplicationStatus.OFFER: [],
 }
 
 class InvalidTransitionException(Exception):

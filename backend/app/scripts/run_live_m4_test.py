@@ -43,9 +43,9 @@ _root.setLevel(logging.DEBUG)
 _root.addHandler(_file_handler)
 _root.addHandler(_console_handler)
 
-# Enable DEBUG for module4 submodules so every fill/upload action is logged to file
-for _m in ("module4.adapters.greenhouse", "module4.forms.filler",
-           "module4.forms.uploader", "module4.forms.detector"):
+# Enable DEBUG for browser_automation submodules so every fill/upload action is logged to file
+for _m in ("app.browser_automation.adapters.greenhouse", "app.browser_automation.forms.filler",
+           "app.browser_automation.forms.uploader", "app.browser_automation.forms.detector"):
     logging.getLogger(_m).setLevel(logging.DEBUG)
 
 logger = logging.getLogger("run_live_m4_test")
@@ -120,7 +120,7 @@ async def run_test():
                 print(f"[TEST] No existing application found. Preparing to cleanup new application row ID: {APPLICATION_ID}")
 
         # 2. Trigger M4 ApplicationExecutor via direct import (runs Playwright + calls /prepare-package REST API)
-        from module4.services.executor import ApplicationExecutor, ApplicationPackage
+        from app.browser_automation.services.executor import ApplicationExecutor, ApplicationPackage
         
         REAL_RESUME = "/Users/sabihhaider/Documents/BD-Automator-Agent/Sabih Haider — Software Engineer _ Full-Stack Web Developer.pdf"
 
@@ -168,12 +168,15 @@ async def run_test():
             up_row = updated_res.fetchone()
             if up_row:
                 print("\n[DB VERIFICATION] Current Application Row in Supabase:")
-                print(f"  Status in DB: {up_row.status}")
+                print(f"  Executor-reported status: {result.status}")
+                print(f"  Actual DB status: {up_row.status}")
                 print(f"  Resume ID in DB: {up_row.resume_id}")
                 print(f"  Cover Letter URL in DB: {up_row.cover_letter_url}")
                 TAILORED_RESUME_ID = up_row.resume_id
+                assert result.status == up_row.status, f"Status mismatch: Executor-reported={result.status}, DB={up_row.status}"
             else:
                 print("\n[DB VERIFICATION] Warning: Application row not found in DB!")
+                raise AssertionError("Application row not found in DB at verification step!")
 
     finally:
         print("\n[TEST-CLEANUP] Initiating database cleanup...")

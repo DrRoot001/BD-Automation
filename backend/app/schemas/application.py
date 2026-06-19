@@ -19,6 +19,8 @@ class ApplicationStatus(str, Enum):
     INTERVIEW_R2 = "INTERVIEW_R2"
     REJECTED = "REJECTED"
     OFFER = "OFFER"
+    FAILED = "FAILED"
+    BLOCKED = "BLOCKED"
 
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus

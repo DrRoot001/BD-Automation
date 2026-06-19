@@ -21,7 +21,9 @@ CREATE TYPE application_status AS ENUM (
     'INTERVIEW_R1',
     'INTERVIEW_R2',
     'REJECTED',
-    'OFFER'
+    'OFFER',
+    'FAILED',
+    'BLOCKED'
 );
 
 CREATE TYPE email_classification AS ENUM (

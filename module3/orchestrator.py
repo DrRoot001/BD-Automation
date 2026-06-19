@@ -397,12 +397,14 @@ async def prepare_package_for_live_application(
 
         # 4. Locate or Create Application record
         app_id = None
+        current_status = "FOUND"
         resp = await client.get("/api/applications")
         if resp.status_code == 200:
             apps = resp.json()
             for app in apps:
                 if app["candidate_id"] == candidate_id and app["job_id"] == job_id:
                     app_id = app["id"]
+                    current_status = app.get("status", "FOUND")
                     break
         
         if not app_id:
@@ -418,55 +420,70 @@ async def prepare_package_for_live_application(
                 raise ValueError(f"Failed to create application record: {resp.text}")
             application = resp.json()
             app_id = application["id"]
+            current_status = "FOUND"
             print(f"[ORCHESTRATOR] Created application ID: {app_id}")
         else:
-            print(f"[ORCHESTRATOR] Found existing application ID: {app_id}")
+            print(f"[ORCHESTRATOR] Found existing application ID: {app_id} (status: {current_status})")
 
-        # 5. Run Fit Score & ATS match evaluation
-        print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
-        match_result = await score_job_fit(candidate, resume_data, job)
-        print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
-        
-        # Check Gate Threshold
-        if not match_result.should_apply:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
+        # ── EXECUTION-PHASE CHECK ────────────────────────────────────────────
+        # If the application is already in an active execution phase
+        # (M4 has already called APPLICATION_STARTED, or it is QUEUED/beyond),
+        # skip the scoring & status-rewind entirely — those transitions would
+        # be invalid and would undo M4's APPLICATION_STARTED transition.
+        EXECUTION_PHASE_STATUSES = {
+            "APPLICATION_STARTED", "FORM_COMPLETED", "SUBMITTED",
+            "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2", "OFFER", "REJECTED"
+        }
+        skip_scoring = current_status in EXECUTION_PHASE_STATUSES
+        if skip_scoring:
+            print(f"[ORCHESTRATOR] Application already in execution phase '{current_status}' — skipping scoring/transition steps.")
+
+        if not skip_scoring:
+            # 5. Run Fit Score & ATS match evaluation
+            print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
+            match_result = await score_job_fit(candidate, resume_data, job)
+            print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
             
-            # Transition to ANALYZED
+            # Check Gate Threshold
+            if not match_result.should_apply:
+                print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
+                
+                # Transition to ANALYZED
+                update_payload = {
+                    "status": "ANALYZED",
+                    "fit_score": match_result.fit_score,
+                    "ats_score": match_result.ats_score,
+                    "combined_score": match_result.combined_score,
+                    "metadata": {"reason": "Combined score below threshold gate", "explanation": match_result.reasoning}
+                }
+                await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+                
+                return {
+                    "should_apply": False,
+                    "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 70: {match_result.reasoning}"
+                }
+
+            # Transition to ANALYZED since combined_score >= 70
+            print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'ANALYZED'...")
             update_payload = {
                 "status": "ANALYZED",
                 "fit_score": match_result.fit_score,
                 "ats_score": match_result.ats_score,
                 "combined_score": match_result.combined_score,
-                "metadata": {"reason": "Combined score below threshold gate", "explanation": match_result.reasoning}
+                "metadata": {"explanation": match_result.reasoning}
             }
             await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-            
-            return {
-                "should_apply": False,
-                "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 70: {match_result.reasoning}"
+
+            # Transition to MATCHED
+            print("[ORCHESTRATOR] Transitioning status to 'MATCHED'...")
+            update_payload = {
+                "status": "MATCHED",
+                "fit_score": match_result.fit_score,
+                "ats_score": match_result.ats_score,
+                "combined_score": match_result.combined_score,
+                "metadata": {"explanation": match_result.reasoning}
             }
-
-        # Transition to ANALYZED since combined_score >= 70
-        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'ANALYZED'...")
-        update_payload = {
-            "status": "ANALYZED",
-            "fit_score": match_result.fit_score,
-            "ats_score": match_result.ats_score,
-            "combined_score": match_result.combined_score,
-            "metadata": {"explanation": match_result.reasoning}
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-
-        # Transition to MATCHED
-        print("[ORCHESTRATOR] Transitioning status to 'MATCHED'...")
-        update_payload = {
-            "status": "MATCHED",
-            "fit_score": match_result.fit_score,
-            "ats_score": match_result.ats_score,
-            "combined_score": match_result.combined_score,
-            "metadata": {"explanation": match_result.reasoning}
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         # 6. Check if tailored resume already exists for this job
         tailored_resume_id = None
@@ -519,16 +536,17 @@ async def prepare_package_for_live_application(
             tailored_db_resume = resp.json()
             tailored_resume_id = tailored_db_resume["id"]
             
-            # Update application status to RESUME_UPDATED
-            update_payload = {
-                "status": "RESUME_UPDATED",
-                "resume_id": tailored_resume_id,
-                "metadata": {
-                    "ats_score_before": tailored_resume.ats_score_before,
-                    "ats_score_after": tailored_resume.ats_score_after
+            # Update application status to RESUME_UPDATED (only if not already in execution phase)
+            if not skip_scoring:
+                update_payload = {
+                    "status": "RESUME_UPDATED",
+                    "resume_id": tailored_resume_id,
+                    "metadata": {
+                        "ats_score_before": tailored_resume.ats_score_before,
+                        "ats_score_after": tailored_resume.ats_score_after
+                    }
                 }
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+                await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         # 7. Generate Cover Letter only if needs_cover_letter is True
         cover_letter_url = None
@@ -552,14 +570,15 @@ async def prepare_package_for_live_application(
             print(f"[ORCHESTRATOR] Answering {len(screening_questions)} screening questions...")
             screening_answers = await answer_screening_questions(screening_questions, resume_data, job, candidate)
             
-        # Update application status to QUEUED
-        update_payload = {
-            "status": "QUEUED",
-            "metadata": {
-                "screening_answers": screening_answers
+        # Update application status to QUEUED (only if not in an active execution phase)
+        if not skip_scoring:
+            update_payload = {
+                "status": "QUEUED",
+                "metadata": {
+                    "screening_answers": screening_answers
+                }
             }
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         return {
             "should_apply": True,

@@ -2,18 +2,23 @@ from fastapi import HTTPException
 from app.schemas.application import ApplicationStatus
 
 VALID_TRANSITIONS: dict[str, list[str]] = {
-    "FOUND": ["ANALYZED"],
-    "ANALYZED": ["MATCHED"],
-    "MATCHED": ["RESUME_UPDATED"],
-    "RESUME_UPDATED": ["COVER_LETTER_CREATED"],
-    "COVER_LETTER_CREATED": ["QUEUED"],
-    "QUEUED": ["APPLICATION_STARTED", "FORM_COMPLETED"],
-    "APPLICATION_STARTED": ["FORM_COMPLETED", "QUEUED", "ANALYZED"],
-    "FORM_COMPLETED": ["SUBMITTED", "QUEUED"],
-    "SUBMITTED": ["CONFIRMED", "REJECTED"],
-    "CONFIRMED": ["INTERVIEW_R1", "REJECTED"],
-    "INTERVIEW_R1": ["INTERVIEW_R2", "REJECTED"],
-    "INTERVIEW_R2": ["OFFER", "REJECTED"],
+    "FOUND":               ["ANALYZED", "FAILED"],
+    "ANALYZED":            ["MATCHED", "APPLICATION_STARTED", "FAILED"],
+    "MATCHED":             ["RESUME_UPDATED", "APPLICATION_STARTED", "QUEUED", "FAILED"],
+    "RESUME_UPDATED":      ["COVER_LETTER_CREATED", "FORM_COMPLETED", "APPLICATION_STARTED", "QUEUED", "FAILED"],
+    "COVER_LETTER_CREATED":["QUEUED", "FAILED"],
+    "QUEUED":              ["APPLICATION_STARTED", "FORM_COMPLETED", "FAILED"],
+    "APPLICATION_STARTED": ["FORM_COMPLETED", "QUEUED", "ANALYZED", "FAILED", "BLOCKED"],
+    "FORM_COMPLETED":      ["SUBMITTED", "QUEUED", "FAILED"],
+    "SUBMITTED":           ["CONFIRMED", "REJECTED"],
+    "CONFIRMED":           ["INTERVIEW_R1", "REJECTED"],
+    "INTERVIEW_R1":        ["INTERVIEW_R2", "REJECTED"],
+    "INTERVIEW_R2":        ["OFFER", "REJECTED"],
+    # Terminal states — no further transitions allowed
+    "FAILED":              [],
+    "BLOCKED":             ["QUEUED"],   # Blocked apps can be retried
+    "REJECTED":            [],
+    "OFFER":               [],
 }
 
 class InvalidTransitionError(Exception):

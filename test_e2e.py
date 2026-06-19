@@ -104,7 +104,7 @@ async def ensure_usa_job():
     r = await api("get", "/api/jobs?limit=100")
     if r.status_code == 200:
         jobs = r.json()
-        # Prefer Software Engineer roles in the USA
+        # Prefer Software Engineer roles in the USA that are from greenhouse
         keywords = ["software", "engineer", "developer", "full-stack", "backend", "frontend"]
         for job in jobs:
             loc = (job.get("location") or "").lower()
@@ -114,15 +114,16 @@ async def ensure_usa_job():
                 or any(s in loc for s in ["ny", "ca", "wa", "tx", "il", "ma"])
             )
             is_eng = any(k in title for k in keywords)
-            if usa_loc and is_eng:
+            is_greenhouse = job.get("source") == "greenhouse"
+            if usa_loc and is_eng and is_greenhouse:
                 ok(f"Found suitable job: {job['title']} @ {job['company']} ({job['location']}) ID: {job['id']}")
                 return job
 
-        # Fallback to any job
-        if jobs:
-            job = jobs[0]
-            ok(f"Using available job: {job['title']} @ {job['company']} ID: {job['id']}")
-            return job
+        # Fallback to any available greenhouse job
+        for job in jobs:
+            if job.get("source") == "greenhouse":
+                ok(f"Using available job: {job['title']} @ {job['company']} ID: {job['id']}")
+                return job
 
     # No jobs at all — scrape some now
     info("No jobs found. Scraping Greenhouse (Vercel) for USA jobs …")

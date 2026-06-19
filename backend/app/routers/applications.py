@@ -157,13 +157,21 @@ async def prepare_package(request: PreparePackageRequest):
     Synchronous endpoint for M4 to request custom tailored resume,
     cover letter (if needed), and screening question answers.
     """
+    import os
     from module3.orchestrator import prepare_package_for_live_application
+    # Derive the API base URL from the server's own base address so that
+    # prepare_package_for_live_application can make internal API calls correctly.
+    api_base_url = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api").rstrip("/")
+    if api_base_url.endswith("/api"):
+        api_base_url = api_base_url[: -len("/api")]
+
     try:
         result = await prepare_package_for_live_application(
             candidate_id=request.candidate_id,
             job_id=request.job_id,
             needs_cover_letter=request.needs_cover_letter,
-            screening_questions=request.screening_questions
+            screening_questions=request.screening_questions,
+            api_base_url=api_base_url,
         )
         return PreparePackageResponse(**result)
     except ValueError as ve:
