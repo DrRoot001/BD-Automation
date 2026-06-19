@@ -1,18 +1,19 @@
-import os
 from pydantic_settings import BaseSettings
+from functools import lru_cache
 
 class Settings(BaseSettings):
-    APP_NAME: str = "BD Automator API"
-    DEBUG: bool = True
-    DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/bd_automator"
-    REDIS_URL: str = "redis://localhost:6379/0"
-    SECRET_KEY: str = "YOUR_SUPER_SECRET_JWT_KEY_CHANGE_THIS"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 7 days
-    OPENAI_API_KEY: str = ""
-    GOOGLE_CLIENT_ID: str = ""
-    GOOGLE_CLIENT_SECRET: str = ""
-
+    database_url: str
+    redis_url: str
+    secret_key: str
+    google_client_id: str = ""
+    google_client_secret: str = ""
+    
+    # JWT
+    access_token_expire_minutes: int = 60 * 24  # 1 day
+    
     class Config:
         env_file = ".env"
 
-settings = Settings()
+@lru_cache()
+def get_settings() -> Settings:
+    return Settings()
