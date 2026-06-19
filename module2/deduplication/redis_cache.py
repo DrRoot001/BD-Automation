@@ -24,24 +24,39 @@ class RedisCache:
 
     def get(self, key: str):
         if self.client:
-            return self.client.get(key)
+            try:
+                return self.client.get(key)
+            except Exception as e:
+                print(f"Redis get failed ({e}), falling back to local cache.")
+                self.client = None
         return self._local.get(key)
 
     def set(self, key: str, value, ex: Optional[int] = None):
         if self.client:
-            self.client.set(key, value, ex=ex)
-        else:
-            self._local[key] = value
-            if ex:
-                # naive expiration
-                self._local[f"{key}__exp"] = time.time() + ex
+            try:
+                self.client.set(key, value, ex=ex)
+                return
+            except Exception as e:
+                print(f"Redis set failed ({e}), falling back to local cache.")
+                self.client = None
+        
+        self._local[key] = value
+        if ex:
+            # naive expiration
+            self._local[f"{key}__exp"] = time.time() + ex
 
     def exists(self, key: str) -> bool:
         if self.client:
-            return self.client.exists(key)
+            try:
+                return bool(self.client.exists(key))
+            except Exception as e:
+                print(f"Redis exists failed ({e}), falling back to local cache.")
+                self.client = None
+
         exp = self._local.get(f"{key}__exp")
         if exp and time.time() > exp:
             self._local.pop(key, None)
             self._local.pop(f"{key}__exp", None)
             return False
         return key in self._local
+
