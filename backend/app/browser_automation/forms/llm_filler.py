@@ -411,4 +411,109 @@ async def fill_form_with_llm(
         f"[LLMFill] complete: filled={filled} skipped={skipped} "
         f"unresolved_required={len(unresolved_required)} success={success}"
     )
+
+    # ── Step 4: Post-fill VERIFICATION ────────────────────────────────────────
+    # Walk required fields and confirm the DOM actually holds the value we
+    # asked for. Custom widgets (react-select, file uploaders) are notorious
+    # for silently swallowing input — typing into a combobox search box looks
+    # successful but commits nothing. We catch that here instead of trusting
+    # the apply step's True return.
+    verification_failures: List[Tuple[str, str]] = []
+    for idx, field in enumerate(form.fields):
+        if not field.required or field.field_type == "file":
+            continue
+        entry = resolved.get(idx)
+        if not entry:
+            continue
+        expected, _ = entry
+        try:
+            actual = await _read_field_value(page, field)
+        except Exception as exc:
+            logger.debug(f"[LLMFill] verify read failed for '{field.label}': {exc}")
+            continue
+        if not _values_match(expected, actual):
+            logger.warning(
+                f"[LLMFill] VERIFY MISMATCH '{field.label}' "
+                f"expected={expected!r} actual={actual!r}"
+            )
+            verification_failures.append((field.label, f"want={expected} got={actual}"))
+
+    if verification_failures:
+        success = False
+        logger.warning(
+            f"[LLMFill] post-fill verification found {len(verification_failures)} "
+            f"required field(s) that look unfilled in the DOM"
+        )
+
     return success
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Post-fill verification helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _read_field_value(page: Page, field: FormField) -> str:
+    """Return whatever the DOM currently shows for this field's value.
+
+    For custom widgets (react-select), read the rendered .select__single-value /
+    .react-select__single-value text. For native inputs, read .value.
+    Returns "" if we can't determine it (caller treats that as "skip verify").
+    """
+    locator = page.locator(field.selector).first
+    if await locator.count() == 0:
+        return ""
+
+    ftype = field.field_type
+    is_custom = getattr(field, "custom_widget", False)
+
+    if ftype == "select" and is_custom:
+        # Walk up to find the .select__control wrapper, then read the single-value
+        rendered = await locator.evaluate("""el => {
+            let p = el.closest('.select__control, .react-select__control') || el.parentElement;
+            for (let i = 0; i < 4 && p; i++) {
+                const v = p.querySelector(
+                    '.select__single-value, .react-select__single-value, .select-shell-button-value'
+                );
+                if (v) return v.textContent.trim();
+                p = p.parentElement;
+            }
+            return '';
+        }""")
+        return rendered or ""
+
+    if ftype in ("text", "email", "phone", "url", "textarea", "date", "select"):
+        return (await locator.input_value()) or ""
+
+    if ftype == "checkbox":
+        return "Yes" if await locator.is_checked() else ""
+
+    if ftype == "radio":
+        # Find which radio in the group is checked
+        name = await locator.evaluate("el => el.name || ''")
+        if not name:
+            return ""
+        checked = page.locator(f"input[type=radio][name='{name}']:checked").first
+        if await checked.count() == 0:
+            return ""
+        return (await checked.get_attribute("value")) or "Yes"
+
+    return ""
+
+
+def _values_match(expected: str, actual: str) -> bool:
+    """Loose equality for verification — case-insensitive, ignores surrounding
+    whitespace and trailing punctuation, and accepts substring matches both
+    ways. React-select often shows the option label exactly; native inputs
+    sometimes normalize spaces/case.
+    """
+    if not actual:
+        return False
+    e = (expected or "").strip().lower().rstrip(".,*")
+    a = (actual or "").strip().lower().rstrip(".,*")
+    if not e:
+        return True  # no expectation, no failure
+    if e == a:
+        return True
+    if e in a or a in e:
+        return True
+    return False

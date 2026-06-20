@@ -238,6 +238,17 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
         name_attr = await el.get_attribute("name") or ""
         id_attr = await el.get_attribute("id") or ""
         aria_label = await el.get_attribute("aria-label") or ""
+        role_attr = (await el.get_attribute("role")) or ""
+
+        # ── Skip combobox <input> — these are the search inputs INSIDE
+        # react-select / custom dropdown widgets. The custom-dropdown scan
+        # below picks up the wrapping .select__control and reports it as
+        # field_type="select" with custom_widget=True. If we also report the
+        # inner <input> as a text field, the filler would type into the search
+        # box without ever opening the menu, never committing the choice.
+        if tag_name == "input" and role_attr.lower() == "combobox":
+            logger.debug(f"Skipping combobox input (id={id_attr}) — handled by custom-dropdown scan")
+            continue
 
         # ── Special handling for radio buttons: consolidate into groups ──
         if type_attr == "radio" and name_attr:
