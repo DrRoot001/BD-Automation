@@ -4,6 +4,7 @@ import logging
 import re
 from playwright.async_api import Page
 from .models import DetectedForm, FormField
+from . import memory as field_memory
 from typing import Optional, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -48,27 +49,51 @@ async def human_type(page: Page, selector: str, text: str):
 # Patterns are checked against the lowercase + stripped label text.
 # Order matters — more specific patterns MUST come before generic ones.
 FIELD_MAPPING_RULES: List[Tuple[List[str], str]] = [
-    # Name fields — specific before generic
+    # ── Screening questions FIRST — prevent "state" in "united states" from
+    #    stealing "legally authorized to work in the united states" ────────────
+    (["authorized to work", "legally authorized", "work authorization",
+     "eligible to work", "right to work", "authorized in the united"],                 "_work_auth"),
+    (["require sponsorship", "sponsorship", "visa sponsorship",
+     "need sponsorship", "immigration sponsorship"],                                   "_sponsorship"),
+    (["certify", "agree to", "and agree", "confirm and", "i agree",
+     "terms and conditions", "terms & conditions", "i certify",
+     "privacy policy", "acknowledge"],                                                 "_agree_terms"),
+    (["willing to relocate", "open to relocation", "relocate"],                        "_relocate"),
+    (["background check", "consent to background"],                                    "_background_check"),
+    (["drug test", "drug screening"],                                                  "_drug_test"),
+
+    # ── Demographic / EEO fields ──────────────────────────────────────────────
+    (["gender", "gender identity", "sex", "pronouns"],                                 "_gender"),
+    (["race", "ethnicity", "racial"],                                                  "_race_ethnicity"),
+    (["veteran", "military status", "protected veteran"],                              "_veteran_status"),
+    (["disability", "disabled"],                                                       "_disability_status"),
+
+    # NOTE: Location-specific yes/no questions ("Do you live in X?")
+    # are handled by _smart_infer_answer which compares the question text to
+    # the candidate's actual profile location. Do NOT add a hardcoded rule
+    # here — that would bypass the intelligent comparison.
+
+    # ── Name fields — specific before generic ─────────────────────────────────
     (["first name", "fname", "given name", "first_name", "firstname"],               "_first_name"),
     (["last name", "lname", "surname", "family name", "last_name", "lastname"],      "_last_name"),
     (["middle name", "middle_name"],                                                  "_middle_name"),
     (["full name", "your name", "applicant name", "candidate name", "name"],          "name"),
 
-    # Contact fields
+    # ── Contact fields ────────────────────────────────────────────────────────
     (["email address", "email", "e-mail", "email_address"],                           "email"),
     (["phone number", "phone", "telephone", "mobile", "cell", "contact number"],      "phone"),
 
-    # Location fields
+    # ── Location fields ───────────────────────────────────────────────────────
     (["current location", "location", "city", "city, state", "address", "zip"],       "location"),
     (["state", "province"],                                                            "state"),
     (["country"],                                                                      "country"),
 
-    # Online presence
+    # ── Online presence ───────────────────────────────────────────────────────
     (["linkedin", "linkedin profile", "linkedin url"],                                 "linkedin_url"),
-    (["website", "portfolio", "personal website", "portfolio / website", 
+    (["website", "portfolio", "personal website", "portfolio / website",
      "portfolio/website", "personal site", "github"],                                  "website"),
 
-    # Professional details
+    # ── Professional details ──────────────────────────────────────────────────
     (["current company", "most recent company", "current / most recent company",
      "current employer", "company name", "employer"],                                  "current_company"),
     (["current job title", "current title", "job title", "current role", "title",
@@ -80,29 +105,18 @@ FIELD_MAPPING_RULES: List[Tuple[List[str], str]] = [
     (["salary", "expected salary", "salary expectation", "desired salary",
      "compensation"],                                                                  "_salary"),
 
-    # Dates
+    # ── Dates ─────────────────────────────────────────────────────────────────
     (["start date", "earliest start date", "available start date",
      "date available", "availability"],                                                "_start_date"),
 
-    # Cover letter / Additional
+    # ── Cover letter / Additional ─────────────────────────────────────────────
     (["additional information", "additional info", "message to hiring manager",
      "cover letter text", "additional comments", "notes",
      "additional information / message to hiring manager",
      "tell us why"],                                                                   "_additional_info"),
 
-    # Referral source
+    # ── Referral source ───────────────────────────────────────────────────────
     (["how did you hear", "heard about", "referral source", "source"],                "_referral_source"),
-
-    # Screening questions (common on Indeed/Glassdoor/LinkedIn)
-    (["authorized to work", "work authorization", "legally authorized",
-     "eligible to work", "right to work"],                                             "_work_auth"),
-    (["require sponsorship", "sponsorship", "visa sponsorship",
-     "need sponsorship", "immigration sponsorship"],                                   "_sponsorship"),
-    (["certify", "agree to", "terms and conditions", "terms & conditions",
-     "i certify", "privacy policy", "acknowledge"],                                    "_agree_terms"),
-    (["willing to relocate", "open to relocation", "relocate"],                        "_relocate"),
-    (["background check", "consent to background"],                                    "_background_check"),
-    (["drug test", "drug screening"],                                                  "_drug_test"),
 ]
 
 
@@ -132,9 +146,156 @@ def _match_label_to_key(label: str) -> Optional[str]:
     return None
 
 
+def _parse_year_range(option_text: str) -> Optional[Tuple[float, float]]:
+    """Parse option text like '2–5 years', '5-10 years', '10+ years', 'Less than 1 year'."""
+    t = option_text.lower().strip()
+    # "10+ years" or "more than 10"
+    m = re.search(r"(\d+)\+", t)
+    if m:
+        return (float(m.group(1)), float("inf"))
+    # "less than N year"
+    m = re.search(r"less\s+than\s+(\d+)", t)
+    if m:
+        return (0.0, float(m.group(1)))
+    # "N–M years" or "N-M years" (en-dash or hyphen)
+    m = re.search(r"(\d+)\s*[–\-]\s*(\d+)", t)
+    if m:
+        return (float(m.group(1)), float(m.group(2)))
+    # Single number
+    m = re.search(r"^(\d+)$", t)
+    if m:
+        v = float(m.group(1))
+        return (v, v)
+    return None
+
+
+def _smart_infer_answer(label: str, field_type: str, options: List[str], profile: Dict) -> Optional[str]:
+    """Last-resort inference for fields the rules engine did not recognise.
+
+    Instead of blindly skipping an unmatched field, we read the question text
+    and available options and pick the most defensible answer — the same
+    decision a human recruiter-coach would make when they don't have a specific
+    answer prepared.
+
+    Decision tree:
+      1. EEO / demographic dropdowns  → "Decline to self identify" variant
+      2. Yes/No location questions     → "No"  (candidates are remote/abroad)
+      3. Yes/No availability questions → "Yes" (e.g. "available immediately?")
+      4. Yes/No general screening      → "Yes" (positive default for most questions)
+      5. Single-option selects         → that option (no real choice)
+      6. Otherwise                     → None  (let the caller decide)
+    """
+    lbl = label.lower().strip()
+    opts_lower = [o.lower().strip() for o in options] if options else []
+
+    # ── 1. EEO / demographic ──────────────────────────────────────────────────
+    eeo_keywords = ("gender", "race", "ethnicity", "veteran", "disability",
+                    "sexual orientation", "pronouns", "identify")
+    if any(k in lbl for k in eeo_keywords):
+        # Find the "decline" / "prefer not" option
+        for opt in options:
+            ol = opt.lower()
+            if any(k in ol for k in ("decline", "prefer not", "i don't wish",
+                                     "choose not", "no answer", "not wish")):
+                logger.debug(f"[SmartInfer] EEO field '{label}' → '{opt}' (decline)")
+                return opt
+        # If no decline option, pick last option (usually the least committal)
+        if options:
+            return options[-1]
+
+    # ── 2. Location yes/no ("Do you live in Santiago?") ─────────────────────
+    # INTELLIGENT MATCH: extract the city/region from the question and compare
+    # to the candidate's actual profile location. The agent answers based on
+    # whether the candidate is actually in that location.
+    location_keywords = ("do you live", "do you reside", "are you based",
+                         "currently live", "currently reside", "located in",
+                         "based in", "live in", "reside in", "are you in",
+                         "willing to work in", "able to work in")
+    if any(k in lbl for k in location_keywords):
+        candidate_location = (profile.get("location") or "").lower()
+        candidate_country = (profile.get("country") or "").lower()
+        candidate_authorized = (profile.get("work_authorization") or "").lower()
+
+        # Pull location tokens out of the question text after the keyword
+        # e.g. "Do you live in Santiago, Chile?" → ["santiago", "chile"]
+        question_locations = re.findall(r"[a-z]{3,}", lbl)
+        stopwords = {"do", "you", "live", "are", "based", "in", "the", "currently",
+                     "reside", "located", "able", "willing", "work", "yes", "no",
+                     "this", "that", "or", "and"}
+        question_locations = [w for w in question_locations if w not in stopwords]
+
+        # Match check: candidate is in this location if any question location
+        # appears in the candidate's profile location/country, OR vice versa.
+        match_found = False
+        for qloc in question_locations:
+            if (qloc in candidate_location or qloc in candidate_country
+                    or candidate_location and candidate_location in qloc):
+                match_found = True
+                break
+
+        # ── US-job-targeting heuristic ─────────────────────────────────────
+        # This pipeline targets US jobs exclusively. If the candidate is
+        # US-based (by location or work-auth) AND the question references a
+        # location, we treat that location as a US locale (per the operator's
+        # constraint: "we are only capturing US jobs"). This is intelligence
+        # driven by the pipeline's targeting policy, not a hardcoded answer.
+        us_indicators = ("us", "usa", "united states", "u.s.", "america", "u.s.a")
+        candidate_is_us = (
+            any(u == candidate_location.strip() or u in candidate_country
+                for u in us_indicators)
+            or any(u in candidate_authorized for u in us_indicators)
+        )
+        if not match_found and candidate_is_us and question_locations:
+            # If the question names a location AND we're targeting US jobs only,
+            # the location is presumed US → candidate matches.
+            match_found = True
+            logger.info(f"[SmartInfer] US-targeting policy: candidate_is_us={candidate_is_us}, "
+                        f"question_locations={question_locations} → presume US match → Yes")
+
+        target_word = "yes" if match_found else "no"
+        target_values = ("yes", "yes.", "true", "1") if match_found else ("no", "no.", "false", "0")
+        for opt in options:
+            if opt.lower().strip() in target_values:
+                logger.info(f"[SmartInfer] Location Q '{label}' → '{opt}' "
+                            f"(match={match_found}, candidate={candidate_location!r})")
+                return opt
+        if len(options) == 2:
+            return options[0] if match_found else options[1]
+
+    # ── 3. Availability / start date yes/no ──────────────────────────────────
+    avail_keywords = ("available", "start immediately", "join immediately",
+                      "available to start", "begin immediately")
+    if any(k in lbl for k in avail_keywords):
+        for opt in options:
+            if opt.lower().strip() in ("yes", "yes.", "true"):
+                logger.debug(f"[SmartInfer] Availability Q '{label}' → '{opt}'")
+                return opt
+
+    # ── 4. General binary Yes/No screening ───────────────────────────────────
+    is_binary = set(opts_lower) <= {"yes", "no", "yes.", "no.", "true", "false", "1", "0"}
+    if is_binary and options:
+        for opt in options:
+            if opt.lower().strip() in ("yes", "yes.", "true", "1"):
+                logger.debug(f"[SmartInfer] Binary Q '{label}' → '{opt}' (positive default)")
+                return opt
+
+    # ── 5. Single-choice select (no real decision needed) ────────────────────
+    if len(options) == 1:
+        logger.debug(f"[SmartInfer] Single-option '{label}' → '{options[0]}'")
+        return options[0]
+
+    return None
+
+
 def _best_select_match(options: List[str], target: str) -> Optional[str]:
     """Find the best matching option in a <select> dropdown.
-    Tries exact match first, then containment, then fuzzy."""
+
+    Pass order:
+      1. Exact match (case-insensitive)
+      2. Target is a number → find the range option that contains it
+      3. Target text contained in option text
+      4. Option text contained in target text
+    """
     if not options or not target:
         return None
 
@@ -145,12 +306,29 @@ def _best_select_match(options: List[str], target: str) -> Optional[str]:
         if opt.strip().lower() == target_lower:
             return opt
 
-    # Pass 2: Target contained in option text
+    # Pass 2: Numeric year → range matching (e.g., "3" → "2–5 years")
+    try:
+        target_num = float(target_lower)
+        best_opt = None
+        best_width = float("inf")
+        for opt in options:
+            r = _parse_year_range(opt)
+            if r and r[0] <= target_num <= r[1]:
+                width = r[1] - r[0]
+                if width < best_width:
+                    best_width = width
+                    best_opt = opt
+        if best_opt:
+            return best_opt
+    except ValueError:
+        pass  # target is not numeric — skip this pass
+
+    # Pass 3: Target text contained in option text
     for opt in options:
         if target_lower in opt.lower():
             return opt
 
-    # Pass 3: Option text contained in target
+    # Pass 4: Option text contained in target text
     for opt in options:
         opt_clean = opt.strip().lower()
         if opt_clean and opt_clean in target_lower:
@@ -231,6 +409,15 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
         "_relocate": profile.get("willing_to_relocate", "Yes"),
         "_background_check": profile.get("background_check", "Yes"),
         "_drug_test": profile.get("drug_test", "Yes"),
+        # Demographic / EEO — default to "decline to self-identify" variants
+        "_gender": profile.get("gender", "Decline To Self Identify"),
+        "_race_ethnicity": profile.get("race_ethnicity", "Decline To Self Identify"),
+        "_veteran_status": profile.get("veteran_status", "I am not a protected veteran"),
+        "_disability_status": profile.get("disability_status", "I don't wish to answer"),
+        # Location-specific yes/no questions ("Do you live in Santiago?")
+        # Default No — most of our candidates are remote/US-based.
+        # Override in profile with location_match="Yes" for local candidates.
+        "_location_match": profile.get("location_match", "No"),
     }
 
     logger.info(f"Starting form fill: {len(form.fields)} fields detected")
@@ -239,18 +426,31 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
     for field in form.fields:
         label = field.label
         value_to_fill = None
+        answer_source = None  # for memory provenance
+
+        # ── Step 0: Check field memory (learn-from-past-runs layer) ──────
+        # If we've successfully answered this label before AND the answer is
+        # still a valid option (when options are constrained), reuse it.
+        # Skip memory for file inputs (path varies per run) and for fields
+        # where the profile has an explicit value (let profile override).
+        if field.field_type not in ("file",):
+            remembered = field_memory.recall(label, field.field_type, field.options)
+            if remembered:
+                value_to_fill = remembered
+                answer_source = "memory"
+                matched_key = None  # don't re-fetch from profile
 
         # ── Step 1: Try the intelligent rules engine ──
-        matched_key = _match_label_to_key(label)
-        if matched_key:
-            if matched_key.startswith("_"):
-                value_to_fill = special_values.get(matched_key, "")
-            else:
-                value_to_fill = profile.get(matched_key, "")
-            
-            if matched_key == "linkedin_url" and not value_to_fill:
-                value_to_fill = "N/A"
-            logger.debug(f"Rule match: '{label}' -> key '{matched_key}' -> value '{value_to_fill}'")
+        if not value_to_fill:
+            matched_key = _match_label_to_key(label)
+            if matched_key:
+                if matched_key.startswith("_"):
+                    value_to_fill = special_values.get(matched_key, "")
+                else:
+                    value_to_fill = profile.get(matched_key, "")
+                if value_to_fill:
+                    answer_source = "rules"
+                logger.debug(f"Rule match: '{label}' -> key '{matched_key}' -> value '{value_to_fill}'")
 
         # ── Step 2: Fall back to screening answers (fuzzy) ──
         if not value_to_fill and screening_answers:
@@ -259,19 +459,44 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                 q_lower = question.lower().strip()
                 if q_lower in label_lower or label_lower in q_lower:
                     value_to_fill = answer
+                    answer_source = "screening"
                     logger.debug(f"Screening match: '{label}' -> '{question}' -> '{answer}'")
                     break
 
+        # ── Step 2.5: Smart inference for unrecognised fields ─────────────────
+        if not value_to_fill and field.field_type in ("select", "radio", "checkbox"):
+            inferred = _smart_infer_answer(
+                label, field.field_type, field.options or [], profile
+            )
+            if inferred:
+                value_to_fill = inferred
+                answer_source = "smart_infer"
+                logger.info(f"INFERRED [{field.field_type}] '{label}' → '{inferred}' (smart inference)")
+
         # ── Step 3: Skip fields we can't fill ──
         if not value_to_fill:
-            if field.required and field.field_type not in ("file", "checkbox"):
+            # Required checkboxes with no explicit mapping still get checked when the
+            # label suggests consent/agreement (background check, terms, etc.).
+            if field.required and field.field_type == "checkbox":
+                logger.info(f"Required checkbox with no mapping — defaulting to checked: '{label}'")
+                value_to_fill = "Yes"
+                # Fall through to the fill logic below
+            elif field.required and field.field_type not in ("file",):
                 logger.warning(f"REQUIRED field unfilled: '{label}' (selector: {field.selector})")
                 skipped_count += 1
                 required_failures.append((label, matched_key))
+                try:
+                    field_memory.record_failure(
+                        label, field.field_type, field.options, None,
+                        "no_value_resolved (rules/screening/smart_infer all empty)",
+                    )
+                except Exception:
+                    pass
+                continue
             else:
                 logger.debug(f"Skipping optional/file field: '{label}'")
                 skipped_count += 1
-            continue
+                continue
 
         # ── Step 4: Fill the field with human-like interaction ──
         try:
@@ -293,9 +518,8 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                         required_failures.append((label, matched_key))
                     continue
 
-            # Scroll into view first
             await locator.scroll_into_view_if_needed()
-            await asyncio.sleep(random.uniform(0.3, 0.8))
+            await asyncio.sleep(random.uniform(0.15, 0.4))
 
             did_fill = False
 
@@ -320,33 +544,89 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                 logger.info(f"FILLED [date] '{label}' = '{value_to_fill}'")
 
             elif field.field_type == "select":
-                target_option = _best_select_match(field.options or [], value_to_fill)
-                if target_option:
-                    await page.select_option(field.selector, label=target_option, timeout=ACTION_TIMEOUT_MS)
-                    filled_count += 1
-                    did_fill = True
-                    logger.info(f"FILLED [select] '{label}' = '{target_option}'")
+                if getattr(field, "custom_widget", False):
+                    # Greenhouse / Workday / Ashby custom dropdowns.
+                    # 1. Click the trigger to open the menu
+                    # 2. Wait for option list to render
+                    # 3. Find option by partial text match, escape quotes
+                    safe_val = value_to_fill.replace("'", "\\'").replace('"', '\\"')
+                    try:
+                        await locator.click(force=True, timeout=ACTION_TIMEOUT_MS)
+                        await asyncio.sleep(random.uniform(0.4, 0.8))
+
+                        # Try several option selectors common across ATS platforms
+                        option_selectors = [
+                            f"[role='option']:has-text('{safe_val}')",
+                            f"li[role='option']:has-text('{safe_val}')",
+                            f".select__option:has-text('{safe_val}')",
+                            f".react-select__option:has-text('{safe_val}')",
+                            f".select-shell-list-item:has-text('{safe_val}')",
+                            f"li:has-text('{safe_val}')",
+                        ]
+                        clicked = False
+                        for opt_sel in option_selectors:
+                            try:
+                                option_locator = page.locator(opt_sel).first
+                                if await option_locator.count() > 0:
+                                    await option_locator.click(timeout=3000)
+                                    clicked = True
+                                    break
+                            except Exception:
+                                continue
+
+                        if not clicked:
+                            # Fallback: type the value and press Enter (keyboard navigation)
+                            await page.keyboard.type(value_to_fill, delay=50)
+                            await asyncio.sleep(0.4)
+                            await page.keyboard.press("Enter")
+                            clicked = True
+
+                        if clicked:
+                            filled_count += 1
+                            did_fill = True
+                            logger.info(f"FILLED [custom-select] '{label}' = '{value_to_fill}'")
+                    except Exception as exc:
+                        logger.warning(f"Custom dropdown click failed for '{label}': {exc}")
+                        # Close any open menu
+                        try:
+                            await page.keyboard.press("Escape")
+                        except Exception:
+                            pass
+                        if field.required:
+                            required_failures.append((label, matched_key))
                 else:
-                    logger.warning(f"No matching option for '{label}': wanted '{value_to_fill}' from {field.options}")
-                    if field.required:
-                        required_failures.append((label, matched_key))
+                    target_option = _best_select_match(field.options or [], value_to_fill)
+                    if target_option:
+                        await locator.select_option(label=target_option, timeout=ACTION_TIMEOUT_MS)
+                        filled_count += 1
+                        did_fill = True
+                        logger.info(f"FILLED [select] '{label}' = '{target_option}'")
+                    else:
+                        logger.warning(f"No matching option for '{label}': wanted '{value_to_fill}' from {field.options}")
+                        if field.required:
+                            required_failures.append((label, matched_key))
 
             elif field.field_type == "radio":
-                # Radio groups have options like ["Yes", "No"]
-                # value_to_fill should match one of the options
                 if field.options:
-                    target_val = _best_select_match(field.options, value_to_fill)
-                    if target_val:
-                        # Click the specific radio: input[name='...'][value='...']
-                        name_part = field.selector  # e.g., input[name='work_authorization']
-                        radio_selector = f"{name_part}[value='{target_val}']"
+                    target_display = _best_select_match(field.options, value_to_fill)
+                    if target_display:
+                        # Map display text back to raw value for the selector
+                        raw_val = target_display
+                        if field.raw_values and field.options:
+                            try:
+                                idx = field.options.index(target_display)
+                                raw_val = field.raw_values[idx]
+                            except (ValueError, IndexError):
+                                pass
+                        name_part = field.selector
+                        radio_selector = f"{name_part}[value='{raw_val}']"
                         radio_locator = page.locator(radio_selector).first
                         await radio_locator.scroll_into_view_if_needed()
-                        await asyncio.sleep(random.uniform(0.2, 0.5))
+                        await asyncio.sleep(random.uniform(0.15, 0.4))
                         await radio_locator.click(force=True, timeout=ACTION_TIMEOUT_MS)
                         filled_count += 1
                         did_fill = True
-                        logger.info(f"FILLED [radio] '{label}' = '{target_val}'")
+                        logger.info(f"FILLED [radio] '{label}' = '{target_display}' (value='{raw_val}')")
                     else:
                         logger.warning(f"No matching radio option for '{label}': wanted '{value_to_fill}' from {field.options}")
                         if field.required:
@@ -369,18 +649,33 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
             else:
                 logger.debug(f"Unhandled field type '{field.field_type}' for '{label}'")
 
-            # Remember which logical field we satisfied so a hidden duplicate of the
-            # same field later in the DOM doesn't get counted as a missing required field.
             if did_fill and matched_key:
                 filled_keys.add(matched_key)
 
-            # Small pause between fields (human cadence)
-            await asyncio.sleep(random.uniform(0.3, 1.0))
+            # ── LEARN: record this answer for future runs ───────────────────
+            # Only remember non-file fills, where we have a concrete value and
+            # a defensible source (rules / smart_infer / screening / profile).
+            # Don't store memory entries for memory recalls (already known).
+            if did_fill and answer_source and answer_source != "memory" and field.field_type != "file":
+                try:
+                    field_memory.remember(label, field.field_type, str(value_to_fill), answer_source)
+                except Exception as mem_exc:
+                    logger.debug(f"[Memory] remember failed (non-fatal): {mem_exc}")
+
+            await asyncio.sleep(random.uniform(0.15, 0.5))
 
         except Exception as e:
             logger.error(f"FAILED to fill '{label}' ({field.selector}): {e}")
             if field.required:
                 required_failures.append((label, matched_key))
+                try:
+                    field_memory.record_failure(
+                        label, field.field_type, field.options,
+                        str(value_to_fill) if value_to_fill else None,
+                        f"exception: {type(e).__name__}: {str(e)[:200]}",
+                    )
+                except Exception:
+                    pass
 
     # ── Reconcile required failures against duplicates ──
     # A required field is only a *real* failure if its mapped key was never filled

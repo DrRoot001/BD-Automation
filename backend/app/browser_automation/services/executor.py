@@ -2,8 +2,9 @@ import os
 import time
 import logging
 import asyncio
-import redis.asyncio as redis # Assuming RateLimiter will use Redis
-import httpx # For state machine transitions, if not passed in
+import tempfile
+import httpx
+import redis.asyncio as redis
 
 from typing import Optional, Dict, Literal
 from playwright.async_api import async_playwright, Page, BrowserContext
@@ -21,12 +22,21 @@ from .state_machine import transition_status
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-# Basic RateLimiter implementation based on Redis
+
 class RateLimiter:
     def __init__(self):
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self._redis = None
-        self.max_requests_per_hour = 60 # Example: 60 requests per hour per candidate/platform
+
+        # Per-platform hourly limits (conservative defaults)
+        self._limits: Dict[str, int] = {
+            "linkedin":   10,
+            "indeed":     20,
+            "greenhouse": 30,
+            "lever":      30,
+            "ashby":      30,
+        }
+        self._default_limit = 25
 
     async def _get_redis(self):
         if self._redis is None:
@@ -37,246 +47,392 @@ class RateLimiter:
         return self._redis
 
     async def check_and_increment(self, platform: str, candidate_id: str) -> bool:
-        redis_client = await self._get_redis()
+        r = await self._get_redis()
         key = f"rate_limit:{candidate_id}:{platform}"
-        # Increment and set expiry for 1 hour if new
-        count = await redis_client.incr(key)
+        limit = self._limits.get(platform.lower(), self._default_limit)
+        count = await r.incr(key)
         if count == 1:
-            await redis_client.expire(key, 3600) # Expire in 1 hour
-        
-        if count > self.max_requests_per_hour:
-            logger.warning(f"Rate limit exceeded for candidate {candidate_id} on platform {platform}. Count: {count}")
+            await r.expire(key, 3600)
+        if count > limit:
+            logger.warning(f"Rate limit exceeded for {candidate_id}@{platform} (count={count}, limit={limit})")
             return False
         return True
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# File resolution helpers
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") -> Optional[str]:
+    """Return a local filesystem path for the given URL or path.
+
+    - If it's already a valid local path → return as-is.
+    - If it's an HTTP(S) URL → download to a temp file and return the path.
+      The temp file is NOT cleaned up here; the caller is responsible.
+    - If resolution fails → return None.
+    """
+    if not url_or_path:
+        return None
+
+    if not url_or_path.startswith(("http://", "https://")):
+        if os.path.isfile(url_or_path):
+            return url_or_path
+        logger.error(f"Local file not found: {url_or_path}")
+        return None
+
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            resp = await client.get(url_or_path)
+            resp.raise_for_status()
+        # Write to a persistent temp file (not inside a with-block so it survives)
+        tf = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tf.write(resp.content)
+        tf.close()
+        logger.info(f"Downloaded {url_or_path} → {tf.name}")
+        return tf.name
+    except Exception as exc:
+        logger.error(f"Failed to download {url_or_path}: {exc}")
+        return None
+
+
+def _cleanup_temp(*paths: Optional[str]) -> None:
+    for p in paths:
+        if p and p.startswith(tempfile.gettempdir()):
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Main executor
+# ─────────────────────────────────────────────────────────────────────────────
+
 class ApplicationExecutor:
     async def execute(self, package: ApplicationPackage, retry_count: int = 0) -> ApplicationResult:
-        start_time = time.time()
+        start_time = time.monotonic()
         screenshot_path: Optional[str] = None
         confirmation_text: Optional[str] = None
         error_message: Optional[str] = None
         status: Literal["SUBMITTED", "FORM_COMPLETED", "FAILED", "CAPTCHA_FAILED", "RATE_LIMITED", "BLOCKED"] = "FAILED"
-        
+
         context_mgr: Optional[BrowserContextManager] = None
         context: Optional[BrowserContext] = None
-        
+        page: Optional[Page] = None
+
+        # Temp paths created by this executor that must be cleaned up at the end
+        _temp_resume: Optional[str] = None
+        _temp_cover:  Optional[str] = None
+
+        def _elapsed() -> float:
+            return time.monotonic() - start_time
+
         try:
-            # STEP 1: Check rate limit
+            # ── PRE-FLIGHT: validate resume exists before launching browser ──
+            if not package.resume_url:
+                raise ValueError("ApplicationPackage.resume_url is empty — cannot proceed")
+
+            _temp_resume = await _resolve_file_to_local_path(package.resume_url, ".pdf")
+            if not _temp_resume:
+                raise FileNotFoundError(f"Resume file could not be resolved: {package.resume_url}")
+
+            _temp_cover: Optional[str] = None
+            if package.cover_letter_url:
+                _temp_cover = await _resolve_file_to_local_path(package.cover_letter_url, ".pdf")
+                if not _temp_cover:
+                    logger.warning(f"Cover letter could not be resolved ({package.cover_letter_url}); "
+                                   "continuing without it")
+
+            logger.info(f"[M4] Pre-flight OK — resume={_temp_resume}, "
+                        f"cover_letter={_temp_cover or 'N/A'}")
+
+            # ── STEP 1: Rate limit ──
             rate_limiter = RateLimiter()
-            allowed = await rate_limiter.check_and_increment(package.platform, package.candidate_id)
-            if not allowed:
-                status = "RATE_LIMITED"
-                error_message = "Rate limit exceeded"
-                logger.warning(f"Application {package.application_id} failed due to rate limit.")
+            if not await rate_limiter.check_and_increment(package.platform, package.candidate_id):
                 return ApplicationResult(
                     application_id=package.application_id,
-                    status=status,
-                    execution_time_seconds=time.time() - start_time,
+                    status="RATE_LIMITED",
+                    execution_time_seconds=_elapsed(),
                     retry_count=retry_count,
-                    error_message=error_message
+                    error_message="Rate limit exceeded",
                 )
 
-            # STEP 2: Get adapter
+            # ── STEP 2: Get platform adapter ──
             adapter: BasePlatformAdapter = get_adapter(package.platform)
 
-            # STEP 3: Get browser context
+            # ── STEP 3: Browser context ──
             context_mgr = BrowserContextManager()
             context = await context_mgr.get_context(package.candidate_id, package.platform)
             page = await context.new_page()
 
-            # STEP 4: Transition to APPLICATION_STARTED
+            # Apply playwright-stealth to mask automation signals before any navigation
+            # (navigator.webdriver, chrome.runtime, permissions API, WebGL, etc.)
+            try:
+                from playwright_stealth import Stealth
+                await Stealth().apply_stealth_async(page)
+                logger.info("[M4] playwright-stealth v2 applied")
+            except Exception as exc:
+                logger.debug(f"[M4] playwright-stealth unavailable: {exc}")
+
+            # ── STEP 4: Transition APPLICATION_STARTED ──
             await transition_status(package.application_id, "APPLICATION_STARTED")
 
-            # STEP 5: Navigate to job URL
+            # ── STEP 5: Navigate ──
             await adapter.navigate_to_application(page, package.job_url)
 
-            # STEP 6: Detect form
-            form = await detect_form(page, container_selector=adapter.container_selector)
+            # ── STEP 6: Detect form (done inside fill_application; get ref for screening) ──
+            ctx = adapter._frame if getattr(adapter, '_iframe_mode', False) else page
+            form = await detect_form(ctx, container_selector=adapter.container_selector)
 
-            # STEP 6.5: Call M3 prepare-package endpoint
-            logger.info("[M4] Calling M3 prepare-package endpoint")
-            needs_cover_letter = any("cover" in field.label.lower() for field in form.fields if field.field_type == "file")
-            
-            exclude_keywords = ["first name", "last name", "email", "phone", "resume", "cover letter", "cv"]
-            screening_questions = []
-            for field in form.fields:
-                label_lower = field.label.lower()
-                if any(kw in label_lower for kw in exclude_keywords):
-                    continue
-                if field.field_type in ("text", "textarea", "select", "radio", "checkbox"):
-                    screening_questions.append(field.label)
-            
-            api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
-            prepare_url = f"{api_base}/applications/prepare-package"
-            payload = {
-                "candidate_id": package.candidate_id,
-                "job_id": package.job_id,
-                "needs_cover_letter": needs_cover_letter,
-                "screening_questions": screening_questions
-            }
-            
-            try:
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    m3_resp = await client.post(prepare_url, json=payload)
-                    if m3_resp.status_code == 200:
-                        m3_data = m3_resp.json()
-                        logger.info(f"M3 prepare-package response: {m3_data}")
-                        
-                        # TEMPORARY FOR TEST: Force should_apply to True to verify filler/upload pipelines
-                        if False and not m3_data.get("should_apply", True):
-                            logger.warning(
-                                f"[M4] M3 returned should_apply=False "
-                                f"(score: {m3_data.get('score', 'N/A')}). Abandoning."
+            # ── STEP 6.5: Call M3 only for screening answers (URLs already resolved) ──
+            #
+            # We already have the tailored resume and cover letter from the M3 event.
+            # We call M3's prepare-package endpoint ONLY to obtain answers to any
+            # screening questions found in the form that weren't pre-answered.
+            # We NEVER overwrite resume_url or cover_letter_url if they are already set.
+            screening_answers: Dict[str, str] = dict(package.screening_answers or {})
+
+            exclude_kw = {"first name", "last name", "email", "phone", "resume", "cover letter", "cv"}
+            open_questions = [
+                field.label for field in form.fields
+                if field.field_type in ("text", "textarea", "select", "radio", "checkbox")
+                and not any(kw in field.label.lower() for kw in exclude_kw)
+                and field.label.lower() not in {q.lower() for q in screening_answers}
+            ]
+            needs_cover_letter = any(
+                "cover" in f.label.lower() for f in form.fields if f.field_type == "file"
+            )
+
+            if open_questions:
+                api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+                try:
+                    async with httpx.AsyncClient(timeout=300.0) as client:
+                        resp = await client.post(
+                            f"{api_base}/applications/prepare-package",
+                            json={
+                                "candidate_id": package.candidate_id,
+                                "job_id": package.job_id,
+                                "needs_cover_letter": needs_cover_letter and (_temp_cover is None),
+                                "screening_questions": open_questions,
+                            },
+                        )
+                    if resp.status_code == 200:
+                        m3 = resp.json()
+                        logger.info(f"[M4] M3 prepare-package answered {len(open_questions)} question(s)")
+
+                        # Only adopt URLs from M3 if we don't already have local paths
+                        if not _temp_cover and m3.get("cover_letter_pdf_url"):
+                            _temp_cover = await _resolve_file_to_local_path(
+                                m3["cover_letter_pdf_url"], ".pdf"
                             )
-                            await transition_status(
-                                package.application_id, "ANALYZED",
-                                {"reason": "score_below_threshold"}
-                            )
+
+                        # Merge M3 screening answers (don't overwrite already-answered ones)
+                        for q, a in (m3.get("screening_answers") or {}).items():
+                            if q not in screening_answers:
+                                screening_answers[q] = a
+
+                        if not m3.get("should_apply", True):
+                            logger.warning(f"[M4] M3 returned should_apply=False; abandoning")
+                            await transition_status(package.application_id, "ANALYZED",
+                                                    {"reason": "score_below_threshold"})
                             if context_mgr and context:
                                 await context_mgr.destroy_context(context)
+                            _cleanup_temp(_temp_resume, _temp_cover)
                             return ApplicationResult(
                                 application_id=package.application_id,
                                 status="FAILED",
-                                error_message=f"Abandoned: score below threshold",
-                                execution_time_seconds=time.time() - start_time,
-                                retry_count=retry_count
+                                error_message="Abandoned: score below threshold",
+                                execution_time_seconds=_elapsed(),
+                                retry_count=retry_count,
                             )
-
-                        if m3_data.get("resume_pdf_url"):
-                            package.resume_url = m3_data["resume_pdf_url"]
-                        if m3_data.get("cover_letter_pdf_url"):
-                            package.cover_letter_url = m3_data["cover_letter_pdf_url"]
-                        if m3_data.get("screening_answers"):
-                            if not package.screening_answers:
-                                package.screening_answers = {}
-                            package.screening_answers.update(m3_data["screening_answers"])
                     else:
-                        logger.error(f"M3 prepare-package failed with status {m3_resp.status_code}: {m3_resp.text}")
-            except Exception as e:
-                logger.error(f"Error calling M3 prepare-package endpoint: {e}")
+                        logger.warning(f"[M4] M3 prepare-package returned {resp.status_code}: {resp.text[:200]}")
+                except Exception as exc:
+                    logger.warning(f"[M4] M3 prepare-package call failed (non-fatal): {exc}")
 
-            # STEP 7: Fill form
+            # ── STEP 7: Fill form (pass pre-detected form to skip redundant scan) ──
             fill_success = await adapter.fill_application(
-                page, package.candidate_profile,
-                package.resume_url, package.cover_letter_url,
-                package.screening_answers
+                page,
+                package.candidate_profile,
+                _temp_resume,
+                _temp_cover,
+                screening_answers,
+                pre_detected_form=form,
             )
             if not fill_success:
-                raise Exception("Form fill incomplete")
+                raise Exception("Form fill incomplete — one or more required fields could not be filled")
 
-            # STEP 8: Handle captcha if detected
+            # ── STEP 8: Captcha ──
             dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
             provider = os.getenv("CAPTCHA_PROVIDER", "2captcha").lower()
-            captcha_key = os.getenv(
-                "TWO_CAPTCHA_API_KEY" if provider == "2captcha" else "ANTI_CAPTCHA_API_KEY", ""
-            ) or ""
-            # A placeholder/missing key means no real solving capability is configured.
-            key_configured = bool(captcha_key) and not captcha_key.lower().startswith("your_")
+            raw_key = os.getenv(
+                "TWO_CAPTCHA_API_KEY" if provider == "2captcha" else
+                "ANTI_CAPTCHA_API_KEY" if provider == "anticaptcha" else
+                "OCILAR_API_KEY",
+                "",
+            )
+            key_configured = bool(raw_key) and not raw_key.lower().startswith("your_")
 
             if form.has_captcha:
                 if dry_run or not key_configured:
-                    # In dry-run we never submit, so the captcha token isn't needed; and
-                    # without a real solver key there's nothing to call. Skip gracefully
-                    # instead of burning a failed solve / crashing the run.
                     logger.warning(
                         f"[M4] Captcha detected ({form.captcha_type}) — skipping solve "
-                        f"(dry_run={dry_run}, solver_key_configured={key_configured})."
+                        f"(dry_run={dry_run}, solver_configured={key_configured})"
                     )
                 else:
                     captcha_svc = CaptchaService(provider=provider)
                     solution = await captcha_svc.solve(page, form.captcha_type)
                     if not solution.success:
                         status = "CAPTCHA_FAILED"
-                        error_message = f"Captcha solving failed: {form.captcha_type}"
+                        error_message = f"Captcha solving exhausted all attempts: {form.captcha_type}"
                         screenshot_path = await capture_and_store_screenshot(page, package.application_id)
-                        logger.warning(f"Application {package.application_id} failed due to CAPTCHA.")
+                        logger.error(f"[M4] {error_message}")
+                        _cleanup_temp(_temp_resume, _temp_cover)
                         return ApplicationResult(
                             application_id=package.application_id,
                             status=status,
                             screenshot_url=screenshot_path,
                             error_message=error_message,
-                            execution_time_seconds=time.time() - start_time,
-                            retry_count=retry_count
+                            execution_time_seconds=_elapsed(),
+                            retry_count=retry_count,
                         )
 
-            # STEP 9: Transition to FORM_COMPLETED
+            # ── STEP 9: FORM_COMPLETED ──
             await transition_status(package.application_id, "FORM_COMPLETED")
 
-            # STEP 10: Submit
-            dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
+            # ── STEP 10: Submit ──
             if dry_run:
-                logger.info("[DRY RUN] Bypassing real submission submit click.")
+                logger.info("[DRY RUN] Skipping submission click")
                 submitted = True
                 verified = True
                 confirmation_text = "DRY RUN SUCCESS (no submit)"
             else:
                 submitted = await adapter.submit(page)
                 if not submitted:
-                    raise Exception("Submission click failed")
-
-            # STEP 11: Verify success
-            if not dry_run:
+                    raise Exception("Submit click failed — no submit button found or click unsuccessful")
                 verified, confirmation_text = await adapter.verify_success(page)
 
-            # STEP 12: Capture screenshot (always, regardless of success)
+            # ── STEP 11: Screenshot ──
+            # Scroll to the form section so the screenshot captures the filled fields
+            try:
+                await page.evaluate("""
+                    // Find the application form area and scroll it into view
+                    let form = document.querySelector('form')
+                        || document.querySelector('#application')
+                        || document.querySelector('[class*="application"]');
+                    if (form) form.scrollIntoView({behavior: 'smooth', block: 'start'});
+                """)
+                await asyncio.sleep(1.0)
+            except Exception:
+                pass
             screenshot_path = await capture_and_store_screenshot(page, package.application_id)
 
-            # STEP 13: Transition to SUBMITTED if verified
+            # ── STEP 12: Final status transition ──
             if verified:
                 status = "SUBMITTED"
-                await transition_status(package.application_id, "SUBMITTED", {
-                    "screenshot_url": screenshot_path,
-                    "confirmation_text": confirmation_text
-                })
+                submit_extra = {}
+
+                # Save the cover letter path (use the original package URL, not temp path)
+                if package.cover_letter_url:
+                    submit_extra["cover_letter_url"] = package.cover_letter_url
+
+                # Resolve resume_id: find the tailored resume DB record for this
+                # candidate+job combination so the application FK is correctly set.
+                try:
+                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+                    async with httpx.AsyncClient(timeout=10) as client:
+                        rv = await client.get(f"{api_base}/resumes/{package.candidate_id}")
+                    if rv.status_code == 200:
+                        resumes = rv.json()
+                        # Prefer the latest tailored resume for this job
+                        match = next(
+                            (r for r in sorted(resumes,
+                                               key=lambda x: x.get("version", 0),
+                                               reverse=True)
+                             if not r.get("is_base")
+                             and r.get("tailored_for_job_id") == package.job_id),
+                            None
+                        )
+                        if not match:
+                            # Fall back to most recent base resume
+                            match = next(
+                                (r for r in sorted(resumes,
+                                                   key=lambda x: x.get("version", 0),
+                                                   reverse=True)
+                                 if r.get("is_base")),
+                                None
+                            )
+                        if match:
+                            submit_extra["resume_id"] = str(match["id"])
+                            logger.info(f"[M4] Resolved resume_id={match['id']} (v{match.get('version')})")
+                except Exception as exc:
+                    logger.warning(f"[M4] Could not resolve resume_id (non-fatal): {exc}")
+
+                logger.info(f"[M4] SUBMITTED extras: {submit_extra}")
+
+                await transition_status(
+                    package.application_id, "SUBMITTED",
+                    {"screenshot_url": screenshot_path, "confirmation_text": confirmation_text},
+                    **submit_extra,
+                )
             else:
-                status = "FORM_COMPLETED" # If not verified, but submitted, consider it form completed
+                status = "FORM_COMPLETED"
                 await transition_status(package.application_id, "FORM_COMPLETED")
 
-            # STEP 14: Save session
+            # ── STEP 13: Persist session ──
             if context_mgr and context:
                 await context_mgr.save_session(package.candidate_id, package.platform, context)
                 await context_mgr.destroy_context(context)
 
-            # STEP 15: Return result
+            _cleanup_temp(_temp_resume, _temp_cover)
+
             return ApplicationResult(
                 application_id=package.application_id,
                 status=status,
                 screenshot_url=screenshot_path,
                 confirmation_text=confirmation_text,
-                execution_time_seconds=time.time() - start_time,
-                retry_count=retry_count
+                execution_time_seconds=_elapsed(),
+                retry_count=retry_count,
             )
 
-        except Exception as e:
-            error_message = str(e)
-            logger.error(f"Application {package.application_id} encountered an error: {e}")
+        except Exception as exc:
+            error_message = str(exc)
+            logger.error(f"[M4] Application {package.application_id} error: {exc}", exc_info=True)
 
-            if "BLOCKED" in error_message: # Simple check for BLOCKED scenario
+            if "BLOCKED" in error_message:
                 status = "BLOCKED"
-                # Removed transition_status("BLOCKED") - rely on events
             elif retry_count < 3:
-                # Re-raise to let Celery handle retry
+                # Re-raise so Celery can schedule a retry
+                if context_mgr and context:
+                    try:
+                        await context_mgr.destroy_context(context)
+                    except Exception:
+                        pass
+                _cleanup_temp(_temp_resume, _temp_cover)
                 raise
             else:
                 status = "FAILED"
-                # Removed transition_status("FAILED") - rely on events
-            
-            if context and page and context.is_connected(): # Check if context/page is still alive before screenshot
-                screenshot_path = await capture_and_store_screenshot(page, package.application_id)
 
-            # Clean up browser context in case of error
+            # Best-effort screenshot on error
+            if page and not page.is_closed():
+                try:
+                    screenshot_path = await capture_and_store_screenshot(page, package.application_id)
+                except Exception:
+                    pass
+
             if context_mgr and context:
                 try:
                     await context_mgr.destroy_context(context)
-                except Exception as close_e:
-                    logger.error(f"Error destroying browser context for {package.application_id}: {close_e}")
+                except Exception:
+                    pass
+
+            _cleanup_temp(_temp_resume, _temp_cover)
 
             return ApplicationResult(
                 application_id=package.application_id,
                 status=status,
                 screenshot_url=screenshot_path,
-                confirmation_text=confirmation_text,
                 error_message=error_message,
-                execution_time_seconds=time.time() - start_time,
-                retry_count=retry_count
+                execution_time_seconds=_elapsed(),
+                retry_count=retry_count,
             )

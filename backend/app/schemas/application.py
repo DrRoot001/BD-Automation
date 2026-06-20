@@ -40,10 +40,12 @@ class ApplicationCreate(BaseModel):
 
 class ApplicationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
-    
+
     id: UUID
     candidate_id: UUID
     job_id: UUID
+    resume_id: Optional[UUID] = None
+    cover_letter_url: Optional[str] = None
     status: ApplicationStatus
     fit_score: Optional[float] = None
     ats_score: Optional[float] = None

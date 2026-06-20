@@ -96,3 +96,8 @@ backend/venv_old/
 # Test screenshots
 screenshots/
 backend/app/scripts/screenshots/
+
+# Runtime field-memory store — written by the form filler each run as the
+# agent learns from successful fills. Treat as machine-local state.
+backend/data/field_memory.json
+backend/data/field_failures.json
