@@ -355,6 +355,97 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
         logger.debug(f"Detected radio group: name='{name}', label='{group['label']}', "
                      f"options={group['options']}, values={group.get('values')}, required={group['required']}")
 
+    # ── Detect Greenhouse-style React-Select custom dropdowns ─────────────────
+    # Greenhouse hides the real input (visibility:hidden) and renders a div with
+    # class containing "select-shell", "select__control", or role="combobox".
+    # These are common for gender, race/ethnicity, veteran status, etc.
+    try:
+        custom_dropdowns = await page.evaluate("""() => {
+            // The clickable trigger lives inside .select-shell / .react-select__control
+            const trigger_sel = (
+                'div.select-shell-button, .select__control, .react-select__control, '
+                + '[role="combobox"]:not(input):not(select)'
+            );
+            const triggers = document.querySelectorAll(trigger_sel);
+            const seen = new Set();
+            const results = [];
+            for (const trigger of triggers) {
+                if (seen.has(trigger)) continue;
+                seen.add(trigger);
+                const r = trigger.getBoundingClientRect();
+                if (r.width < 20 || r.height < 10) continue;  // skip ghosts
+
+                // Walk up to find the labelling container + label text
+                let label = '';
+                let labelEl = null;
+                let p = trigger.parentElement;
+                for (let i = 0; i < 6 && p; i++) {
+                    // Look for a sibling label/legend/span.label
+                    const cand = p.querySelector(
+                        ':scope > label, :scope > legend, :scope > span.label, '
+                        + ':scope > div > label, :scope > .label'
+                    );
+                    if (cand && !cand.contains(trigger)) {
+                        const t = cand.textContent.trim();
+                        if (t.length > 1 && t.length < 200) {
+                            label = t;
+                            labelEl = cand;
+                            break;
+                        }
+                    }
+                    p = p.parentElement;
+                }
+
+                // Build a stable CSS selector for the trigger
+                let sel = '';
+                if (trigger.id) sel = '#' + trigger.id;
+                else if (labelEl && labelEl.htmlFor) sel = '#' + labelEl.htmlFor;
+                else {
+                    // unique-ish: parent id + nth descendant of class
+                    let cls = (typeof trigger.className === 'string')
+                        ? trigger.className.split(' ').filter(c => c).map(c => '.' + c).join('')
+                        : '';
+                    sel = trigger.tagName.toLowerCase() + cls;
+                }
+
+                // Try to read currently-displayed value (placeholder vs selection)
+                const placeholderClasses = ['select__placeholder', 'react-select__placeholder',
+                                           'select-shell-button-placeholder'];
+                let hasSelection = true;
+                for (const pc of placeholderClasses) {
+                    if (trigger.querySelector('.' + pc)) { hasSelection = false; break; }
+                }
+
+                results.push({
+                    label: label,
+                    selector: sel,
+                    has_selection: hasSelection,
+                    required: /\\*/.test(label),
+                });
+            }
+            return results;
+        }""")
+        for d in custom_dropdowns:
+            sel = d['selector']
+            if not sel or sel in seen_selectors:
+                continue
+            # Skip if label is missing AND no useful selector
+            if not d['label']:
+                continue
+            seen_selectors.add(sel)
+            fields.append(FormField(
+                selector=sel,
+                field_type="select",
+                label=d['label'],
+                required=d['required'],
+                options=None,
+                custom_widget=True,
+            ))
+            logger.debug(f"Detected custom dropdown: label='{d['label']}', "
+                         f"selector='{sel}', required={d['required']}")
+    except Exception as exc:
+        logger.warning(f"Custom dropdown detection error (non-fatal): {exc}")
+
     # ── Detect form type ──
     url = page.url
     form_type = "UNKNOWN"

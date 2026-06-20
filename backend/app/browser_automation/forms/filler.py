@@ -4,6 +4,7 @@ import logging
 import re
 from playwright.async_api import Page
 from .models import DetectedForm, FormField
+from . import memory as field_memory
 from typing import Optional, Dict, List, Tuple
 
 logger = logging.getLogger(__name__)
@@ -425,18 +426,31 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
     for field in form.fields:
         label = field.label
         value_to_fill = None
+        answer_source = None  # for memory provenance
+
+        # ── Step 0: Check field memory (learn-from-past-runs layer) ──────
+        # If we've successfully answered this label before AND the answer is
+        # still a valid option (when options are constrained), reuse it.
+        # Skip memory for file inputs (path varies per run) and for fields
+        # where the profile has an explicit value (let profile override).
+        if field.field_type not in ("file",):
+            remembered = field_memory.recall(label, field.field_type, field.options)
+            if remembered:
+                value_to_fill = remembered
+                answer_source = "memory"
+                matched_key = None  # don't re-fetch from profile
 
         # ── Step 1: Try the intelligent rules engine ──
-        matched_key = _match_label_to_key(label)
-        if matched_key:
-            if matched_key.startswith("_"):
-                value_to_fill = special_values.get(matched_key, "")
-            else:
-                value_to_fill = profile.get(matched_key, "")
-            
-            # Leave URL fields blank rather than typing "N/A" — HTML5 validation rejects it
-            # and some ATS systems reject the submission.
-            logger.debug(f"Rule match: '{label}' -> key '{matched_key}' -> value '{value_to_fill}'")
+        if not value_to_fill:
+            matched_key = _match_label_to_key(label)
+            if matched_key:
+                if matched_key.startswith("_"):
+                    value_to_fill = special_values.get(matched_key, "")
+                else:
+                    value_to_fill = profile.get(matched_key, "")
+                if value_to_fill:
+                    answer_source = "rules"
+                logger.debug(f"Rule match: '{label}' -> key '{matched_key}' -> value '{value_to_fill}'")
 
         # ── Step 2: Fall back to screening answers (fuzzy) ──
         if not value_to_fill and screening_answers:
@@ -445,20 +459,18 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                 q_lower = question.lower().strip()
                 if q_lower in label_lower or label_lower in q_lower:
                     value_to_fill = answer
+                    answer_source = "screening"
                     logger.debug(f"Screening match: '{label}' -> '{question}' -> '{answer}'")
                     break
 
         # ── Step 2.5: Smart inference for unrecognised fields ─────────────────
-        # When neither the rules engine nor screening_answers covered this field,
-        # attempt context-aware inference rather than silently skipping.
-        # This is the "scan → decide" intelligence layer: the agent reads the
-        # question text and available options and makes the best defensible choice.
         if not value_to_fill and field.field_type in ("select", "radio", "checkbox"):
             inferred = _smart_infer_answer(
                 label, field.field_type, field.options or [], profile
             )
             if inferred:
                 value_to_fill = inferred
+                answer_source = "smart_infer"
                 logger.info(f"INFERRED [{field.field_type}] '{label}' → '{inferred}' (smart inference)")
 
         # ── Step 3: Skip fields we can't fill ──
@@ -473,6 +485,13 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                 logger.warning(f"REQUIRED field unfilled: '{label}' (selector: {field.selector})")
                 skipped_count += 1
                 required_failures.append((label, matched_key))
+                try:
+                    field_memory.record_failure(
+                        label, field.field_type, field.options, None,
+                        "no_value_resolved (rules/screening/smart_infer all empty)",
+                    )
+                except Exception:
+                    pass
                 continue
             else:
                 logger.debug(f"Skipping optional/file field: '{label}'")
@@ -526,22 +545,53 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
 
             elif field.field_type == "select":
                 if getattr(field, "custom_widget", False):
-                    # Custom React-Select / Select2: click to open, then click option text
+                    # Greenhouse / Workday / Ashby custom dropdowns.
+                    # 1. Click the trigger to open the menu
+                    # 2. Wait for option list to render
+                    # 3. Find option by partial text match, escape quotes
+                    safe_val = value_to_fill.replace("'", "\\'").replace('"', '\\"')
                     try:
                         await locator.click(force=True, timeout=ACTION_TIMEOUT_MS)
-                        await asyncio.sleep(random.uniform(0.3, 0.6))
-                        # Look for an option element matching the value
-                        option_locator = page.locator(
-                            f"[role='option']:has-text('{value_to_fill}'), "
-                            f"li:has-text('{value_to_fill}'), "
-                            f".select__option:has-text('{value_to_fill}')"
-                        ).first
-                        await option_locator.click(timeout=ACTION_TIMEOUT_MS)
-                        filled_count += 1
-                        did_fill = True
-                        logger.info(f"FILLED [custom-select] '{label}' = '{value_to_fill}'")
+                        await asyncio.sleep(random.uniform(0.4, 0.8))
+
+                        # Try several option selectors common across ATS platforms
+                        option_selectors = [
+                            f"[role='option']:has-text('{safe_val}')",
+                            f"li[role='option']:has-text('{safe_val}')",
+                            f".select__option:has-text('{safe_val}')",
+                            f".react-select__option:has-text('{safe_val}')",
+                            f".select-shell-list-item:has-text('{safe_val}')",
+                            f"li:has-text('{safe_val}')",
+                        ]
+                        clicked = False
+                        for opt_sel in option_selectors:
+                            try:
+                                option_locator = page.locator(opt_sel).first
+                                if await option_locator.count() > 0:
+                                    await option_locator.click(timeout=3000)
+                                    clicked = True
+                                    break
+                            except Exception:
+                                continue
+
+                        if not clicked:
+                            # Fallback: type the value and press Enter (keyboard navigation)
+                            await page.keyboard.type(value_to_fill, delay=50)
+                            await asyncio.sleep(0.4)
+                            await page.keyboard.press("Enter")
+                            clicked = True
+
+                        if clicked:
+                            filled_count += 1
+                            did_fill = True
+                            logger.info(f"FILLED [custom-select] '{label}' = '{value_to_fill}'")
                     except Exception as exc:
                         logger.warning(f"Custom dropdown click failed for '{label}': {exc}")
+                        # Close any open menu
+                        try:
+                            await page.keyboard.press("Escape")
+                        except Exception:
+                            pass
                         if field.required:
                             required_failures.append((label, matched_key))
                 else:
@@ -599,10 +649,18 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
             else:
                 logger.debug(f"Unhandled field type '{field.field_type}' for '{label}'")
 
-            # Remember which logical field we satisfied so a hidden duplicate of the
-            # same field later in the DOM doesn't get counted as a missing required field.
             if did_fill and matched_key:
                 filled_keys.add(matched_key)
+
+            # ── LEARN: record this answer for future runs ───────────────────
+            # Only remember non-file fills, where we have a concrete value and
+            # a defensible source (rules / smart_infer / screening / profile).
+            # Don't store memory entries for memory recalls (already known).
+            if did_fill and answer_source and answer_source != "memory" and field.field_type != "file":
+                try:
+                    field_memory.remember(label, field.field_type, str(value_to_fill), answer_source)
+                except Exception as mem_exc:
+                    logger.debug(f"[Memory] remember failed (non-fatal): {mem_exc}")
 
             await asyncio.sleep(random.uniform(0.15, 0.5))
 
@@ -610,6 +668,14 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
             logger.error(f"FAILED to fill '{label}' ({field.selector}): {e}")
             if field.required:
                 required_failures.append((label, matched_key))
+                try:
+                    field_memory.record_failure(
+                        label, field.field_type, field.options,
+                        str(value_to_fill) if value_to_fill else None,
+                        f"exception: {type(e).__name__}: {str(e)[:200]}",
+                    )
+                except Exception:
+                    pass
 
     # ── Reconcile required failures against duplicates ──
     # A required field is only a *real* failure if its mapped key was never filled
