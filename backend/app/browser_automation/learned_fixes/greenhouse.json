@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "ats": "greenhouse",
+    "last_updated": 1781983876
+  },
+  "apply_button": [
+    "button[aria-label=\"Apply\"]"
+  ]
+}

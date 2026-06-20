@@ -38,6 +38,7 @@ celery_app = Celery(
         "app.tasks.resume_generation",
         "app.tasks.browser_automation",
         "app.tasks.email_scan",
+        "app.tasks.dynamic_apply",
     ]
 )
 
@@ -52,6 +53,7 @@ celery_app.conf.task_routes = {
     "task:prepare_application_package": {"queue": "queue:resume_generation"},
     "task:execute_application": {"queue": "queue:application_execution"},
     "task:retry_failed_application": {"queue": "queue:application_execution"},
+    "task:dynamic_apply": {"queue": "queue:application_execution"},
     "task:scan_candidate_inbox": {"queue": "queue:email_scan"},
     "task:refresh_analytics": {"queue": "queue:email_scan"},
 }
