@@ -12,8 +12,9 @@ from dotenv import load_dotenv
 
 from ..browser import BrowserContextManager
 from ..adapters import get_adapter, BasePlatformAdapter
-from ..forms import detect_form
+from ..forms import detect_form, fill_form, fill_form_with_llm
 from ..captcha import CaptchaService
+from ..agent import PageAgent, diagnose_failure, get_learned_fixes
 
 from .models import ApplicationPackage, ApplicationResult
 from .screenshot import capture_and_store_screenshot
@@ -180,6 +181,57 @@ class ApplicationExecutor:
             # ── STEP 5: Navigate ──
             await adapter.navigate_to_application(page, package.job_url)
 
+            # ── STEP 5.5: Vision page-agent oversight ─────────────────────
+            # After navigation, ask Gemini what page state we landed on. If
+            # the adapter missed an Apply button (we landed on a LISTING), the
+            # agent can find it from a screenshot + DOM and click — and the
+            # selector is learned for next time.
+            use_agent = os.getenv("USE_PAGE_AGENT", "true").lower() == "true"
+            if use_agent:
+                try:
+                    page_agent = PageAgent(ats=package.platform)
+                    state = await page_agent.classify_page(
+                        page, frame=getattr(adapter, "_frame", None),
+                    )
+                    logger.info(
+                        f"[Agent] page_state={state.kind} confidence={state.confidence:.2f} "
+                        f"reason={state.reason!r}"
+                    )
+                    if state.kind == "BLOCKED":
+                        raise RuntimeError(f"BLOCKED: vision-agent flagged page state: {state.reason}")
+                    if state.kind == "LISTING" and state.next_action == "click_apply":
+                        # Try the agent's suggested selector first, then any learned ones
+                        candidates: list = []
+                        if state.suggested_selector:
+                            candidates.append(state.suggested_selector)
+                        candidates.extend(get_learned_fixes(package.platform).get("apply_button"))
+                        clicked_via: Optional[str] = None
+                        for sel in candidates:
+                            try:
+                                loc = page.locator(sel).first
+                                if await loc.count() > 0 and await loc.is_visible():
+                                    await loc.scroll_into_view_if_needed()
+                                    await loc.click(timeout=6000)
+                                    clicked_via = sel
+                                    break
+                            except Exception:
+                                continue
+                        if not clicked_via:
+                            clicked_via = await page_agent.find_and_click(
+                                page, "apply_button", candidates,
+                                frame=getattr(adapter, "_frame", None),
+                            )
+                        if clicked_via:
+                            get_learned_fixes(package.platform).add("apply_button", clicked_via)
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                            except Exception:
+                                pass
+                except RuntimeError:
+                    raise
+                except Exception as exc:
+                    logger.warning(f"[Agent] classify/click-apply failed (non-fatal): {exc}")
+
             # ── STEP 6: Detect form (done inside fill_application; get ref for screening) ──
             ctx = adapter._frame if getattr(adapter, '_iframe_mode', False) else page
             form = await detect_form(ctx, container_selector=adapter.container_selector)
@@ -250,16 +302,59 @@ class ApplicationExecutor:
                 except Exception as exc:
                     logger.warning(f"[M4] M3 prepare-package call failed (non-fatal): {exc}")
 
-            # ── STEP 7: Fill form (pass pre-detected form to skip redundant scan) ──
-            fill_success = await adapter.fill_application(
-                page,
-                package.candidate_profile,
-                _temp_resume,
-                _temp_cover,
-                screening_answers,
-                pre_detected_form=form,
-            )
+            # ── STEP 7: Fill form ──
+            # If USE_LLM_FILLER=true, drive the fill through Gemini first. On
+            # LLM failure we fall back to the deterministic adapter path so the
+            # pipeline never blocks on the AI.
+            use_llm_fill = os.getenv("USE_LLM_FILLER", "true").lower() == "true"
+            fill_ctx = adapter._frame if getattr(adapter, "_iframe_mode", False) else page
+            fill_success = False
+            if use_llm_fill:
+                try:
+                    job_ctx = {
+                        "platform": package.platform,
+                        "ats_type": package.ats_type,
+                        "job_url": package.job_url,
+                    }
+                    fill_success = await fill_form_with_llm(
+                        fill_ctx,
+                        form,
+                        package.candidate_profile,
+                        screening_answers=screening_answers,
+                        job_context=job_ctx,
+                        resume_path=_temp_resume,
+                        cover_letter_path=_temp_cover,
+                    )
+                    logger.info(f"[M4] LLM filler returned success={fill_success}")
+                except Exception as exc:
+                    logger.warning(f"[M4] LLM filler raised — falling back to adapter: {exc}")
+                    fill_success = False
             if not fill_success:
+                # Adapter path includes file uploads and re-scans (e.g. Greenhouse)
+                fill_success = await adapter.fill_application(
+                    page,
+                    package.candidate_profile,
+                    _temp_resume,
+                    _temp_cover,
+                    screening_answers,
+                    pre_detected_form=form,
+                )
+            if not fill_success:
+                # Diagnose what went wrong before we bail. The result is written
+                # to learned_fixes/ for the next run.
+                try:
+                    from pathlib import Path as _P
+                    adapter_module_path = _P(__file__).resolve().parents[1] / "adapters" / f"{package.platform.lower()}.py"
+                    await diagnose_failure(
+                        page=page,
+                        ats=package.platform,
+                        action="fill_form",
+                        failure_reason="one or more required fields could not be filled",
+                        adapter_source_path=adapter_module_path if adapter_module_path.exists() else None,
+                        frame=getattr(adapter, "_frame", None),
+                    )
+                except Exception as exc:
+                    logger.warning(f"[M4] diagnose_failure non-fatal exception: {exc}")
                 raise Exception("Form fill incomplete — one or more required fields could not be filled")
 
             # ── STEP 8: Captcha ──
@@ -308,7 +403,39 @@ class ApplicationExecutor:
                 confirmation_text = "DRY RUN SUCCESS (no submit)"
             else:
                 submitted = await adapter.submit(page)
+                if not submitted and use_agent:
+                    # Adapter selectors missed — try the vision agent before failing.
+                    try:
+                        page_agent = PageAgent(ats=package.platform)
+                        tried = get_learned_fixes(package.platform).get("submit")
+                        clicked_via = await page_agent.find_and_click(
+                            page, "submit", tried,
+                            frame=getattr(adapter, "_frame", None),
+                        )
+                        if clicked_via:
+                            get_learned_fixes(package.platform).add("submit", clicked_via)
+                            try:
+                                await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                            except Exception:
+                                pass
+                            submitted = True
+                    except Exception as exc:
+                        logger.warning(f"[Agent] vision submit recovery failed: {exc}")
                 if not submitted:
+                    # Last-resort diagnosis before bailing
+                    try:
+                        from pathlib import Path as _P
+                        adapter_module_path = _P(__file__).resolve().parents[1] / "adapters" / f"{package.platform.lower()}.py"
+                        await diagnose_failure(
+                            page=page,
+                            ats=package.platform,
+                            action="submit",
+                            failure_reason="all submit selectors missed",
+                            adapter_source_path=adapter_module_path if adapter_module_path.exists() else None,
+                            frame=getattr(adapter, "_frame", None),
+                        )
+                    except Exception:
+                        pass
                     raise Exception("Submit click failed — no submit button found or click unsuccessful")
                 verified, confirmation_text = await adapter.verify_success(page)
 

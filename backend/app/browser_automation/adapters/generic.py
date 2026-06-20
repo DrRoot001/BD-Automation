@@ -1,55 +1,136 @@
+"""Generic fallback adapter — used when no platform-specific adapter matches.
+
+Best-effort filling for unknown ATS platforms. Uses learned_fixes for the
+Apply and Submit channels so even unknown platforms benefit from the
+cross-run learning loop.
+"""
+from __future__ import annotations
+
+import logging
 from typing import Optional, Tuple
+
 from playwright.async_api import Page
+
 from .base import BasePlatformAdapter
+from ..agent import get_learned_fixes
 from ..forms import detect_form, fill_form, upload_file
+
+logger = logging.getLogger(__name__)
+
+
+_APPLY_SELECTORS = [
+    "a:has-text('Apply for this job')",
+    "a:has-text('Apply Now')",
+    "a:has-text('Apply')",
+    "button:has-text('Apply for this job')",
+    "button:has-text('Apply Now')",
+    "button:has-text('Apply')",
+]
+
+_SUBMIT_SELECTORS = [
+    "button[type='submit']",
+    "input[type='submit']",
+    "button:has-text('Submit Application')",
+    "button:has-text('Submit application')",
+    "button:has-text('Send Application')",
+    "button:has-text('Submit')",
+    "button:has-text('Apply')",
+]
+
+_SUCCESS_PATTERNS = (
+    "thank you for applying",
+    "thank you",
+    "application received",
+    "successfully submitted",
+    "we'll be in touch",
+    "application complete",
+    "your application has been",
+)
+
 
 class GenericFormAdapter(BasePlatformAdapter):
     platform_name = "generic"
 
     async def navigate_to_application(self, page: Page, job_url: str) -> None:
-        await page.goto(job_url, wait_until="domcontentloaded")
-        await self.human_delay()
+        try:
+            await page.goto(job_url, wait_until="domcontentloaded", timeout=25_000)
+        except Exception as exc:
+            logger.warning(f"[Generic] navigate timeout: {exc}")
+        await self.human_delay(0.8, 1.6)
+
+        # If there are no form inputs visible, try clicking an Apply button.
+        try:
+            await page.locator("input, textarea, select").first.wait_for(state="attached", timeout=2_500)
+            return
+        except Exception:
+            pass
+
+        learned = get_learned_fixes("generic").get("apply_button")
+        for sel in learned + [s for s in _APPLY_SELECTORS if s not in learned]:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(timeout=5_000)
+                    await page.wait_for_load_state("domcontentloaded", timeout=12_000)
+                    get_learned_fixes("generic").add("apply_button", sel)
+                    break
+            except Exception:
+                continue
 
     async def detect_application_type(self, page: Page) -> str:
         form = await detect_form(page, container_selector=self.container_selector)
         return form.form_type
 
-    async def fill_application(self, page: Page, profile: dict, resume_path: str, cover_letter_path: Optional[str], screening_answers: Optional[dict]) -> bool:
-        form = await detect_form(page, container_selector=self.container_selector)
+    async def fill_application(
+        self,
+        page: Page,
+        profile: dict,
+        resume_path: str,
+        cover_letter_path: Optional[str],
+        screening_answers: Optional[dict],
+        pre_detected_form=None,
+    ) -> bool:
+        form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
         fill_success = await fill_form(page, form, profile, screening_answers)
-        
+
         for field in form.fields:
-            if field.field_type == "file":
-                if "resume" in field.label.lower() or "cv" in field.label.lower():
-                    await upload_file(page, field.selector, resume_path)
-                elif cover_letter_path and "cover letter" in field.label.lower():
-                    await upload_file(page, field.selector, cover_letter_path)
-                
+            if field.field_type != "file":
+                continue
+            lbl = (field.label or "").lower()
+            if cover_letter_path and "cover" in lbl:
+                await upload_file(page, field.selector, cover_letter_path)
+            elif "resume" in lbl or "cv" in lbl or not any(k in lbl for k in ("cover", "other")):
+                await upload_file(page, field.selector, resume_path)
+
         return fill_success
 
     async def submit(self, page: Page) -> bool:
-        selectors = [
-            "button[type=submit]", 
-            "input[type=submit]", 
-            "button:has-text('Submit')", 
-            "button:has-text('Apply')", 
-            "button:has-text('Send Application')"
-        ]
-        for selector in selectors:
-            btn = await page.query_selector(selector)
-            if btn:
-                await btn.click()
-                await self.human_delay()
-                return True
+        learned = get_learned_fixes("generic").get("submit")
+        for sel in learned + [s for s in _SUBMIT_SELECTORS if s not in learned]:
+            try:
+                btn = page.locator(sel).first
+                if await btn.count() > 0:
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(timeout=6_000)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=12_000)
+                    except Exception:
+                        pass
+                    await self.human_delay(0.8, 1.6)
+                    get_learned_fixes("generic").add("submit", sel)
+                    logger.info(f"[Generic] submit via {sel!r}")
+                    return True
+            except Exception as exc:
+                logger.debug(f"[Generic] submit selector {sel!r} failed: {exc}")
         return False
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        content = (await page.content()).lower()
-        success_patterns = [
-            "thank you", "application received", "successfully submitted", 
-            "we'll be in touch", "application complete"
-        ]
-        for pattern in success_patterns:
+        try:
+            content = (await page.content()).lower()
+        except Exception:
+            return False, None
+        for pattern in _SUCCESS_PATTERNS:
             if pattern in content:
                 return True, pattern
         return False, None

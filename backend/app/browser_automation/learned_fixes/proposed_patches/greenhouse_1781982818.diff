@@ -1,0 +1,35 @@
+--- a/backend/app/browser_automation/adapters/greenhouse.py
++++ b/backend/app/browser_automation/adapters/greenhouse.py
+@@ -280,7 +280,35 @@ class GreenhouseAdapter(BasePlatformAdapter):
+         # Positional fallback ONLY if …
++        # If we couldn't match by label, fall back to positional assignment
++        if resume_slot is None and resume_path and count > 0:
++            resume_slot = 0
++        if cover_slot is None and cover_letter_path and count > 1:
++            cover_slot = 1
++
++        # Upload resume
++        if resume_path and resume_slot is not None:
++            try:
++                logger.info(f"[GH] Uploading resume to slot {resume_slot}")
++                await upload_file(
++                    gh_inputs.nth(resume_slot),
++                    resume_path,
++                    page,
++                )
++                logger.info(f"[GH] Resume uploaded successfully")
++            except Exception as exc:
++                logger.error(f"[GH] Resume upload failed: {exc}")
++
++        # Upload cover letter
++        if cover_letter_path and cover_slot is not None:
++            try:
++                logger.info(f"[GH] Uploading cover letter to slot {cover_slot}")
++                await upload_file(
++                    gh_inputs.nth(cover_slot),
++                    cover_letter_path,
++                    page,
++                )
++                logger.info(f"[GH] Cover letter uploaded successfully")
++            except Exception as exc:
++                logger.error(f"[GH] Cover letter upload failed: {exc}")

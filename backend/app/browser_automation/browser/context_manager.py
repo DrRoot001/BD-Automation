@@ -99,14 +99,70 @@ class BrowserContextManager:
 
     async def get_context(self, candidate_id: str, platform: str) -> BrowserContext:
         config: StealthConfig = get_stealth_config(candidate_id)
-        
+
         redis_client = await self._get_redis()
         session_key = f"session:{candidate_id}:{platform}"
         session_data = await redis_client.get(session_key)
-        
+
         if self._playwright is None:
             self._playwright = await async_playwright().start()
-        
+
+        # ── rektCaptcha extension support ─────────────────────────────────────
+        # When REKTCAPTCHA_EXT_PATH points at an unpacked extension directory
+        # (or several, comma-separated), we launch a PERSISTENT context with the
+        # extension loaded. Persistent context is required because Chrome
+        # extensions cannot be loaded into the default (incognito) context.
+        ext_path = os.getenv("REKTCAPTCHA_EXT_PATH", "").strip()
+        use_extension = bool(ext_path) and any(
+            os.path.isdir(p.strip()) for p in ext_path.split(",") if p.strip()
+        )
+
+        if use_extension:
+            headless = False  # extensions require a head; rektCaptcha needs one too
+            ext_args = [
+                f"--disable-extensions-except={ext_path}",
+                f"--load-extension={ext_path}",
+                "--disable-blink-features=AutomationControlled",
+                "--disable-infobars",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--start-maximized",
+            ]
+            user_data_dir = os.getenv(
+                "PLAYWRIGHT_USER_DATA_DIR",
+                os.path.join(os.getcwd(), ".pw-userdata", candidate_id),
+            )
+            os.makedirs(user_data_dir, exist_ok=True)
+            launch_context_kwargs = dict(
+                user_data_dir=user_data_dir,
+                headless=headless,
+                args=ext_args,
+                viewport=config.viewport,
+                user_agent=config.user_agent,
+                timezone_id=config.timezone,
+                locale=config.locale,
+            )
+            try:
+                persistent_ctx = await self._playwright.chromium.launch_persistent_context(
+                    channel="chrome", **launch_context_kwargs
+                )
+                logger.info(f"[Browser] Persistent context w/ rektCaptcha @ {ext_path}")
+            except Exception as exc:
+                logger.warning(f"[Browser] Chrome channel unavailable for persistent ctx ({exc}); falling back to chromium")
+                persistent_ctx = await self._playwright.chromium.launch_persistent_context(
+                    **launch_context_kwargs
+                )
+            await persistent_ctx.add_init_script(STEALTH_JS)
+            if session_data:
+                try:
+                    cookies = json.loads(session_data)
+                    await persistent_ctx.add_cookies(cookies)
+                except Exception as exc:
+                    logger.warning(f"[Browser] Could not restore cookies into persistent ctx: {exc}")
+            # Stash so destroy_context() can close it cleanly
+            self._persistent_ctx = persistent_ctx
+            return persistent_ctx
+
         if self._browser is None:
             # Use the real installed Chrome (channel="chrome") to get an authentic TLS fingerprint
             # that bypasses CloudFront/Akamai WAF bot detection which blocks bundled Chromium.

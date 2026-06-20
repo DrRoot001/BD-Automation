@@ -4,6 +4,7 @@ from typing import Optional, Tuple
 from playwright.async_api import Page, Frame
 from .base import BasePlatformAdapter
 from ..forms import detect_form, fill_form, upload_file
+from ..agent import get_learned_fixes
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,10 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
         if not has_inputs:
             logger.info("[GH] No form inputs detected yet — looking for Apply button")
-            for sel in _APPLY_SELECTORS:
+            # Try learned selectors first — they were proven to work last time.
+            learned = get_learned_fixes("greenhouse").get("apply_button")
+            apply_candidates = learned + [s for s in _APPLY_SELECTORS if s not in learned]
+            for sel in apply_candidates:
                 try:
                     btn = page.locator(sel).first
                     if await btn.count() > 0 and await btn.is_visible():
@@ -342,7 +346,7 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
         for info in file_info:
             logger.info(f"[GH] File input #{info['index']} matched heading: "
-                        f"'{info['matched']}' → purpose={info['purpose']}")
+                        f"'{info['matched']}' -> purpose={info['purpose']}")
             if info["purpose"] == "resume" and resume_slot is None:
                 resume_slot = info["index"]
             elif info["purpose"] == "cover" and cover_slot is None:
@@ -384,14 +388,16 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
     async def submit(self, page: Page) -> bool:
         ctx = self._frame if self._iframe_mode else page
-        # Try multiple submit selectors in priority order
-        selectors = [
+        # Try learned selectors first, then the hardcoded fallback list
+        learned = get_learned_fixes("greenhouse").get("submit")
+        hardcoded = [
             "button[type='submit']",
             "#submit_app",
             "input[type='submit']",
             "button:has-text('Submit Application')",
             "button:has-text('Submit')",
         ]
+        selectors = learned + [s for s in hardcoded if s not in learned]
         for sel in selectors:
             try:
                 btn = ctx.locator(sel).first
