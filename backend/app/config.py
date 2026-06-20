@@ -16,6 +16,7 @@ class Settings(BaseSettings):
     google_client_id: str = ""
     google_client_secret: str = ""
 
+
     # JWT
     access_token_expire_minutes: int = 60 * 24  # 1 day
 
