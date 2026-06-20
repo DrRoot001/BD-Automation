@@ -12,6 +12,7 @@ import { PlatformStatsChart } from '@/components/PlatformStatsChart'
 import CandidateProfileForm from '@/components/CandidateProfileForm'
 import { useState, useCallback, useEffect } from 'react'
 import { clsx } from 'clsx'
+import { Send, Zap, Target, TrendingUp, Hourglass, XCircle, Award, Sun } from 'lucide-react'
 
 
 function WSStatus({ connected }: { connected: boolean }) {
@@ -138,8 +139,8 @@ export default function DashboardPage() {
       <div className="max-w-screen-2xl mx-auto px-6 pt-8 pb-4">
         <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-2">
           <div>
-            <h1 className="text-2xl font-bold text-text-primary">
-              {greeting} 👋
+            <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2">
+              <Sun className="w-6 h-6 text-warning" /> {greeting}
             </h1>
             <p className="text-text-muted text-sm mt-0.5">
               {dateString}
@@ -149,8 +150,8 @@ export default function DashboardPage() {
           </div>
 
           {analytics?.avg_time_to_response_hours != null && (
-            <div className="text-xs text-text-muted bg-bg-card border border-bg-border rounded-xl px-4 py-2">
-              ⚡ Avg response time:{' '}
+            <div className="text-xs text-text-muted bg-bg-card border border-bg-border rounded-xl px-4 py-2 flex items-center gap-1.5">
+              <Zap className="w-3.5 h-3.5 text-accent" /> Avg response time:{' '}
               <span className="text-accent font-semibold">
                 {analytics.avg_time_to_response_hours.toFixed(1)}h
               </span>
@@ -186,7 +187,7 @@ export default function DashboardPage() {
             <KPICard
               label="Total Applied"
               value={kpis?.total_applied ?? 0}
-              icon="📤"
+              icon={<Send className="w-5 h-5" />}
               accent="accent"
               loading={kpisLoading}
               subtext="all time"
@@ -194,7 +195,7 @@ export default function DashboardPage() {
             <KPICard
               label="Applied Today"
               value={kpis?.applied_today ?? 0}
-              icon="⚡"
+              icon={<Zap className="w-5 h-5" />}
               accent="info"
               loading={kpisLoading}
               subtext="since midnight"
@@ -202,7 +203,7 @@ export default function DashboardPage() {
             <KPICard
               label="Interviews This Week"
               value={kpis?.interviews_this_week ?? 0}
-              icon="🎯"
+              icon={<Target className="w-5 h-5" />}
               accent="purple"
               loading={kpisLoading}
               subtext="next 7 days"
@@ -210,7 +211,7 @@ export default function DashboardPage() {
             <KPICard
               label="Success Rate"
               value={`${kpis?.success_rate?.toFixed(1) ?? '0.0'}%`}
-              icon="📈"
+              icon={<TrendingUp className="w-5 h-5" />}
               accent="success"
               loading={kpisLoading}
               subtext="interviews / applied"
@@ -218,7 +219,7 @@ export default function DashboardPage() {
             <KPICard
               label="In Queue"
               value={kpis?.pending_in_queue ?? 0}
-              icon="⏳"
+              icon={<Hourglass className="w-5 h-5" />}
               accent="warning"
               loading={kpisLoading}
               subtext="pending automation"
@@ -226,7 +227,7 @@ export default function DashboardPage() {
             <KPICard
               label="Rejected"
               value={kpis?.total_rejected ?? 0}
-              icon="❌"
+              icon={<XCircle className="w-5 h-5" />}
               accent="danger"
               loading={kpisLoading}
               subtext="all time"
@@ -234,7 +235,7 @@ export default function DashboardPage() {
             <KPICard
               label="Offers"
               value={kpis?.total_offers ?? 0}
-              icon="🎉"
+              icon={<Award className="w-5 h-5" />}
               accent="success"
               loading={kpisLoading}
               subtext="congratulations!"

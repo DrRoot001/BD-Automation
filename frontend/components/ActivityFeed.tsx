@@ -4,25 +4,30 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type ActivityEvent } from '@/lib/api'
 import { formatDistanceToNow } from './utils'
 import { clsx } from 'clsx'
+import { RefreshCcw, Send, XCircle, Mail, Target, Search, FileText, Inbox } from 'lucide-react'
+import { ReactNode } from 'react'
 
-const EVENT_CONFIG: Record<
-  string,
-  { icon: string; color: string; label: string }
-> = {
-  'application.status_changed': { icon: '🔄', color: 'text-accent',  label: 'Status Update' },
-  'application.submitted':      { icon: '📤', color: 'text-info',    label: 'Submitted' },
-  'application.failed':         { icon: '❌', color: 'text-danger',  label: 'Failed' },
-  'email.classified':           { icon: '📧', color: 'text-purple',  label: 'Email' },
-  'interview.detected':         { icon: '🎯', color: 'text-success', label: 'Interview' },
-  'job.discovered':             { icon: '🔍', color: 'text-warning', label: 'Job Found' },
+function getEventConfig(eventType: string): { icon: ReactNode; color: string; label: string } {
+  switch (eventType) {
+    case 'application.status_changed':
+      return { icon: <RefreshCcw className="w-4 h-4" />, color: 'text-accent', label: 'Status Update' }
+    case 'application.submitted':
+      return { icon: <Send className="w-4 h-4" />, color: 'text-info', label: 'Submitted' }
+    case 'application.failed':
+      return { icon: <XCircle className="w-4 h-4" />, color: 'text-danger', label: 'Failed' }
+    case 'email.classified':
+      return { icon: <Mail className="w-4 h-4" />, color: 'text-purple', label: 'Email' }
+    case 'interview.detected':
+      return { icon: <Target className="w-4 h-4" />, color: 'text-success', label: 'Interview' }
+    case 'job.discovered':
+      return { icon: <Search className="w-4 h-4" />, color: 'text-warning', label: 'Job Found' }
+    default:
+      return { icon: <FileText className="w-4 h-4" />, color: 'text-text-muted', label: eventType }
+  }
 }
 
 function EventItem({ event }: { event: ActivityEvent }) {
-  const cfg = EVENT_CONFIG[event.event_type] ?? {
-    icon: '📋',
-    color: 'text-text-muted',
-    label: event.event_type,
-  }
+  const cfg = getEventConfig(event.event_type)
 
   return (
     <div className="flex items-start gap-3 px-5 py-3 table-row-hover">
@@ -30,7 +35,8 @@ function EventItem({ event }: { event: ActivityEvent }) {
       <div
         className={clsx(
           'w-8 h-8 rounded-full bg-bg-secondary border border-bg-border',
-          'flex items-center justify-center text-base shrink-0 mt-0.5',
+          'flex items-center justify-center shrink-0 mt-0.5',
+          cfg.color
         )}
       >
         {cfg.icon}
@@ -100,8 +106,8 @@ export function ActivityFeed() {
             Failed to load activity
           </div>
         ) : events.length === 0 ? (
-          <div className="p-10 text-center">
-            <div className="text-4xl mb-3">📭</div>
+          <div className="p-10 text-center flex flex-col items-center">
+            <Inbox className="w-10 h-10 text-text-muted mb-3" />
             <div className="text-text-muted text-sm">No activity yet.</div>
           </div>
         ) : (

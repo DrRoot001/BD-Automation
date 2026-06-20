@@ -4,6 +4,8 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
 import { formatDistanceToNow } from './utils'
+import { Briefcase, Search, Sprout, Zap, Building, Target, Globe, Rocket, FileText } from 'lucide-react'
+import { ReactNode } from 'react'
 
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase()
@@ -26,25 +28,17 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-const PLATFORM_EMOJI: Record<string, string> = {
-  linkedin:          '💼',
-  indeed:            '🔍',
-  greenhouse:        '🌱',
-  lever:             '⚡',
-  workday:           '🏢',
-  ashby:             '🎯',
-  glassdoor:         '🔮',
-  angellist:         '🚀',
-  wellfound:         '🚀',
-  smartrecruiters:   '🎯',
-}
-
-function getPlatformEmoji(platform: string): string {
+function getPlatformIcon(platform: string): ReactNode {
   const key = platform.toLowerCase()
-  for (const [k, v] of Object.entries(PLATFORM_EMOJI)) {
-    if (key.includes(k)) return v
-  }
-  return '📋'
+  if (key.includes('linkedin')) return <Briefcase className="w-4 h-4" />
+  if (key.includes('indeed')) return <Search className="w-4 h-4" />
+  if (key.includes('greenhouse')) return <Sprout className="w-4 h-4" />
+  if (key.includes('lever')) return <Zap className="w-4 h-4" />
+  if (key.includes('workday')) return <Building className="w-4 h-4" />
+  if (key.includes('ashby') || key.includes('smartrecruiters')) return <Target className="w-4 h-4" />
+  if (key.includes('glassdoor')) return <Globe className="w-4 h-4" />
+  if (key.includes('angellist') || key.includes('wellfound')) return <Rocket className="w-4 h-4" />
+  return <FileText className="w-4 h-4" />
 }
 
 export function ApplicationsQueue() {
@@ -114,7 +108,7 @@ export function ApplicationsQueue() {
                   </td>
                   <td className="px-3 py-3">
                     <span className="flex items-center gap-1.5 text-text-secondary">
-                      {getPlatformEmoji(app.platform)}
+                      {getPlatformIcon(app.platform)}
                       <span className="capitalize text-xs">{app.platform}</span>
                     </span>
                   </td>

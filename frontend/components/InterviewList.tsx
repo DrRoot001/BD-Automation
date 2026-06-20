@@ -4,12 +4,17 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type InterviewSummary } from '@/lib/api'
 import { formatScheduled } from './utils'
 import { clsx } from 'clsx'
+import { Phone, Video, Building, FileSignature, ClipboardList, Target, Calendar, Link } from 'lucide-react'
+import { ReactNode } from 'react'
 
-const TYPE_ICON: Record<string, string> = {
-  phone:      '📞',
-  video:      '🎥',
-  onsite:     '🏢',
-  assessment: '📝',
+function getTypeIcon(type: string): ReactNode {
+  switch (type) {
+    case 'phone': return <Phone className="w-3 h-3 mr-1" />
+    case 'video': return <Video className="w-3 h-3 mr-1" />
+    case 'onsite': return <Building className="w-3 h-3 mr-1" />
+    case 'assessment': return <FileSignature className="w-3 h-3 mr-1" />
+    default: return <ClipboardList className="w-3 h-3 mr-1" />
+  }
 }
 
 function TypeBadge({ type }: { type: string }) {
@@ -20,8 +25,8 @@ function TypeBadge({ type }: { type: string }) {
     assessment: 'bg-warning/10 text-warning border-warning/20',
   }
   return (
-    <span className={clsx('badge border', map[type] ?? 'badge-found')}>
-      {TYPE_ICON[type] ?? '📋'} {type}
+    <span className={clsx('badge border flex items-center', map[type] ?? 'badge-found')}>
+      {getTypeIcon(type)} {type}
     </span>
   )
 }
@@ -74,8 +79,8 @@ export function InterviewList() {
             Failed to load interviews
           </div>
         ) : interviews.length === 0 ? (
-          <div className="p-10 text-center">
-            <div className="text-4xl mb-3">🎯</div>
+          <div className="p-10 text-center flex flex-col items-center">
+            <Target className="w-10 h-10 text-text-muted mb-3" />
             <div className="text-text-muted text-sm">No upcoming interviews yet.</div>
             <div className="text-text-muted text-xs mt-1">
               Emails with interview invitations will appear here automatically.
@@ -107,7 +112,7 @@ export function InterviewList() {
 
                   {/* Scheduled time */}
                   <div className="flex items-center gap-1.5 mt-2 text-xs text-text-muted">
-                    <span>📅</span>
+                    <Calendar className="w-3.5 h-3.5" />
                     <span
                       className={clsx(
                         iv.scheduled_at ? 'text-warning' : 'text-text-muted',
@@ -125,18 +130,18 @@ export function InterviewList() {
                       href={iv.meeting_url}
                       target="_blank"
                       rel="noopener noreferrer"
-                      className="btn-success text-xs py-1.5 px-3"
+                      className="btn-success text-xs py-1.5 px-3 flex items-center justify-center gap-1.5"
                     >
-                      🔗 Join
+                      <Link className="w-3 h-3" /> Join
                     </a>
                   )}
                   <a
                     href={addToCalendarLink(iv)}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="btn-secondary text-xs py-1.5 px-3"
+                    className="btn-secondary text-xs py-1.5 px-3 flex items-center justify-center gap-1.5"
                   >
-                    📅 Calendar
+                    <Calendar className="w-3 h-3" /> Calendar
                   </a>
                 </div>
               </div>
