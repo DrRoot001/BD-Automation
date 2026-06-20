@@ -7,6 +7,8 @@ class FormField(BaseModel):
     label: str
     required: bool
     options: Optional[List[str]] = None
+    raw_values: Optional[List[str]] = None
+    custom_widget: bool = False
     value: Optional[str] = None
 
 class DetectedForm(BaseModel):

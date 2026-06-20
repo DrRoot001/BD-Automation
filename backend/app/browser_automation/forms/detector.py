@@ -10,25 +10,24 @@ logger = logging.getLogger(__name__)
 
 async def pre_scan_scroll(page: Page):
     """Smoothly scrolls the page down and back up to trigger lazy-loaded elements.
-    Uses incremental scrolling (like a human reading) rather than instant jumps."""
-    viewport = page.viewport_size or {"height": 800}
+    Uses incremental scrolling (like a human reading) rather than instant jumps.
+    Works with both Page and Frame objects."""
+    # Frame objects don't have viewport_size — fall back gracefully.
+    viewport = getattr(page, "viewport_size", None) or {"height": 800}
     scroll_step = viewport["height"] * 0.6  # Scroll ~60% of viewport at a time
 
     # Get total scrollable height
     total_height = await page.evaluate("document.body.scrollHeight")
 
-    # Scroll down incrementally
     current = 0
     while current < total_height:
         current += scroll_step
-        await page.evaluate(f"window.scrollTo({{ top: {current}, behavior: 'smooth' }})")
-        await asyncio.sleep(0.4)
-        # Re-check height (lazy loads might have added content)
+        await page.evaluate(f"window.scrollTo({{ top: {current}, behavior: 'instant' }})")
+        await asyncio.sleep(0.15)
         total_height = await page.evaluate("document.body.scrollHeight")
 
-    # Scroll back to top
-    await page.evaluate("window.scrollTo({ top: 0, behavior: 'smooth' })")
-    await asyncio.sleep(0.5)
+    await page.evaluate("window.scrollTo({ top: 0, behavior: 'instant' })")
+    await asyncio.sleep(0.2)
 
 
 def _clean_label(text: str) -> str:
@@ -121,7 +120,7 @@ async def _extract_radio_group_label(page: Page, el) -> str:
     that describes the entire group (not the individual radio option).
     """
     group_label = await el.evaluate("""el => {
-        // Strategy 1: Find the radio-group/checkbox-group container, 
+        // Strategy 1: Find the radio-group/checkbox-group container,
         // then look for a preceding sibling label
         let radioGroup = el.closest('.radio-group, .checkbox-group, [role="radiogroup"], [role="group"]');
         if (radioGroup) {
@@ -133,14 +132,12 @@ async def _extract_radio_group_label(page: Page, el) -> str:
                 prev = prev.previousElementSibling;
             }
         }
-        
+
         // Strategy 2: Traverse up to form-group/fieldset and find a label/legend
-        let container = el.closest('.form-group, .field-group, fieldset, .form-field, .form-row');
+        let container = el.closest('.form-group, .field-group, fieldset, .form-field, .form-row, .field');
         if (container) {
-            // Look for a direct child label or legend that isn't wrapping the radio
-            let labels = container.querySelectorAll(':scope > label, :scope > legend, :scope > .form-group > label');
+            let labels = container.querySelectorAll(':scope > label, :scope > legend, :scope > span, :scope > .form-group > label');
             for (let lbl of labels) {
-                // Skip labels that directly wrap a radio/checkbox input
                 let hasInput = lbl.querySelector('input[type="radio"], input[type="checkbox"]');
                 if (!hasInput && lbl.textContent.trim().length > 2) {
                     return lbl.textContent.trim();
@@ -148,32 +145,36 @@ async def _extract_radio_group_label(page: Page, el) -> str:
             }
         }
 
-        // Strategy 3: Walk up through nested divs to find a label
+        // Strategy 3: Walk up through nested divs to find a label or question text
         let parent = el.parentElement;
         let depth = 0;
-        while (parent && depth < 5) {
-            let prevSib = parent.previousElementSibling;
-            if (prevSib && (prevSib.tagName === 'LABEL' || prevSib.tagName === 'LEGEND')) {
-                return prevSib.textContent.trim();
-            }
-            // Check if parent has a child label before the radio group
-            let firstLabel = parent.querySelector(':scope > label');
-            if (firstLabel) {
-                let hasInput = firstLabel.querySelector('input[type="radio"], input[type="checkbox"]');
-                if (!hasInput && firstLabel.textContent.trim().length > 2) {
-                    return firstLabel.textContent.trim();
+        while (parent && depth < 8) {
+            // Check all labels in this container that don't wrap a radio/checkbox
+            let labels = parent.querySelectorAll(':scope > label, :scope > legend, :scope > span.label');
+            for (let lbl of labels) {
+                let hasInput = lbl.querySelector('input[type="radio"], input[type="checkbox"]');
+                if (!hasInput && lbl.textContent.trim().length > 3) {
+                    return lbl.textContent.trim();
                 }
+            }
+            // Greenhouse-specific: look for question text in parent's text content
+            // excluding child input/label text
+            let clone = parent.cloneNode(true);
+            clone.querySelectorAll('input, .option-label, label:has(input)').forEach(c => c.remove());
+            let cleanText = clone.textContent.trim();
+            if (cleanText.length > 5 && /[a-zA-Z?]/.test(cleanText)) {
+                return cleanText.substring(0, 200);
             }
             parent = parent.parentElement;
             depth++;
         }
-        
+
         return '';
     }""")
     return _clean_label(group_label) if group_label else ""
 
 
-async def detect_form(page: Page, container_selector: Optional[str] = None) -> DetectedForm:
+async def detect_form(page: Page, container_selector: Optional[str] = None, skip_scroll: bool = False) -> DetectedForm:
     """Detect and analyze all form fields on the page or within a container.
     
     Performs a human-like pre-scan scroll to trigger lazy-loaded content,
@@ -184,7 +185,8 @@ async def detect_form(page: Page, container_selector: Optional[str] = None) -> D
     with options (like a select dropdown), making it easier for the filler
     to choose the right value.
     """
-    await pre_scan_scroll(page)
+    if not skip_scroll:
+        await pre_scan_scroll(page)
 
     # Query all interactive form elements
     if container_selector:
@@ -204,17 +206,31 @@ async def detect_form(page: Page, container_selector: Optional[str] = None) -> D
 
     for el in elements:
         # Skip hidden inputs (except file inputs which are often hidden for styling)
-        is_hidden = await el.evaluate("""el => {
-            if (el.type === 'hidden') return true;
-            if (el.type === 'file') return false;
+        hidden_info = await el.evaluate("""el => {
+            if (el.type === 'hidden') return {hidden: true, reason: 'type=hidden'};
+            if (el.type === 'file') return {hidden: false, reason: 'file'};
             let style = window.getComputedStyle(el);
-            if (style.display === 'none' || style.visibility === 'hidden' || el.offsetParent === null) return true;
+            if (style.display === 'none') return {hidden: true, reason: 'display:none'};
+            // Allow visibility:hidden for radio/checkbox — Greenhouse uses CSS-overlay technique
+            if (style.visibility === 'hidden' && el.type !== 'radio' && el.type !== 'checkbox')
+                return {hidden: true, reason: 'visibility:hidden'};
+            // offsetParent is null for position:fixed elements too — don't filter those
+            if (el.offsetParent === null && style.position !== 'fixed' && style.position !== 'sticky')
+                return {hidden: true, reason: 'offsetParent=null'};
             let rect = el.getBoundingClientRect();
-            if (rect.width === 0 || rect.height === 0) return true;
-            if (style.opacity === '0') return true;
-            return false;
+            // Allow zero-size for radio/checkbox — they're often visually replaced with CSS
+            if ((rect.width === 0 || rect.height === 0) && el.type !== 'radio' && el.type !== 'checkbox')
+                return {hidden: true, reason: 'zero-size'};
+            // Allow opacity:0 for radio/checkbox — Greenhouse and many ATS platforms
+            // hide the native input and overlay custom-styled elements
+            if (style.opacity === '0' && el.type !== 'radio' && el.type !== 'checkbox')
+                return {hidden: true, reason: 'opacity:0'};
+            return {hidden: false, reason: 'visible'};
         }""")
-        if is_hidden:
+        if hidden_info.get("hidden"):
+            name_or_id = await el.get_attribute("name") or await el.get_attribute("id") or "?"
+            type_attr = await el.get_attribute("type") or "text"
+            logger.debug(f"Filtered out: type={type_attr}, name={name_or_id}, reason={hidden_info['reason']}")
             continue
 
         tag_name = await el.evaluate("el => el.tagName.toLowerCase()")
@@ -227,7 +243,6 @@ async def detect_form(page: Page, container_selector: Optional[str] = None) -> D
         if type_attr == "radio" and name_attr:
             value_attr = await el.get_attribute("value") or ""
             if name_attr not in radio_groups:
-                # First radio of this group — extract the group question label
                 group_label = await _extract_radio_group_label(page, el)
                 required_attr = await el.get_attribute("required")
                 aria_required = await el.get_attribute("aria-required")
@@ -235,13 +250,32 @@ async def detect_form(page: Page, container_selector: Optional[str] = None) -> D
                 radio_groups[name_attr] = {
                     "label": group_label,
                     "options": [],
+                    "values": [],
                     "required": required,
                     "selector": f"input[name='{name_attr}']",
                 }
-            # Add this radio's value as an option
             if value_attr:
-                radio_groups[name_attr]["options"].append(value_attr)
-            continue  # Don't add individual radios to fields list
+                radio_groups[name_attr]["values"].append(value_attr)
+                # Get visible text label for this radio option
+                visible_text = await el.evaluate("""el => {
+                    // Check wrapping <label> text (excluding the input itself)
+                    let lbl = el.closest('label');
+                    if (lbl) {
+                        let clone = lbl.cloneNode(true);
+                        clone.querySelectorAll('input').forEach(c => c.remove());
+                        let t = clone.textContent.trim();
+                        if (t.length > 0) return t;
+                    }
+                    // Check next sibling text
+                    let next = el.nextSibling;
+                    if (next && next.nodeType === 3 && next.textContent.trim())
+                        return next.textContent.trim();
+                    if (next && next.nodeType === 1)
+                        return next.textContent.trim();
+                    return '';
+                }""")
+                radio_groups[name_attr]["options"].append(visible_text or value_attr)
+            continue
 
         # ── Extract label using multi-strategy engine ──
         label_text = await _extract_label_for_element(page, el, id_attr, name_attr, aria_label)
@@ -316,9 +350,10 @@ async def detect_form(page: Page, container_selector: Optional[str] = None) -> D
             label=group["label"] or name,
             required=group["required"],
             options=group["options"] if group["options"] else None,
+            raw_values=group.get("values"),
         ))
         logger.debug(f"Detected radio group: name='{name}', label='{group['label']}', "
-                     f"options={group['options']}, required={group['required']}")
+                     f"options={group['options']}, values={group.get('values')}, required={group['required']}")
 
     # ── Detect form type ──
     url = page.url

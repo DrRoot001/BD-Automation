@@ -102,65 +102,115 @@ async def publish_status_changed(
 async def hydrate_and_execute(package_dict: dict, retry_count: int) -> ApplicationResult:
     api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
     app_id = package_dict["application_id"]
-    
-    async with httpx.AsyncClient() as client:
+
+    async with httpx.AsyncClient(timeout=30) as client:
         app_resp = await client.get(f"{api_base}/applications/{app_id}")
         app_resp.raise_for_status()
         app_data = app_resp.json()
-        
+
         cand_id = app_data["candidate_id"]
-        job_id = app_data["job_id"]
-        
+        job_id  = app_data["job_id"]
+
         cand_resp = await client.get(f"{api_base}/candidates/{cand_id}")
         cand_resp.raise_for_status()
         cand_data = cand_resp.json()
-        
+
         job_resp = await client.get(f"{api_base}/jobs/{job_id}")
         job_resp.raise_for_status()
         job_data = job_resp.json()
-    
-        # Resolve resume_url if it is a UUID or missing
-        resume_url = package_dict.get("resume_url", "")
+
+        # ── Resolve resume_url ──
+        # Priority: event payload → application record → latest tailored resume in DB
+        resume_url = package_dict.get("resume_url", "") or app_data.get("resume_id", "")
         from uuid import UUID
         is_uuid = False
         try:
-            UUID(resume_url)
+            UUID(str(resume_url))
             is_uuid = True
-        except ValueError:
+        except (ValueError, AttributeError):
             pass
 
-        if is_uuid or not resume_url or not os.path.exists(resume_url):
+        if is_uuid or not resume_url or (
+            not resume_url.startswith(("http://", "https://")) and not os.path.isfile(str(resume_url))
+        ):
             res_resp = await client.get(f"{api_base}/resumes/{cand_id}")
             if res_resp.status_code == 200:
                 resumes = res_resp.json()
-                matching_resume = None
+                matching = None
                 if is_uuid:
-                    matching_resume = next((r for r in resumes if r["id"] == resume_url), None)
-                if not matching_resume and resumes:
-                    # Sort so that latest tailored (is_base=False) is preferred
-                    resumes.sort(key=lambda r: (not r.get("is_base"), r.get("version", 0)), reverse=True)
-                    matching_resume = resumes[0]
-                if matching_resume:
-                    resume_url = matching_resume["file_url"]
+                    matching = next((r for r in resumes if r["id"] == resume_url), None)
+                if not matching and resumes:
+                    # Prefer the latest tailored resume over the base resume
+                    resumes.sort(
+                        key=lambda r: (not r.get("is_base"), r.get("version", 0)),
+                        reverse=True,
+                    )
+                    matching = resumes[0]
+                if matching:
+                    resume_url = matching["file_url"]
 
-        cover_letter_url = package_dict.get("cover_letter_url") or app_data.get("cover_letter_url")
-    
+        # ── Resolve cover_letter_url ──
+        # Priority: event payload → application record
+        cover_letter_url = (
+            package_dict.get("cover_letter_url")
+            or app_data.get("cover_letter_url")
+        )
+
+    # ── Build enriched candidate_profile ──
+    # The form filler expects all of these keys.  Derive what we can from the DB;
+    # use safe defaults for the rest so the pipeline never crashes on a missing key.
+    full_name = cand_data.get("name") or ""
+    name_parts = full_name.strip().split()
+    first_name = name_parts[0] if name_parts else ""
+    last_name  = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+
+    # Map DB work_auth codes to human-readable Yes/No answers
+    work_auth = (cand_data.get("work_auth") or "us_authorized").lower()
+    is_authorized = work_auth in ("us_authorized", "citizen", "green_card", "visa", "ead")
+    work_auth_answer  = "Yes" if is_authorized else "No"
+    sponsorship_answer = "No" if is_authorized else "Yes"
+
+    candidate_profile = {
+        # Identity
+        "name":       full_name,
+        "first_name": first_name,
+        "last_name":  last_name,
+        "email":      cand_data.get("email") or "",
+        "phone":      cand_data.get("phone") or "",
+        # Location
+        "location": cand_data.get("location") or "",
+        # Online presence
+        "linkedin_url": cand_data.get("linkedin_url") or "",
+        "website":      cand_data.get("website") or "",
+        # Professional
+        "experience_years":  str(cand_data.get("years_exp") or ""),
+        "tech_stack":        ", ".join(cand_data.get("tech_stack") or []),
+        "current_company":   cand_data.get("current_company") or "",
+        "current_title":     cand_data.get("current_title") or "",
+        "education":         cand_data.get("education") or "",
+        "salary_expectation": cand_data.get("salary_expectation") or "",
+        # Work authorization (used by screening question answers in filler)
+        "work_authorization": work_auth_answer,
+        "sponsorship":        sponsorship_answer,
+        # Application defaults — these satisfy boilerplate checkbox questions
+        "agree_terms":        "Yes",
+        "willing_to_relocate": "Yes",
+        "background_check":   "Yes",
+        "drug_test":          "Yes",
+        "referral_source":    "Online",
+        "start_date":         "Immediately",
+    }
+
     full_package_dict = {
-        "application_id": app_id,
-        "candidate_id": cand_id,
-        "job_id": job_id,
-        "job_url": job_data.get("source_url", ""),
-        "platform": job_data.get("source", ""),
-        "candidate_profile": {
-            "name": cand_data.get("name") or "",
-            "email": cand_data.get("email") or "",
-            "phone": cand_data.get("phone") or "",
-            "location": cand_data.get("location") or "",
-            "linkedin_url": cand_data.get("linkedin_url") or "",
-            "website": cand_data.get("website") or "",
-        },
-        "resume_url": resume_url,
-        "cover_letter_url": cover_letter_url,
+        "application_id":   app_id,
+        "candidate_id":     cand_id,
+        "job_id":           job_id,
+        "job_url":          job_data.get("source_url") or "",
+        "platform":         job_data.get("source") or "",
+        "ats_type":         job_data.get("ats_type") or "",
+        "candidate_profile": candidate_profile,
+        "resume_url":        resume_url,
+        "cover_letter_url":  cover_letter_url,
         "screening_answers": package_dict.get("screening_answers"),
     }
     

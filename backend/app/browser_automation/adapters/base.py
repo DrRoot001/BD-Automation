@@ -17,7 +17,7 @@ class BasePlatformAdapter(ABC):
         pass
 
     @abstractmethod
-    async def fill_application(self, page: Page, profile: dict, resume_path: str, cover_letter_path: Optional[str], screening_answers: Optional[dict]) -> bool:
+    async def fill_application(self, page: Page, profile: dict, resume_path: str, cover_letter_path: Optional[str], screening_answers: Optional[dict], pre_detected_form=None) -> bool:
         pass
 
     @abstractmethod

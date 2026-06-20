@@ -7,16 +7,26 @@ from typing import Dict
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-async def transition_status(application_id: str, new_status: str, metadata: Dict = {}) -> bool:
+async def transition_status(
+    application_id: str,
+    new_status: str,
+    metadata: Dict = {},
+    **extra_fields,          # cover_letter_url, resume_id, fit_score, etc.
+) -> bool:
     m1_api_base_url = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
     url = f"{m1_api_base_url}/applications/{application_id}/status"
-    
-    payload = {"status": new_status, "metadata": metadata}
-    
+
+    payload = {"status": new_status, "metadata": metadata, **extra_fields}
+
     try:
+        # Log full payload so we can trace exactly what reaches the API
+        extra_log = {k: v for k, v in extra_fields.items() if v is not None}
+        if extra_log:
+            logger.info(f"[SM] PATCH {application_id} → {new_status} with extra: {extra_log}")
+
         async with httpx.AsyncClient() as client:
-            response = await client.patch(url, json=payload, timeout=10)
-            
+            response = await client.patch(url, json=payload, timeout=30)
+
             if response.status_code in [200, 204]:
                 logger.info(f"Application {application_id} transitioned to {new_status}")
                 return True

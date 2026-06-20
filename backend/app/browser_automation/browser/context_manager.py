@@ -1,11 +1,13 @@
 import os
 import json
+import logging
 import redis.asyncio as redis
 from playwright.async_api import async_playwright, BrowserContext, Playwright
 from dotenv import load_dotenv
 from .stealth_config import get_stealth_config, StealthConfig
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 STEALTH_JS = """
 (() => {
@@ -106,14 +108,61 @@ class BrowserContextManager:
             self._playwright = await async_playwright().start()
         
         if self._browser is None:
-            self._browser = await self._playwright.chromium.launch(headless=True)
+            # Use the real installed Chrome (channel="chrome") to get an authentic TLS fingerprint
+            # that bypasses CloudFront/Akamai WAF bot detection which blocks bundled Chromium.
+            # headless=False avoids the HeadlessChrome user-agent token and related signals.
+            headless = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
+            launch_kwargs = dict(
+                headless=headless,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-extensions-except=",
+                    "--start-maximized",
+                ],
+            )
+            # Prefer the real installed Chrome; fall back to bundled Chromium if unavailable
+            try:
+                self._browser = await self._playwright.chromium.launch(
+                    channel="chrome", **launch_kwargs
+                )
+                logger.info("[Browser] Using real Chrome (channel=chrome)")
+            except Exception as exc:
+                logger.warning(f"[Browser] Real Chrome unavailable ({exc}); falling back to bundled Chromium")
+                self._browser = await self._playwright.chromium.launch(**launch_kwargs)
 
-        context = await self._browser.new_context(
+        # Proxy support — set PROXY_URL in .env for residential/rotating proxies.
+        # Format: http://user:pass@host:port  or  socks5://user:pass@host:port
+        # Required for production use against sites with CloudFront/Akamai WAF that
+        # block IPs after repeated automated requests (monks.com, LinkedIn, etc.)
+        proxy_url = os.getenv("PROXY_URL", "").strip()
+        proxy_config = None
+        if proxy_url:
+            # Playwright proxy dict: server is required; username/password are optional
+            # They can be encoded in the URL or split out separately
+            proxy_config = {"server": proxy_url}
+            logger.info(f"[Browser] Using proxy: {proxy_url.split('@')[-1]}")  # hide creds in log
+
+        context_kwargs = dict(
             viewport=config.viewport,
             user_agent=config.user_agent,
             timezone_id=config.timezone,
-            locale=config.locale
+            locale=config.locale,
+            extra_http_headers={
+                "Accept-Language": "en-US,en;q=0.9",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Upgrade-Insecure-Requests": "1",
+                "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="99"',
+                "sec-ch-ua-mobile": "?0",
+                "sec-ch-ua-platform": '"Windows"',
+            },
         )
+        if proxy_config:
+            context_kwargs["proxy"] = proxy_config
+
+        context = await self._browser.new_context(**context_kwargs)
 
         # Inject stealth scripts
         await context.add_init_script(STEALTH_JS)

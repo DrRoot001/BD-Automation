@@ -10,7 +10,10 @@ class ApplicationPackage(BaseModel):
     ats_type: Optional[str] = None
     resume_url: str
     cover_letter_url: Optional[str] = None
-    candidate_profile: Dict[str, str]  # (name, email, phone, location, linkedin_url, website)
+    # All keys the form filler may need: name, first_name, last_name, email, phone,
+    # location, linkedin_url, website, experience_years, work_authorization,
+    # sponsorship, agree_terms, etc.
+    candidate_profile: Dict[str, str]
     screening_answers: Optional[Dict[str, str]] = None
 
 class ApplicationResult(BaseModel):

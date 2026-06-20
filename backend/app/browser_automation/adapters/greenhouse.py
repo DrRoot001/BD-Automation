@@ -1,92 +1,433 @@
+import asyncio
 import logging
 from typing import Optional, Tuple
-from playwright.async_api import Page
+from playwright.async_api import Page, Frame
 from .base import BasePlatformAdapter
 from ..forms import detect_form, fill_form, upload_file
 
 logger = logging.getLogger(__name__)
 
+# Greenhouse uses two hosting modes:
+#   1. boards.greenhouse.io — form rendered directly in the page (no iframe).
+#   2. Embedded widget on company site — form lives inside #grnhse_iframe.
+# We detect which mode we're in at navigation time and store the active context.
+
+_IFRAME_SEL = "#grnhse_iframe"
+_IFRAME_TIMEOUT_MS = 8_000
+_FIELD_TIMEOUT_MS = 6_000
+_NAV_TIMEOUT_MS = 20_000
+
+# Apply-button selectors used on Greenhouse job-listing pages.
+# The form only appears AFTER clicking one of these.
+_APPLY_SELECTORS = [
+    "a#apply_button",
+    "#nav_apply",
+    "a[href*='#app']:has-text('Apply')",
+    "a:has-text('Apply for this Job')",
+    "a:has-text('Apply for This Job')",
+    "button:has-text('Apply for this Job')",
+    "a:has-text('Apply Now')",
+    "button:has-text('Apply Now')",
+    ".apply-button",
+    "[data-qa='btn-apply']",
+    "#jobs-apply",
+]
+
+
 class GreenhouseAdapter(BasePlatformAdapter):
     platform_name = "greenhouse"
-    # boards.greenhouse.io (hosted Boards v2) has no #application_form wrapper;
-    # the old embedded widget used that id. None = whole-page scan.
-    container_selector = None
+    container_selector = None  # whole-page scan; scoped below if iframe mode
+
+    def __init__(self):
+        # Set during navigate_to_application
+        self._iframe_mode: bool = False
+        self._frame: Optional[Frame] = None
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Navigation
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def _settle_page(self, page: Page, timeout_ms: int = 6_000) -> None:
+        """Wait for any in-flight navigation to finish, then stop loading.
+
+        Called after a goto() timeout to prevent subsequent navigations from
+        racing against an unfinished prior one — which causes Playwright to
+        throw 'Page.content: Unable to retrieve content because the page is
+        navigating and changing the content.'
+        """
+        try:
+            await page.wait_for_load_state("domcontentloaded", timeout=timeout_ms)
+        except Exception:
+            pass
+        try:
+            await page.evaluate("window.stop()")   # cancel in-flight resources
+        except Exception:
+            pass
+        await asyncio.sleep(0.5)
+
+    async def _safe_page_content(self, page: Page) -> str:
+        """Read page.content() safely, waiting for any navigation to settle first."""
+        for attempt in range(3):
+            try:
+                return (await page.content())[:800].lower()
+            except Exception:
+                if attempt < 2:
+                    await self._settle_page(page, timeout_ms=4_000)
+                else:
+                    return ""
+        return ""
+
+    async def _warm_up_domain(self, page: Page, base_url: str) -> None:
+        """Quick homepage visit to establish a session cookie before the job page.
+        Only visits the root — no /careers (it's a heavy SPA that times out)."""
+        try:
+            await page.goto(base_url, wait_until="domcontentloaded", timeout=15_000)
+            title = (await page.title()).lower()
+            if "request could not be satisfied" in title or "403" in title:
+                raise RuntimeError(f"BLOCKED: IP flagged by WAF on {base_url} — use a VPN or proxy")
+            await self.human_delay(0.5, 1.5)
+            logger.info(f"[GH] Warm-up OK: {page.url!r}")
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            logger.warning(f"[GH] Warm-up {base_url!r} failed (non-fatal): {exc}")
+            await self._settle_page(page)
 
     async def navigate_to_application(self, page: Page, job_url: str) -> None:
+        # ── 0. Quick homepage warm-up for sites with CloudFront WAF ──
+        # boards.greenhouse.io/monks/* redirects to monks.com — warm up monks.com
+        if "monks.com" in job_url or "greenhouse.io/monks" in job_url:
+            await self._warm_up_domain(page, "https://www.monks.com")
+
+        # ── 1. Load the URL (job listing page or direct application form) ──
         try:
-            await page.goto(job_url, wait_until="networkidle", timeout=10000)
+            await page.goto(job_url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
+        except Exception as exc:
+            logger.warning(f"[GH] Job page navigation timeout/error: {exc}")
+            # Settle the page so content() won't throw "page is navigating"
+            await self._settle_page(page, timeout_ms=8_000)
+
+        # Check for bot-block pages (CloudFront/WAF 403)
+        try:
+            title = (await page.title()).lower()
         except Exception:
-            await page.goto(job_url, wait_until="domcontentloaded", timeout=20000)
-        await self.human_delay()
+            title = ""
+        content_snippet = await self._safe_page_content(page)
+
+        if any(t in title or t in content_snippet for t in (
+            "request could not be satisfied", "request blocked",
+            "access denied", "403 error", "error: the request",
+        )):
+            logger.error(f"[GH] Bot block detected at {page.url} — title: {title!r}")
+            raise RuntimeError(f"BLOCKED: Bot detection triggered at {page.url}")
+
+        logger.info(f"[GH] Loaded: {page.url!r} (title: {title!r})")
+        await self.human_delay(0.5, 1.5)
+
+        # ── 2. Detect iframe mode first (for embedded widgets on company sites) ──
+        self._iframe_mode = False
+        self._frame = None
+        try:
+            await page.wait_for_selector(_IFRAME_SEL, timeout=_IFRAME_TIMEOUT_MS)
+            logger.info(f"[GH] Found #{_IFRAME_SEL} selector — checking {len(page.frames)} frame(s)")
+            for frame in page.frames:
+                logger.debug(f"[GH]   Frame: name={frame.name!r} url={frame.url!r}")
+                if "greenhouse" in (frame.url or "") or frame.name == "grnhse_iframe":
+                    self._frame = frame
+                    break
+            if not self._frame:
+                for frame in page.frames:
+                    if "greenhouse.io" in (frame.url or ""):
+                        self._frame = frame
+                        break
+            if self._frame:
+                self._iframe_mode = True
+                logger.info(f"[GH] Embedded iframe mode detected (frame url: {self._frame.url})")
+                # Wait for the iframe content to be ready
+                try:
+                    await self._frame.wait_for_load_state("domcontentloaded", timeout=15_000)
+                    await self._frame.locator("input, select, textarea").first.wait_for(
+                        state="attached", timeout=_FIELD_TIMEOUT_MS
+                    )
+                    logger.info("[GH] Iframe form content is ready")
+                except Exception as exc:
+                    logger.warning(f"[GH] Iframe content wait: {exc}")
+            else:
+                logger.warning("[GH] #grnhse_iframe found but no matching Frame resolved; "
+                               "falling back to hosted-board mode")
+        except Exception:
+            logger.info("[GH] No #grnhse_iframe detected — hosted boards mode (direct page)")
+
+        # ── 3. If we're on a job LISTING page, click "Apply" to reach the form ──
+        # boards.greenhouse.io job pages show description + an Apply link, not the form itself.
+        target = self._frame if self._iframe_mode else page
+        has_inputs = False
+        try:
+            await target.locator("input, select, textarea").first.wait_for(
+                state="attached", timeout=2_000
+            )
+            has_inputs = True
+        except Exception:
+            pass
+
+        if not has_inputs:
+            logger.info("[GH] No form inputs detected yet — looking for Apply button")
+            for sel in _APPLY_SELECTORS:
+                try:
+                    btn = page.locator(sel).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        href = await btn.get_attribute("href") or ""
+                        logger.info(f"[GH] Clicking Apply button: {sel!r} (href={href!r})")
+                        await btn.scroll_into_view_if_needed()
+                        await self.human_delay(0.3, 0.8)
+                        await btn.click()
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=15_000)
+                        except Exception:
+                            await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+                        await self.human_delay(1.0, 2.0)
+                        logger.info(f"[GH] After Apply click → {page.url!r}")
+                        break
+                except Exception as exc:
+                    logger.debug(f"[GH] Apply selector {sel!r} failed: {exc}")
+
+        # ── 4. Wait for the application form inputs ──
+        target = self._frame if self._iframe_mode else page
+        try:
+            await target.locator("input, select, textarea").first.wait_for(
+                state="attached", timeout=_FIELD_TIMEOUT_MS
+            )
+            logger.info("[GH] Form inputs ready")
+        except Exception:
+            logger.warning("[GH] Timed out waiting for form inputs; proceeding anyway")
+
+        await self.human_delay(0.5, 1.5)
 
     async def detect_application_type(self, page: Page) -> str:
         return "EXTERNAL_FORM"
 
-    async def fill_application(self, page: Page, profile: dict, resume_path: str, cover_letter_path: Optional[str], screening_answers: Optional[dict]) -> bool:
-        form = await detect_form(page, container_selector=self.container_selector)
+    # ──────────────────────────────────────────────────────────────────────────
+    # Form filling
+    # ──────────────────────────────────────────────────────────────────────────
 
-        # Log all detected file fields for debugging
+    async def fill_application(
+        self,
+        page: Page,
+        profile: dict,
+        resume_path: str,
+        cover_letter_path: Optional[str],
+        screening_answers: Optional[dict],
+        pre_detected_form=None,
+    ) -> bool:
+        ctx = self._frame if self._iframe_mode else page
+
+        form = pre_detected_form or await detect_form(ctx, container_selector=self.container_selector)
+
         file_fields = [f for f in form.fields if f.field_type == "file"]
         logger.info(f"[GH] Detected {len(file_fields)} file field(s): "
                     f"{[(f.label, f.selector) for f in file_fields]}")
 
-        # Fill basic fields
-        fill_success = await fill_form(page, form, profile, screening_answers)
+        fill_success = await fill_form(ctx, form, profile, screening_answers)
 
-        # ── Greenhouse Boards file upload ──
-        # boards.greenhouse.io uses hidden <input name="file-attachment"> elements
-        # (display:none, no id). The label falls back to the name attribute, so
-        # label-matching for "resume" never fires. We target by DOM order instead:
-        # first file-attachment = resume, second = cover letter (Greenhouse convention).
-        await self._upload_greenhouse_files(page, resume_path, cover_letter_path)
+        await self._upload_greenhouse_files(ctx, page, resume_path, cover_letter_path)
+
+        # Re-scan for fields that weren't in the initial detection
+        # (Greenhouse often renders custom questions below the fold or
+        # reveals them after filling basic fields)
+        rescan = await detect_form(ctx, container_selector=self.container_selector, skip_scroll=True)
+        new_fields = [
+            f for f in rescan.fields
+            if f.field_type in ("radio", "select", "checkbox")
+            and f.label and f.label not in {fld.label for fld in form.fields}
+        ]
+        if new_fields:
+            logger.info(f"[GH] Re-scan found {len(new_fields)} new field(s): "
+                        f"{[(f.label, f.field_type) for f in new_fields]}")
+            from ..forms.models import DetectedForm as _DF
+            extra_form = _DF(
+                form_type=form.form_type, fields=new_fields, steps=1,
+                current_step=1, has_captcha=False, captcha_type=None,
+                has_file_upload=False, submit_selector=form.submit_selector,
+            )
+            await fill_form(ctx, extra_form, profile, screening_answers)
 
         return fill_success
 
-    async def _upload_greenhouse_files(self, page: Page, resume_path: Optional[str], cover_letter_path: Optional[str]) -> None:
-        # Primary: Greenhouse Boards v2 hidden file inputs (name='file-attachment')
-        gh_inputs = page.locator("input[name='file-attachment']")
+    # ──────────────────────────────────────────────────────────────────────────
+    # File uploads
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def _upload_greenhouse_files(
+        self,
+        ctx,          # Frame or Page — the context where form lives
+        page: Page,   # Always the parent Page (for fallbacks)
+        resume_path: Optional[str],
+        cover_letter_path: Optional[str],
+    ) -> None:
+        """Upload resume and cover letter to the correct Greenhouse file inputs.
+
+        Uses a single JS call to read ALL file inputs and their surrounding
+        context at once, then maps each PDF to the correct slot by label.
+        """
+        # ── Classify file inputs by walking up to the fieldset.attachment ancestor ──
+        # Greenhouse wraps each file input in <fieldset class="attachment"> whose
+        # text content starts with the label ("Resume / CV*" or "Cover Letter").
+        file_info = await ctx.evaluate("""() => {
+            let inputs = document.querySelectorAll("input[name='file-attachment'], input[type='file']");
+            let results = [];
+            for (let i = 0; i < inputs.length; i++) {
+                let inp = inputs[i];
+                let purpose = 'unknown';
+                let matchedText = '';
+
+                // Strategy A: walk up to the fieldset.attachment ancestor,
+                // its FIRST text content starts with the label
+                let node = inp.parentElement;
+                for (let j = 0; j < 10 && node; j++) {
+                    let cls = (typeof node.className === 'string') ? node.className.toLowerCase() : '';
+                    if (cls.includes('attachment') || cls.includes('contains-attachment') ||
+                        node.tagName === 'FIELDSET') {
+                        // Read first 60 chars of text — that's the label
+                        let txt = (node.textContent || '').replace(/\\s+/g, ' ').trim().substring(0, 80).toLowerCase();
+                        matchedText = txt;
+                        if (/^cover\\s*letter/.test(txt) || /cover\\s*letter/.test(txt.substring(0, 30))) {
+                            purpose = 'cover';
+                            break;
+                        }
+                        if (/^resume/.test(txt) || /^cv/.test(txt) ||
+                            /resume\\s*\\/\\s*cv/.test(txt.substring(0, 30))) {
+                            purpose = 'resume';
+                            break;
+                        }
+                    }
+                    node = node.parentElement;
+                }
+
+                // Strategy B: self attributes
+                if (purpose === 'unknown') {
+                    let selfText = (
+                        (inp.id || '') + ' ' +
+                        (inp.getAttribute('aria-label') || '')
+                    ).toLowerCase();
+                    if (/cover[_\\s-]*letter/.test(selfText)) {
+                        purpose = 'cover'; matchedText = 'self:' + selfText;
+                    } else if (/\\bresume\\b|\\bcv\\b/.test(selfText)) {
+                        purpose = 'resume'; matchedText = 'self:' + selfText;
+                    }
+                }
+
+                results.push({
+                    index: i,
+                    purpose: purpose,
+                    matched: matchedText.substring(0, 120),
+                });
+            }
+            return results;
+        }""")
+
+        if not file_info:
+            logger.warning("[GH] No file inputs found on page — skipping file uploads")
+            return
+
+        logger.info(f"[GH] Found {len(file_info)} file input(s)")
+
+        gh_inputs = ctx.locator("input[name='file-attachment']")
         count = await gh_inputs.count()
-        logger.info(f"[GH] Found {count} input[name='file-attachment'] element(s)")
-
-        if count > 0 and resume_path:
-            try:
-                await gh_inputs.nth(0).set_input_files(resume_path)
-                logger.info(f"[GH] Resume uploaded to input[name='file-attachment'][0]: {resume_path}")
-            except Exception as e:
-                logger.error(f"[GH] Resume upload failed on file-attachment[0]: {e}")
-
-        if count > 1 and cover_letter_path:
-            try:
-                await gh_inputs.nth(1).set_input_files(cover_letter_path)
-                logger.info(f"[GH] Cover letter uploaded to input[name='file-attachment'][1]: {cover_letter_path}")
-            except Exception as e:
-                logger.error(f"[GH] Cover letter upload failed on file-attachment[1]: {e}")
-
-        # Fallback: generic input[type='file'] for older embedded Greenhouse widgets
         if count == 0:
-            logger.warning("[GH] No file-attachment inputs found; trying generic file input fallback")
-            generic = page.locator("input[type='file']")
-            gen_count = await generic.count()
-            if gen_count > 0 and resume_path:
-                try:
-                    await generic.first.set_input_files(resume_path)
-                    logger.info(f"[GH] Resume uploaded via generic fallback: {resume_path}")
-                except Exception as e:
-                    logger.error(f"[GH] Generic file upload fallback failed: {e}")
+            gh_inputs = ctx.locator("input[type='file']")
+            count = await gh_inputs.count()
+
+        resume_slot = None
+        cover_slot = None
+
+        for info in file_info:
+            logger.info(f"[GH] File input #{info['index']} matched heading: "
+                        f"'{info['matched']}' → purpose={info['purpose']}")
+            if info["purpose"] == "resume" and resume_slot is None:
+                resume_slot = info["index"]
+            elif info["purpose"] == "cover" and cover_slot is None:
+                cover_slot = info["index"]
+
+        # Positional fallback ONLY if both are unidentified
+        if resume_slot is None and cover_slot is None and len(file_info) >= 2:
+            resume_slot = 0
+            cover_slot = 1
+            logger.warning("[GH] No labels matched — using positional fallback (resume=#0)")
+        elif resume_slot is None and cover_slot is not None and len(file_info) >= 2:
+            # Cover was identified, resume is the OTHER slot
+            resume_slot = 1 - cover_slot if cover_slot in (0, 1) else 0
+            logger.info(f"[GH] Inferred resume_slot=#{resume_slot} (opposite of cover #{cover_slot})")
+        elif cover_slot is None and resume_slot is not None and len(file_info) >= 2:
+            cover_slot = 1 - resume_slot if resume_slot in (0, 1) else 1
+            logger.info(f"[GH] Inferred cover_slot=#{cover_slot} (opposite of resume #{resume_slot})")
+        elif resume_slot is None and len(file_info) >= 1:
+            resume_slot = 0
+
+        # Upload to correct slots
+        if resume_path and resume_slot is not None and resume_slot < count:
+            await self._safe_upload(gh_inputs.nth(resume_slot), "resume", resume_path)
+        if cover_letter_path and cover_slot is not None and cover_slot < count:
+            await self._safe_upload(gh_inputs.nth(cover_slot), "cover letter", cover_letter_path)
+        elif cover_letter_path and count == 1:
+            logger.info("[GH] Only 1 file input present; cover letter skipped (no slot)")
+
+    async def _safe_upload(self, locator, label: str, path: str) -> None:
+        try:
+            await locator.set_input_files(path, timeout=_FIELD_TIMEOUT_MS)
+            logger.info(f"[GH] Uploaded {label}: {path}")
+        except Exception as exc:
+            logger.error(f"[GH] Upload FAILED for {label} ({path}): {exc}")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Submit & verify
+    # ──────────────────────────────────────────────────────────────────────────
 
     async def submit(self, page: Page) -> bool:
-        submit_btn = await page.query_selector("button[type=submit], #submit_app")
-        if submit_btn:
-            await submit_btn.click()
-            await page.wait_for_load_state("networkidle", timeout=15000)
-            await self.human_delay()
-            return True
+        ctx = self._frame if self._iframe_mode else page
+        # Try multiple submit selectors in priority order
+        selectors = [
+            "button[type='submit']",
+            "#submit_app",
+            "input[type='submit']",
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit')",
+        ]
+        for sel in selectors:
+            try:
+                btn = ctx.locator(sel).first
+                if await btn.count() > 0:
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(timeout=_FIELD_TIMEOUT_MS)
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=15_000)
+                    except Exception:
+                        pass
+                    await self.human_delay(1.0, 2.0)
+                    logger.info(f"[GH] Clicked submit via: {sel}")
+                    return True
+            except Exception as exc:
+                logger.debug(f"[GH] Submit selector '{sel}' failed: {exc}")
+        logger.error("[GH] Could not find a submit button")
         return False
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        content = (await page.content()).lower()
-        success_patterns = ["application has been submitted", "thank you", "successfully applied"]
-        for pattern in success_patterns:
-            if pattern in content:
-                return True, pattern
+        # Check page content first, then the frame if in iframe mode
+        for ctx in ([self._frame, page] if self._iframe_mode else [page]):
+            if ctx is None:
+                continue
+            try:
+                content = (await ctx.content()).lower()
+                for pattern in (
+                    "application has been submitted",
+                    "thank you for applying",
+                    "thank you",
+                    "successfully applied",
+                    "application received",
+                    "we have received your application",
+                ):
+                    if pattern in content:
+                        logger.info(f"[GH] Submission verified via pattern: '{pattern}'")
+                        return True, pattern
+            except Exception:
+                pass
         return False, None
