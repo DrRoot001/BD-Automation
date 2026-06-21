@@ -371,6 +371,29 @@ class ApplicationExecutor:
                 for d in final_state or []:
                     display = d['value'] if d['value'] else f"<PLACEHOLDER>{d['placeholder']}"
                     logger.info(f"      {d['label'][:60]!r:65} = {display!r}")
+
+                # Final file-upload snapshot: Greenhouse REPLACES the
+                # <input type=file> with a filename-display element after a
+                # successful upload. We look for [class*=filename] / .file-
+                # attachment-name as evidence that the files are committed.
+                attached = await ctx_for_final.evaluate(
+                    """() => {
+                        const out = [];
+                        document.querySelectorAll(
+                            '.file-attachment-name, .attachment-name, '
+                            + '[class*="filename"], [class*="uploaded-file"]'
+                        ).forEach(el => {
+                            if (el.offsetParent && el.textContent.trim()) {
+                                out.push(el.textContent.trim().slice(0, 80));
+                            }
+                        });
+                        return out;
+                    }"""
+                )
+                if attached:
+                    logger.info(f"[M4] Files attached (visible in UI): {attached}")
+                else:
+                    logger.info("[M4] No filename evidence found in UI — uploads may have silently failed")
             except Exception as exc:
                 logger.debug(f"[M4] final-state snapshot failed: {exc}")
 
