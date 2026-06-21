@@ -37,6 +37,7 @@ class ApplicationSummary(BaseModel):
     ats_score: Optional[float] = None
     submitted_at: Optional[datetime] = None
     created_at: datetime
+    error_message: Optional[str] = None
 
 
 class InterviewSummary(BaseModel):
@@ -165,7 +166,7 @@ async def get_applications(
     rows = await db.execute(text(f"""
         SELECT a.id, j.title, j.company, j.source AS platform,
                a.status, a.fit_score, a.ats_score,
-               a.submitted_at, a.created_at
+               a.submitted_at, a.created_at, a.error_message
         FROM applications a
         JOIN jobs j ON a.job_id = j.id
         {where}
@@ -184,6 +185,7 @@ async def get_applications(
             ats_score=float(r.ats_score) if r.ats_score is not None else None,
             submitted_at=r.submitted_at,
             created_at=r.created_at,
+            error_message=r.error_message,
         )
         for r in rows.fetchall()
     ]

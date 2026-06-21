@@ -15,6 +15,8 @@ function StatusBadge({ status }: { status: string }) {
     confirmed:    'badge-confirmed',
     interview_r1: 'badge-interview_r1',
     interview_r2: 'badge-interview_r2',
+    failed:       'badge-failed',
+    blocked:      'badge-blocked',
     rejected:     'badge-rejected',
     offer:        'badge-offer',
     assessment:   'badge-interview_r1',
@@ -99,6 +101,11 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                     <div className="text-text-muted text-xs truncate max-w-[200px] mt-0.5">
                       {app.company}
                     </div>
+                    {app.error_message && (
+                      <div className="text-danger text-[10px] mt-1 max-w-[250px] truncate" title={app.error_message}>
+                        Error: {app.error_message}
+                      </div>
+                    )}
                   </td>
                   <td className="px-3 py-3">
                     <span className="text-xs text-text-secondary capitalize">{app.platform}</span>

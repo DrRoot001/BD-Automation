@@ -16,6 +16,8 @@ function StatusBadge({ status }: { status: string }) {
     confirmed:    'badge-confirmed',
     interview_r1: 'badge-interview_r1',
     interview_r2: 'badge-interview_r2',
+    failed:       'badge-failed',
+    blocked:      'badge-blocked',
     rejected:     'badge-rejected',
     offer:        'badge-offer',
     assessment:   'badge-interview_r1',

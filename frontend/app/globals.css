@@ -94,6 +94,8 @@ body {
   .badge-interview_r1 { @apply badge bg-purple/10  text-purple  border border-purple/20;  }
   .badge-interview_r2 { @apply badge bg-purple/10  text-purple  border border-purple/20;  }
   .badge-rejected     { @apply badge bg-danger/10  text-danger  border border-danger/20;  }
+  .badge-failed       { @apply badge bg-danger/10  text-danger  border border-danger/20;  }
+  .badge-blocked      { @apply badge bg-warning/10 text-warning border border-warning/20; }
   .badge-offer        { @apply badge bg-success/10 text-success border border-success/20; }
   .badge-found        { @apply badge bg-bg-hover   text-text-muted border border-bg-border; }
 
