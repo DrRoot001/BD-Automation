@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
 import { formatDistanceToNow } from './utils'
+import { useRouter } from 'next/navigation'
 
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase()
@@ -25,14 +26,25 @@ function StatusBadge({ status }: { status: string }) {
   )
 }
 
-export function ApplicationsQueue() {
+interface ApplicationsQueueProps {
+  candidateId?: string
+  statusFilter?: string[]
+  emptyMessage?: string
+}
+
+export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: ApplicationsQueueProps = {}) {
+  const router = useRouter()
+
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['applications'],
-    queryFn: () => api.getApplications({ limit: 50 }),
+    queryKey: ['applications', candidateId],
+    queryFn: () => api.getApplications({ limit: 50, candidateId }),
     refetchInterval: 60_000,
   })
 
-  const apps = data ?? []
+  const all = data ?? []
+  const apps = statusFilter
+    ? all.filter((a) => statusFilter.includes(a.status.toUpperCase()))
+    : all
 
   return (
     <div className="card">
@@ -60,7 +72,7 @@ export function ApplicationsQueue() {
           <div className="p-8 text-center text-danger text-sm">Failed to load applications</div>
         ) : apps.length === 0 ? (
           <div className="p-10 text-center text-text-muted text-sm">
-            No applications yet. Start by running the job discovery pipeline.
+            {emptyMessage ?? 'No applications yet. Start by running the job discovery pipeline.'}
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -75,7 +87,11 @@ export function ApplicationsQueue() {
             </thead>
             <tbody>
               {apps.map((app) => (
-                <tr key={app.application_id} className="table-row-hover border-b border-bg-border/40 last:border-0">
+                <tr 
+                  key={app.application_id} 
+                  onClick={() => router.push(`/applications/${app.application_id}`)}
+                  className="table-row-hover border-b border-bg-border/40 last:border-0 cursor-pointer"
+                >
                   <td className="px-5 py-3">
                     <div className="font-medium text-text-primary truncate max-w-[200px] text-sm">
                       {app.job_title}

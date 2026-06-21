@@ -27,6 +27,8 @@ from app.config import get_settings
 
 settings = get_settings()
 
+from kombu import Queue
+
 celery_app = Celery(
     "bd_automation",
     broker=settings.redis_url,
@@ -41,6 +43,16 @@ celery_app = Celery(
         "app.tasks.dynamic_apply",
     ]
 )
+
+celery_app.conf.task_queues = [
+    Queue("celery"),
+    Queue("queue:job_discovery"),
+    Queue("queue:job_processing"),
+    Queue("queue:resume_generation"),
+    Queue("queue:application_execution"),
+    Queue("queue:email_scan"),
+]
+
 
 celery_app.conf.task_routes = {
     "task:discover_jobs_*": {"queue": "queue:job_discovery"},

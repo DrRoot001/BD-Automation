@@ -14,9 +14,20 @@ class CandidateCreate(BaseModel):
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
 
+class CandidateUpdate(BaseModel):
+    name: Optional[str] = None
+    email: Optional[str] = None
+    phone: Optional[str] = None
+    location: Optional[str] = None
+    work_auth: Optional[str] = None
+    tech_stack: Optional[List[str]] = None
+    years_exp: Optional[int] = None
+    linkedin_url: Optional[str] = None
+
 class CandidateResponse(CandidateCreate):
     model_config = ConfigDict(from_attributes=True)
     
     id: UUID
     created_at: datetime
     updated_at: datetime
+    google_connected: bool = False

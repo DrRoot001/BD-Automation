@@ -162,7 +162,8 @@ log "Starting Celery worker (modules 2-5) ..."
     -A app.celery_app worker \
     --loglevel=info \
     --concurrency=2 \
-    -n "worker@%h"
+    -n "worker@%h" \
+    -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan
 ) > "$LOG_DIR/celery-worker.log" 2>&1 &
 PIDS+=($!)
 stream_log "WORKER" "$C_WORKER" "$LOG_DIR/celery-worker.log"

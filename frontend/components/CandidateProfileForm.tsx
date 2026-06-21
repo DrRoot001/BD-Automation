@@ -5,10 +5,11 @@ import { supabase } from '@/lib/supabase'
 import { Upload, FileText, CheckCircle, AlertTriangle, Loader2 } from 'lucide-react'
 
 interface CandidateProfileFormProps {
+  candidate?: any
   onSuccess?: () => void
 }
 
-export default function CandidateProfileForm({ onSuccess }: CandidateProfileFormProps) {
+export default function CandidateProfileForm({ candidate, onSuccess }: CandidateProfileFormProps) {
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -27,6 +28,20 @@ export default function CandidateProfileForm({ onSuccess }: CandidateProfileForm
   })
   const [dragActive, setDragActive] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  React.useEffect(() => {
+    if (candidate) {
+      setFormData({
+        name: candidate.name || '',
+        email: candidate.email || '',
+        phone: candidate.phone || '',
+        location: candidate.location || 'US',
+        work_auth: candidate.work_auth || 'us_authorized',
+        tech_stack: Array.isArray(candidate.tech_stack) ? candidate.tech_stack.join(', ') : candidate.tech_stack || '',
+        years_exp: candidate.years_exp !== null && candidate.years_exp !== undefined ? String(candidate.years_exp) : '',
+      })
+    }
+  }, [candidate])
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target
@@ -52,7 +67,7 @@ export default function CandidateProfileForm({ onSuccess }: CandidateProfileForm
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!resumeFile) {
+    if (!candidate && !resumeFile) {
       setStatus({ type: 'error', message: 'Please upload a base resume.' })
       return
     }
@@ -72,27 +87,53 @@ export default function CandidateProfileForm({ onSuccess }: CandidateProfileForm
         linkedin_url: null,
       }
 
-      const res = await fetch('/api/candidates', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(candidatePayload),
-      })
-
-      if (!res.ok) throw new Error((await res.text()) || 'Failed to create candidate profile.')
-
-      const { id: candidateId } = await res.json()
+      let candidateId = candidate?.id
 
       if (candidateId) {
-        const filePath = `${candidateId}/${Date.now()}_${resumeFile.name}`
-        const { error } = await supabase.storage.from('resume').upload(filePath, resumeFile)
-        if (error) throw new Error(`Profile created, but resume upload failed: ${error.message}`)
+        const res = await fetch(`/api/candidates/${candidateId}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(candidatePayload),
+        })
+        if (!res.ok) throw new Error((await res.text()) || 'Failed to update candidate profile.')
+      } else {
+        const res = await fetch('/api/candidates', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(candidatePayload),
+        })
+        if (!res.ok) throw new Error((await res.text()) || 'Failed to create candidate profile.')
+        const data = await res.json()
+        candidateId = data.id
       }
 
-      setStatus({ type: 'success', message: 'Profile created and resume uploaded. The agent will start processing shortly.' })
+      if (candidateId && resumeFile) {
+        const formData = new FormData()
+        formData.append('file', resumeFile)
+        formData.append('is_base', 'true')
 
-      setFormData({ name: '', email: '', phone: '', location: 'US', work_auth: 'us_authorized', tech_stack: '', years_exp: '' })
-      setResumeFile(null)
-      if (fileInputRef.current) fileInputRef.current.value = ''
+        const uploadRes = await fetch(`/api/candidates/${candidateId}/resumes`, {
+          method: 'POST',
+          body: formData,
+        })
+
+        if (!uploadRes.ok) {
+          throw new Error(`Profile saved, but resume upload failed: ${await uploadRes.text()}`)
+        }
+      }
+
+      setStatus({ 
+        type: 'success', 
+        message: candidate 
+          ? 'Profile updated successfully.' 
+          : 'Profile created and resume uploaded. The agent will start processing shortly.' 
+      })
+
+      if (!candidate) {
+        setFormData({ name: '', email: '', phone: '', location: 'US', work_auth: 'us_authorized', tech_stack: '', years_exp: '' })
+        setResumeFile(null)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+      }
       onSuccess?.()
     } catch (err: any) {
       setStatus({ type: 'error', message: err.message || 'An unexpected error occurred.' })
@@ -104,9 +145,13 @@ export default function CandidateProfileForm({ onSuccess }: CandidateProfileForm
   return (
     <div className="max-w-2xl">
       <div className="mb-6">
-        <h2 className="text-base font-semibold text-text-primary">Onboard Candidate</h2>
+        <h2 className="text-base font-semibold text-text-primary">
+          {candidate ? 'Edit Profile Details' : 'Onboard Candidate'}
+        </h2>
         <p className="text-sm text-text-muted mt-1">
-          Add candidate details and a base resume. The agent will score jobs, tailor resumes, and apply automatically.
+          {candidate
+            ? 'Update the candidate details. You can optionally upload a new base resume.'
+            : 'Add candidate details and a base resume. The agent will score jobs, tailor resumes, and apply automatically.'}
         </p>
       </div>
 
@@ -180,7 +225,9 @@ export default function CandidateProfileForm({ onSuccess }: CandidateProfileForm
 
         {/* Resume upload */}
         <div>
-          <label className="input-label">Base Resume <span className="text-danger">*</span></label>
+          <label className="input-label">
+            Base Resume {candidate ? '(Optional)' : <span className="text-danger">*</span>}
+          </label>
           <div
             onDragEnter={handleDrag}
             onDragOver={handleDrag}
@@ -220,6 +267,8 @@ export default function CandidateProfileForm({ onSuccess }: CandidateProfileForm
               <Loader2 className="w-4 h-4 animate-spin" />
               Saving…
             </>
+          ) : candidate ? (
+            'Update Profile'
           ) : (
             'Save & Onboard Candidate'
           )}

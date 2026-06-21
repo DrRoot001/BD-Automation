@@ -5,8 +5,8 @@ import { useQueryClient } from '@tanstack/react-query'
 
 const WS_URL =
   typeof window !== 'undefined'
-    ? `ws://${window.location.hostname}:8000/ws/updates`
-    : 'ws://localhost:8000/ws/updates'
+    ? `ws://${window.location.hostname}:8002/ws/updates`
+    : 'ws://localhost:8002/ws/updates'
 
 const RECONNECT_DELAY_MS = 3_000
 const MAX_RECONNECT_DELAY_MS = 30_000

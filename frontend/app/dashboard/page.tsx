@@ -9,13 +9,13 @@ import { InterviewList } from '@/components/InterviewList'
 import { ConversionFunnel } from '@/components/ConversionFunnel'
 import { ActivityFeed } from '@/components/ActivityFeed'
 import { PlatformStatsChart } from '@/components/PlatformStatsChart'
-import CandidateProfileForm from '@/components/CandidateProfileForm'
 import { useState, useCallback, useEffect } from 'react'
+import Link from 'next/link'
 import { clsx } from 'clsx'
 import { Send, Zap, Target, TrendingUp, Hourglass, XCircle, Award } from 'lucide-react'
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'profile' | 'analytics'>('dashboard')
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics'>('dashboard')
   const [wsConnected, setWsConnected] = useState(false)
 
   const handleEvent = useCallback((evt: { event: string }) => {
@@ -39,39 +39,32 @@ export default function DashboardPage() {
 
   const tabs = [
     { id: 'dashboard', label: 'Dashboard' },
-    { id: 'profile',   label: 'Candidate Profile' },
     { id: 'analytics', label: 'Analytics' },
   ] as const
 
   return (
-    <div className="min-h-screen bg-bg-primary">
-      {/* ── Topbar ───────────────────────────────────────────────────────── */}
-      <header className="sticky top-0 z-30 bg-bg-secondary border-b border-bg-border">
-        <div className="max-w-screen-xl mx-auto px-6 h-12 flex items-center justify-between gap-6">
-          {/* Logo */}
-          <div className="shrink-0">
-            <span className="text-sm font-semibold text-text-primary tracking-tight">BD Automator</span>
-          </div>
+    <div className="min-h-screen bg-bg-primary p-6">
+      {/* ── Page Header ───────────────────────────────────────────────────────── */}
+      <header className="border-b border-bg-border mb-6 pb-4 flex items-center justify-between gap-6">
+        {/* Tabs */}
+        <nav className="flex items-center gap-2">
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={clsx(
+                'px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
+                activeTab === tab.id
+                  ? 'bg-accent/10 text-accent'
+                  : 'text-text-muted hover:text-text-primary hover:bg-bg-hover',
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
 
-          {/* Tabs */}
-          <nav className="flex items-center gap-0.5">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={clsx(
-                  'px-3 py-1.5 rounded text-sm transition-colors duration-100',
-                  activeTab === tab.id
-                    ? 'bg-bg-hover text-text-primary font-medium'
-                    : 'text-text-muted hover:text-text-secondary hover:bg-bg-hover/60',
-                )}
-              >
-                {tab.label}
-              </button>
-            ))}
-          </nav>
-
-          {/* Status */}
+        {/* Status */}
           <div className="flex items-center gap-2 shrink-0">
             <span
               className={clsx(
@@ -83,17 +76,12 @@ export default function DashboardPage() {
               {wsConnected ? 'Live' : 'Offline'}
             </span>
           </div>
-        </div>
       </header>
 
       {/* ── Content ──────────────────────────────────────────────────────── */}
-      {activeTab === 'profile' ? (
-        <main className="max-w-screen-xl mx-auto px-6 py-8">
-          <CandidateProfileForm onSuccess={() => setActiveTab('dashboard')} />
-        </main>
-
-      ) : activeTab === 'analytics' ? (
-        <main className="max-w-screen-xl mx-auto px-6 py-8 space-y-5 animate-fade-in">
+      <div className="flex-1">
+        {activeTab === 'analytics' ? (
+        <main className="space-y-5 animate-fade-in">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             <ConversionFunnel />
             <PlatformStatsChart />
@@ -101,7 +89,7 @@ export default function DashboardPage() {
         </main>
 
       ) : (
-        <main className="max-w-screen-xl mx-auto px-6 py-8 space-y-5 animate-fade-in">
+        <main className="space-y-5 animate-fade-in">
 
           {/* Page title row */}
           <div className="flex items-center justify-between">
@@ -147,6 +135,7 @@ export default function DashboardPage() {
 
         </main>
       )}
+      </div>
     </div>
   )
 }

@@ -5,11 +5,12 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 
 const MODULES = [
-  { id: 'dashboard', label: 'Dashboard', path: '/dashboard', icon: '📊', description: 'Module 5: Analytics' },
-  { id: 'candidates', label: 'Candidates', path: '/candidates', icon: '👤', description: 'Module 1: Orchestration' },
-  { id: 'jobs', label: 'Job Discovery', path: '/jobs', icon: '🔍', description: 'Module 2: Scraper' },
-  { id: 'matches', label: 'AI Matches', path: '/matches', icon: '🧠', description: 'Module 3: Intelligence' },
-  { id: 'automation', label: 'Automation', path: '/automation', icon: '🤖', description: 'Module 4: Playwright' },
+  { id: 'dashboard', label: 'Dashboard', path: '/dashboard' },
+  { id: 'candidates', label: 'Candidates', path: '/candidates' },
+  { id: 'applications', label: 'Applications', path: '/applications' },
+  { id: 'jobs', label: 'Job Discovery', path: '/jobs' },
+  { id: 'matches', label: 'AI Matches', path: '/matches' },
+  { id: 'automation', label: 'Automation', path: '/automation' },
 ]
 
 export function Sidebar() {
@@ -36,33 +37,20 @@ export function Sidebar() {
               key={mod.id}
               href={mod.path}
               className={clsx(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors duration-150',
+                'flex items-center px-3 py-2.5 rounded-lg transition-colors duration-150',
                 isActive
                   ? 'bg-accent/10 text-accent font-medium'
                   : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover'
               )}
             >
-              <span className="text-lg">{mod.icon}</span>
-              <div className="flex flex-col">
-                <span className="text-sm">{mod.label}</span>
-                <span className="text-[10px] text-text-muted opacity-80">{mod.description}</span>
-              </div>
+              <span className="text-sm">{mod.label}</span>
             </Link>
           )
         })}
       </nav>
 
-      {/* User Area */}
-      <div className="p-4 border-t border-bg-border">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center text-white text-xs font-bold">
-            SH
-          </div>
-          <div className="flex flex-col">
-            <span className="text-sm font-medium text-text-primary">Sabih Haider</span>
-            <span className="text-xs text-text-muted">Administrator</span>
-          </div>
-        </div>
+      <div className="p-4 border-t border-bg-border text-center">
+        <span className="text-[10px] text-text-muted">v1.0.0 (Beta)</span>
       </div>
     </aside>
   )

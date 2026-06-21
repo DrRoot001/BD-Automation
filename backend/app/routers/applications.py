@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, update
 from uuid import UUID
 from datetime import datetime
+from typing import List, Optional, Dict
+from pydantic import BaseModel
 
 from app.database import get_db
 from app.redis_client import redis_client
@@ -11,7 +13,17 @@ from app.models.application_history import ApplicationHistory
 from app.schemas.application import StatusUpdateRequest, ApplicationResponse, ApplicationCreate
 from app.services.state_machine import validate_transition, InvalidTransitionError
 from app.services.events import publish_event
-from typing import List
+
+
+class ApplicationHistoryResponse(BaseModel):
+    id: UUID
+    application_id: UUID
+    from_status: Optional[str]
+    to_status: str
+    meta_data: Optional[dict]
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
 
 router = APIRouter(prefix="/api/applications", tags=["applications"])
 
@@ -67,6 +79,19 @@ async def get_application(
     if not app:
         raise HTTPException(404, "Application not found")
     return app
+
+@router.get("/{application_id}/history", response_model=List[ApplicationHistoryResponse])
+async def get_application_history(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    result = await db.execute(
+        select(ApplicationHistory)
+        .where(ApplicationHistory.application_id == application_id)
+        .order_by(ApplicationHistory.created_at.asc())
+    )
+    return result.scalars().all()
+
 
 @router.patch("/{application_id}/status", response_model=ApplicationResponse)
 async def update_status(
@@ -134,9 +159,6 @@ async def update_status(
     
     return app
 
-
-from pydantic import BaseModel
-from typing import List, Dict, Optional
 
 class PreparePackageRequest(BaseModel):
     candidate_id: str

@@ -18,3 +18,7 @@ class Candidate(Base):
     google_refresh_token = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    @property
+    def google_connected(self) -> bool:
+        return bool(self.google_refresh_token)
