@@ -32,12 +32,37 @@ _FAILURES_PATH = Path(__file__).resolve().parents[3] / "data" / "field_failures.
 _lock = threading.Lock()
 
 
+# Alias rules: collapse common verbose ATS phrasings to a canonical short
+# form so memory recall hits across forms that ask the same question with
+# different wording. Each rule is (regex, canonical_form). First match wins.
+# Why: Scale AI's "What is your current or more recent job title?" and
+# Greenhouse's "Current Job Title" are the same question — without this map
+# they hash to different memory keys and the LLM gets asked twice.
+_ALIAS_RULES = [
+    (re.compile(r"current\s+(?:or\s+(?:more|most)\s+recent\s+)?(?:job\s+)?title"),
+     "current job title"),
+    (re.compile(r"(?:current|most\s+recent|recent)\s+(?:or\s+(?:more|most)\s+recent\s+)?(?:company|employer|workplace)"),
+     "current company / employer"),
+    (re.compile(r"who\s+is\s+your\s+(?:current|most\s+recent|recent).+(?:employer|company)"),
+     "current company / employer"),
+    (re.compile(r"what\s+is\s+your\s+(?:current|most\s+recent|recent).+(?:title|role|position)"),
+     "current job title"),
+    (re.compile(r"(?:authorized|authorised|eligible)\s+to\s+work"),
+     "work authorization"),
+    (re.compile(r"(?:require|need|sponsor).+(?:sponsorship|visa)"),
+     "visa sponsorship"),
+]
+
+
 def _normalize_label(label: str) -> str:
-    """Lowercase, strip whitespace, remove *, collapse spaces.
+    """Lowercase, strip whitespace, remove *, collapse spaces, apply aliases.
     Matches the filler's _normalize_label so memory keys line up."""
     s = (label or "").lower().strip()
-    s = re.sub(r"[*​\xa0]", "", s)
+    s = re.sub(r"[*​\xa0?]", "", s)
     s = re.sub(r"\s+", " ", s).strip(":;. ")
+    for pat, canonical in _ALIAS_RULES:
+        if pat.search(s):
+            return canonical
     return s
 
 
