@@ -235,16 +235,13 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
         await self._upload_greenhouse_files(ctx, page, resume_path, cover_letter_path)
 
-        # Re-scan for fields that weren't in the initial detection
-        # (Greenhouse often renders custom questions below the fold or
-        # reveals them after filling basic fields)
-        rescan = await detect_form(ctx, container_selector=self.container_selector, skip_scroll=True)
-        new_fields = [
-            f for f in rescan.fields
-            if f.field_type in ("radio", "select", "checkbox")
-            and f.label and f.label not in {fld.label for fld in form.fields}
-        ]
-        if new_fields:
+        # Re-scan DISABLED while debugging: rescan calls detect_form which
+        # iterates DOM elements; on some Greenhouse builds this triggers a
+        # form-wide React rerender that resets react-select widgets back to
+        # placeholder, even though the initial fill committed cleanly.
+        rescan = None  # await detect_form(ctx, container_selector=self.container_selector, skip_scroll=True)
+        new_fields = []
+        if False and rescan and new_fields:
             logger.info(f"[GH] Re-scan found {len(new_fields)} new field(s): "
                         f"{[(f.label, f.field_type) for f in new_fields]}")
             from ..forms.models import DetectedForm as _DF

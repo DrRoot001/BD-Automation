@@ -201,27 +201,33 @@ class BrowserContextManager:
             proxy_config = {"server": proxy_url}
             logger.info(f"[Browser] Using proxy: {proxy_url.split('@')[-1]}")  # hide creds in log
 
-        context_kwargs = dict(
-            viewport=config.viewport,
-            user_agent=config.user_agent,
-            timezone_id=config.timezone,
-            locale=config.locale,
-            extra_http_headers={
-                "Accept-Language": "en-US,en;q=0.9",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Upgrade-Insecure-Requests": "1",
-                "sec-ch-ua": '"Chromium";v="136", "Google Chrome";v="136", "Not-A.Brand";v="99"',
-                "sec-ch-ua-mobile": "?0",
-                "sec-ch-ua-platform": '"Windows"',
-            },
-        )
+        # CRITICAL: When using real Chrome (channel="chrome"), DO NOT override
+        # the user_agent or sec-ch-ua headers. The browser sends a consistent
+        # fingerprint matching its actual version + OS. Overriding the UA to
+        # claim "macOS Chrome/133" on a Windows host (or any version mismatch
+        # with the real browser's native sec-ch-ua / userAgentData) creates a
+        # multi-axis inconsistency that Greenhouse's react-select detects as a
+        # bot and silently disables custom widget interactions.
+        #
+        # Per-candidate fingerprint determinism is preserved via viewport,
+        # timezone, locale, and the canvas/webdriver patches in STEALTH_JS —
+        # which are safe because they don't expose contradictory headers.
+        # BARE MINIMUM context: only viewport (visible) — no header overrides,
+        # no UA override, no timezone (browser's default is fine), no
+        # add_init_script. Anything more turned out to make Greenhouse's
+        # react-select refuse to open. Once dropdowns are working, we can
+        # selectively re-add stealth signals that don't trip detection.
+        context_kwargs = dict(viewport=config.viewport)
+        logger.info(f"[Browser] BARE MINIMUM context — viewport={config.viewport}")
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
         context = await self._browser.new_context(**context_kwargs)
 
-        # Inject stealth scripts
-        await context.add_init_script(STEALTH_JS)
+        # Inject stealth scripts — DISABLED while debugging react-select interaction.
+        # The chrome.runtime stub and webdriver patch were suspected as the cause
+        # of Greenhouse react-select widgets not opening; testing without them.
+        # await context.add_init_script(STEALTH_JS)
 
         if session_data:
             cookies = json.loads(session_data)

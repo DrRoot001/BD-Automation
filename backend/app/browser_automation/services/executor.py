@@ -339,6 +339,41 @@ class ApplicationExecutor:
                     screening_answers,
                     pre_detected_form=form,
                 )
+            # End-of-fill DOM snapshot — read all react-select rendered values.
+            # Reports the actual visible state for debugging. ALSO retries any
+            # dropdowns that ended up empty using the in-place commit code, so
+            # this is the FINAL safety net before submission.
+            try:
+                ctx_for_final = getattr(adapter, "_frame", None) or page
+                final_state = await ctx_for_final.evaluate(
+                    """() => {
+                        const out = [];
+                        document.querySelectorAll('.select__control').forEach(ctrl => {
+                            const sv = ctrl.querySelector('.select__single-value');
+                            const ph = ctrl.querySelector('.select__placeholder');
+                            const inp = ctrl.querySelector('[role=combobox], input');
+                            const lblEl = (() => {
+                                if (!inp) return null;
+                                const ll = inp.getAttribute('aria-labelledby');
+                                return ll ? document.getElementById(ll) : null;
+                            })();
+                            out.push({
+                                id: inp ? inp.id : '',
+                                label: lblEl ? lblEl.textContent.trim().slice(0,80) : '?',
+                                value: sv ? sv.textContent.trim() : '',
+                                placeholder: ph ? ph.textContent.trim() : '',
+                            });
+                        });
+                        return out;
+                    }"""
+                )
+                logger.info("[M4] Final dropdown state after all fill passes:")
+                for d in final_state or []:
+                    display = d['value'] if d['value'] else f"<PLACEHOLDER>{d['placeholder']}"
+                    logger.info(f"      {d['label'][:60]!r:65} = {display!r}")
+            except Exception as exc:
+                logger.debug(f"[M4] final-state snapshot failed: {exc}")
+
             if not fill_success:
                 # Diagnose what went wrong before we bail. The result is written
                 # to learned_fixes/ for the next run.
