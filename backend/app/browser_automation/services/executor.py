@@ -324,6 +324,7 @@ class ApplicationExecutor:
                         job_context=job_ctx,
                         resume_path=_temp_resume,
                         cover_letter_path=_temp_cover,
+                        candidate_id=package.candidate_id,
                     )
                     logger.info(f"[M4] LLM filler returned success={fill_success}")
                 except Exception as exc:
@@ -338,6 +339,7 @@ class ApplicationExecutor:
                     _temp_cover,
                     screening_answers,
                     pre_detected_form=form,
+                    candidate_id=package.candidate_id,
                 )
             # End-of-fill DOM snapshot — read all react-select rendered values.
             # Reports the actual visible state for debugging. ALSO retries any
@@ -349,6 +351,8 @@ class ApplicationExecutor:
                     """() => {
                         const out = [];
                         document.querySelectorAll('.select__control').forEach(ctrl => {
+                            // Skip intl-tel-input phone-prefix widget — not a form field
+                            if (ctrl.closest('.iti, .iti__country-list, .iti--container')) return;
                             const sv = ctrl.querySelector('.select__single-value');
                             const ph = ctrl.querySelector('.select__placeholder');
                             const inp = ctrl.querySelector('[role=combobox], input');

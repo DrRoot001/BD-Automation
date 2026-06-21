@@ -135,7 +135,7 @@ class WorkdayAdapter(BasePlatformAdapter):
         resume_path: str,
         cover_letter_path: Optional[str],
         screening_answers: Optional[dict],
-        pre_detected_form=None,
+        pre_detected_form=None, candidate_id=None,
     ) -> bool:
         """Walk the multi-step Workday form. On each step: detect form, fill it,
         upload files, click Save and Continue. Stop when no Next button found
@@ -154,7 +154,7 @@ class WorkdayAdapter(BasePlatformAdapter):
                 logger.info(f"[Workday] step {step} has no fields — likely the review page")
                 break
 
-            step_ok = await fill_form(page, form, profile, screening_answers)
+            step_ok = await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
             ok = ok and step_ok
 
             # Upload files this step

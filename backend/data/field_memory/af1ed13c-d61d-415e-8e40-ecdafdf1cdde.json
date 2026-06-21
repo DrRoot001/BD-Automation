@@ -1,0 +1,98 @@
+{
+  "ai policy for application": {
+    "count": 1,
+    "field_type": "select",
+    "label": "AI Policy for Application*",
+    "last_seen": 1782028439,
+    "source": "llm:0.40",
+    "value": "Yes"
+  },
+  "are you hispanic/latino": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1782028454,
+    "source": "llm:0.70",
+    "value": "Prefer not to answer"
+  },
+  "are you open to working in-person in one of our offices 25% of the time": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you open to working in-person in one of our offices 25% of the time?*",
+    "last_seen": 1782028437,
+    "source": "llm:0.70",
+    "value": "Yes"
+  },
+  "do you have any deadlines or timeline considerations we should be aware of": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have any deadlines or timeline considerations we should be aware of?",
+    "last_seen": 1782029172,
+    "source": "llm:0.80",
+    "value": "Available to start immediately"
+  },
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1782028295,
+    "source": "rules",
+    "value": "sabih0364@gmail.com"
+  },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name",
+    "last_seen": 1782028294,
+    "source": "rules",
+    "value": "Sabih"
+  },
+  "have you ever interviewed at anthropic before": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you ever interviewed at Anthropic before?*",
+    "last_seen": 1782028447,
+    "source": "llm:0.40",
+    "value": "No"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name",
+    "last_seen": 1782028294,
+    "source": "rules",
+    "value": "Haider"
+  },
+  "phone": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Phone",
+    "last_seen": 1782028296,
+    "source": "rules",
+    "value": "+923410084746"
+  },
+  "what is the address from which you plan on working if you would need to relocate, please type \"relocating\"": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is the address from which you plan on working? If you would need to relocate, please type \"relocating\".",
+    "last_seen": 1782028432,
+    "source": "llm:0.70",
+    "value": "relocating"
+  },
+  "when is the earliest you would want to start working with us": {
+    "count": 1,
+    "field_type": "text",
+    "label": "When is the earliest you would want to start working with us?",
+    "last_seen": 1782028431,
+    "source": "llm:0.90",
+    "value": "Immediately"
+  },
+  "why anthropic": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Why Anthropic?",
+    "last_seen": 1782028431,
+    "source": "llm:0.40",
+    "value": "I am highly interested in contributing to cutting-edge AI research and development at Anthropic. My experience as a Frontend Engineer aligns well with the innovative work being done here, and I am eager to apply my skills to impactful projects."
+  }
+}

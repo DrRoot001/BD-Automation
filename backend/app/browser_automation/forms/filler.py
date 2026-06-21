@@ -483,8 +483,47 @@ def _best_select_match(options: List[str], target: str) -> Optional[str]:
     return None
 
 
+def _ensure_profile_defaults(profile: Dict) -> Dict:
+    """Mirror of llm_filler._enrich_profile for the regex path so the rules
+    engine can fill 'current_title' / 'current_company' deterministically
+    instead of leaving the field unresolved when M3 hasn't backfilled those
+    columns on the candidates table yet.
+    """
+    p = dict(profile or {})
+    if not p.get("current_title"):
+        try:
+            years = int(float(str(p.get("experience_years") or p.get("years_exp") or 0)))
+        except (ValueError, TypeError):
+            years = 0
+        stack = str(p.get("tech_stack") or "").lower()
+        if any(t in stack for t in ("react native", "ios", "android", "swift", "kotlin")):
+            base = "Mobile Engineer"
+        elif any(t in stack for t in ("react", "vue", "angular", "next.js", "frontend")):
+            base = "Frontend Engineer"
+        elif any(t in stack for t in ("kubernetes", "terraform", "devops", "sre")):
+            base = "DevOps Engineer"
+        elif any(t in stack for t in ("pytorch", "tensorflow", "ml ", "machine learning")):
+            base = "Machine Learning Engineer"
+        else:
+            base = "Software Engineer"
+        if years >= 8:
+            p["current_title"] = f"Senior {base}"
+        elif years >= 4:
+            p["current_title"] = base
+        elif years >= 1:
+            p["current_title"] = f"Junior {base}"
+        else:
+            p["current_title"] = base
+    if not p.get("current_company"):
+        p["current_company"] = "Freelance"
+    if not p.get("education"):
+        p["education"] = "Bachelor's Degree"
+    return p
+
+
 async def fill_form(page: Page, form: DetectedForm, profile: Dict,
-                    screening_answers: Optional[Dict] = None) -> bool:
+                    screening_answers: Optional[Dict] = None,
+                    candidate_id: Optional[str] = None) -> bool:
     """Production-grade form filler that intelligently maps profile data
     to detected form fields, with human-like interaction patterns.
 
@@ -499,6 +538,7 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
     """
     success = True
     screening_answers = screening_answers or {}
+    profile = _ensure_profile_defaults(profile)
     filled_count = 0
     skipped_count = 0
 
@@ -580,7 +620,7 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
         # Skip memory for file inputs (path varies per run) and for fields
         # where the profile has an explicit value (let profile override).
         if field.field_type not in ("file",):
-            remembered = field_memory.recall(label, field.field_type, field.options)
+            remembered = field_memory.recall(label, field.field_type, field.options, candidate_id=candidate_id)
             if remembered:
                 value_to_fill = remembered
                 answer_source = "memory"
@@ -590,7 +630,29 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
         if not value_to_fill:
             matched_key = _match_label_to_key(label)
             if matched_key:
-                if matched_key.startswith("_"):
+                # BUG C fix: yes/no underscore-prefixed defaults
+                # ("_work_auth", "_relocate", "_agree_terms", etc.) must NEVER
+                # be written into long free-text fields. A label like
+                # "What is the address from which you plan on working? If you
+                # would need to relocate, please type 'relocating'." matched
+                # "relocate" → "_relocate" → filled "Yes" into an address text
+                # box. Confine those defaults to select/radio/checkbox AND
+                # short text fields (boolean Yes/No questions are <=80 chars).
+                BOOLEAN_KEYS = {
+                    "_work_auth", "_sponsorship", "_agree_terms", "_relocate",
+                    "_background_check", "_drug_test", "_location_match",
+                }
+                is_long_free_text = (
+                    field.field_type in ("text", "textarea")
+                    and len(label) > 80
+                )
+                if matched_key in BOOLEAN_KEYS and is_long_free_text:
+                    logger.debug(
+                        f"Rule match suppressed: '{label}' -> '{matched_key}' "
+                        f"would write yes/no into a long free-text field"
+                    )
+                    matched_key = None
+                elif matched_key.startswith("_"):
                     value_to_fill = special_values.get(matched_key, "")
                 else:
                     value_to_fill = profile.get(matched_key, "")
@@ -635,6 +697,7 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                     field_memory.record_failure(
                         label, field.field_type, field.options, None,
                         "no_value_resolved (rules/screening/smart_infer all empty)",
+                        candidate_id=candidate_id,
                     )
                 except Exception:
                     pass
@@ -648,13 +711,22 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
         try:
             locator = page.locator(field.selector).first
 
-            # Skip hidden/duplicate fields gracefully. React-based ATS forms often
-            # render the same logical input more than once (one visible, one hidden);
-            # waiting 30s on the hidden one would otherwise stall and fail the run.
+            # Scroll FIRST, then check visibility. A field that's below the
+            # fold is "not visible" to Playwright's visibility check even
+            # though it's a perfectly legitimate required input — we were
+            # mis-classifying off-viewport fields as hidden duplicates and
+            # failing the run. Scrolling first eliminates that false negative.
             if field.field_type in FILLABLE_TYPES:
+                try:
+                    await locator.scroll_into_view_if_needed(timeout=VISIBILITY_TIMEOUT_MS)
+                except Exception:
+                    pass
                 try:
                     await locator.wait_for(state="visible", timeout=VISIBILITY_TIMEOUT_MS)
                 except Exception:
+                    # Genuinely hidden / display:none — likely a React duplicate
+                    # or a collapsed multi-step. Skip without claiming required-fail
+                    # if a sibling with the same key was already filled.
                     logger.info(
                         f"Skipping non-visible field '{label}' ({field.selector}) — "
                         f"likely a hidden duplicate or collapsed step"
@@ -664,7 +736,6 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                         required_failures.append((label, matched_key))
                     continue
 
-            await locator.scroll_into_view_if_needed()
             await asyncio.sleep(random.uniform(0.15, 0.4))
 
             did_fill = False
@@ -816,7 +887,7 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
             # Don't store memory entries for memory recalls (already known).
             if did_fill and answer_source and answer_source != "memory" and field.field_type != "file":
                 try:
-                    field_memory.remember(label, field.field_type, str(value_to_fill), answer_source)
+                    field_memory.remember(label, field.field_type, str(value_to_fill), answer_source, candidate_id=candidate_id)
                 except Exception as mem_exc:
                     logger.debug(f"[Memory] remember failed (non-fatal): {mem_exc}")
 
@@ -831,6 +902,7 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                         label, field.field_type, field.options,
                         str(value_to_fill) if value_to_fill else None,
                         f"exception: {type(e).__name__}: {str(e)[:200]}",
+                        candidate_id=candidate_id,
                     )
                 except Exception:
                     pass

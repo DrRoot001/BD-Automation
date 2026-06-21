@@ -35,6 +35,7 @@ import re
 import sys
 import uuid
 from pathlib import Path
+from typing import Optional
 
 HERE = Path(__file__).resolve().parent
 BACKEND = HERE.parent.parent
@@ -150,14 +151,59 @@ async def _ensure_application(conn, candidate_id: str, job_id: str) -> str:
     return str(new_id)
 
 
-def _resolve_resume() -> str:
-    for c in (
-        ROOT / "harmain_ali_butt_resume.pdf",
-        ROOT / "Sabih Haider — Software Engineer _ Full-Stack Web Developer.pdf",
-    ):
-        if c.is_file():
-            return str(c)
-    raise FileNotFoundError("No resume PDF in repo root")
+def _resolve_resume(candidate_id: str, candidate_profile: Optional[dict] = None) -> str:
+    """Identity-safe resume resolution.
+
+    Returns the path to a PDF that contains THIS candidate's data and nobody
+    else's. Order:
+      1. M3's tailored output: data/tailored_resumes/tailored_<cid>_*.pdf
+      2. On-the-fly generated minimal PDF from the candidate's DB profile
+         (safety net while M3 catches up — never uploads another candidate's
+         file).
+    """
+    tailored_dir = BACKEND / "data" / "tailored_resumes"
+    if tailored_dir.is_dir():
+        # Strict glob — must include the candidate's UUID. Auto-generated PDFs
+        # (suffix _auto.pdf) are deprioritized so real M3 output wins if both
+        # exist.
+        all_files = sorted(
+            tailored_dir.glob(f"tailored_{candidate_id}_*.pdf"),
+            key=lambda p: (p.name.endswith("_auto.pdf"), -p.stat().st_mtime),
+        )
+        m3 = [p for p in all_files if not p.name.endswith("_auto.pdf")]
+        if m3:
+            LOG.info(f"Resume: using M3 tailored PDF → {m3[0].name}")
+            return str(m3[0])
+    # No M3 output for this candidate — generate a minimal candidate-data PDF.
+    from app.browser_automation.services.candidate_pdf import generate_candidate_resume
+    path = generate_candidate_resume(candidate_profile or {}, candidate_id, BACKEND)
+    LOG.info(f"Resume: using auto-generated identity-safe PDF → {Path(path).name}")
+    return path
+
+
+def _resolve_cover_letter(
+    candidate_id: str,
+    candidate_profile: Optional[dict] = None,
+    job_company: str = "",
+    job_title: str = "",
+) -> str:
+    """Identity-safe cover-letter resolution. Same contract as resume."""
+    cl_dir = BACKEND / "data" / "cover_letters"
+    if cl_dir.is_dir():
+        all_files = sorted(
+            cl_dir.glob(f"cover_letter_{candidate_id}_*.pdf"),
+            key=lambda p: (p.name.endswith("_auto.pdf"), -p.stat().st_mtime),
+        )
+        m3 = [p for p in all_files if not p.name.endswith("_auto.pdf")]
+        if m3:
+            LOG.info(f"Cover letter: using M3 tailored PDF → {m3[0].name}")
+            return str(m3[0])
+    from app.browser_automation.services.candidate_pdf import generate_candidate_cover_letter
+    path = generate_candidate_cover_letter(
+        candidate_profile or {}, candidate_id, job_company, job_title, BACKEND,
+    )
+    LOG.info(f"Cover letter: using auto-generated identity-safe PDF → {Path(path).name}")
+    return path
 
 
 async def run():
@@ -232,8 +278,11 @@ async def run():
         job_url=job["source_url"],
         platform=(job["source"] or "greenhouse").lower(),
         job_type=job.get("job_type") or "",
-        resume_url=_resolve_resume(),
-        cover_letter_url=None,
+        resume_url=_resolve_resume(str(candidate["id"]), candidate_profile),
+        cover_letter_url=_resolve_cover_letter(
+            str(candidate["id"]), candidate_profile,
+            job_company=job.get("company") or "", job_title=job.get("title") or "",
+        ),
         candidate_profile=candidate_profile,
         screening_answers={},
     )

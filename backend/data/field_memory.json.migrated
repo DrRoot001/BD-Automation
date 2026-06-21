@@ -1,0 +1,314 @@
+{
+  "are you currently bound by any agreements with a current or former employer that may restrict your ability to work for scale ai or perform the duties of the position for which you are applying? this includes, but is not limited to, non-compete agreements, non-solicitation agreements, confidentiality or non-disclosure agreements, or any other contractual obligations that could limit your employment activities": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you currently bound by any agreements with a current or former employer that may restrict your ability to work for Scale AI...",
+    "last_seen": 1781982795,
+    "source": "manual",
+    "value": "No"
+  },
+  "are you hispanic/latino?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1781982798,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "are you legally authorized to work in the country where the job is located?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you legally authorized to work in the country where the job is located?*",
+    "last_seen": 1781982796,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "are you legally authorized to work in the united states?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you legally authorized to work in the United States? *",
+    "last_seen": 1781982234,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "are you open to relocation for this role": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you open to relocation for this role? *",
+    "last_seen": 1782027095,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "are you open to working in person in our san francisco office 2-3 times a week?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you open to working in person in our San Francisco office 2-3 times a week?",
+    "last_seen": 1781982795,
+    "source": "llm:0.85",
+    "value": "Yes"
+  },
+  "are you willing to relocate": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you willing to relocate? *",
+    "last_seen": 1782026592,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "are you willing to relocate?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you willing to relocate? *",
+    "last_seen": 1781982235,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "country": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Country",
+    "last_seen": 1781982792,
+    "source": "llm:0.95",
+    "value": "United States"
+  },
+  "current company / employer": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Current Company / Employer",
+    "last_seen": 1781982231,
+    "source": "profile_direct",
+    "value": "Stripe"
+  },
+  "current job title": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Current Job Title",
+    "last_seen": 1781982232,
+    "source": "profile_direct",
+    "value": "Senior Software Engineer"
+  },
+  "disability status": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Disability Status",
+    "last_seen": 1781982799,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "do you live in santiago?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you live in Santiago?*",
+    "last_seen": 1781971769,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
+  "earliest start date": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Earliest start date",
+    "last_seen": 1781982233,
+    "source": "llm:0.90",
+    "value": "Immediately"
+  },
+  "email": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Email*",
+    "last_seen": 1781976211,
+    "source": "rules",
+    "value": "harmain.ali.butt@gmail.com"
+  },
+  "email address": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Email Address *",
+    "last_seen": 1781982227,
+    "source": "profile_direct",
+    "value": "harmain.butt@example.com"
+  },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name*",
+    "last_seen": 1781976210,
+    "source": "rules",
+    "value": "Harmain"
+  },
+  "gender": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Gender",
+    "last_seen": 1781982797,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "how did you hear about this position": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you hear about this position?",
+    "last_seen": 1782026587,
+    "source": "rules",
+    "value": "Online"
+  },
+  "how did you hear about this position?": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you hear about this position?",
+    "last_seen": 1781982232,
+    "source": "llm:0.85",
+    "value": "Online Job Board"
+  },
+  "i confirm and agree": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "I confirm and agree",
+    "last_seen": 1781982234,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name*",
+    "last_seen": 1781976210,
+    "source": "rules",
+    "value": "Ali Butt"
+  },
+  "linkedin profile": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn Profile",
+    "last_seen": 1781976213,
+    "source": "rules",
+    "value": "https://www.linkedin.com/in/harmain-ali-butt"
+  },
+  "linkedin profile url": {
+    "count": 1,
+    "field_type": "url",
+    "label": "LinkedIn Profile URL",
+    "last_seen": 1781982229,
+    "source": "profile_direct",
+    "value": "https://linkedin.com/in/harmain-ali-butt"
+  },
+  "location (city, state, country)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Location (City, State, Country)",
+    "last_seen": 1781982229,
+    "source": "profile_direct",
+    "value": "San Francisco, CA, USA"
+  },
+  "personal website / portfolio": {
+    "count": 1,
+    "field_type": "url",
+    "label": "Personal Website / Portfolio",
+    "last_seen": 1781982230,
+    "source": "profile_direct",
+    "value": "https://harmain.dev"
+  },
+  "phone": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Phone*",
+    "last_seen": 1781976212,
+    "source": "rules",
+    "value": "+1-000-000-0000"
+  },
+  "phone number": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Phone Number *",
+    "last_seen": 1781982228,
+    "source": "profile_direct",
+    "value": "+1 (415) 555-0142"
+  },
+  "preferred first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred First Name",
+    "last_seen": 1781982791,
+    "source": "profile_direct",
+    "value": "Harmain"
+  },
+  "veteran status": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Veteran Status",
+    "last_seen": 1781982798,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "visa sponsorship": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require sponsorship for a visa? *",
+    "last_seen": 1782026591,
+    "source": "rules",
+    "value": "No"
+  },
+  "what is the address from which you plan on working if you would need to relocate, please type \"relocating\"": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is the address from which you plan on working? If you would need to relocate, please type \"relocating\".",
+    "last_seen": 1782027087,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "what is your current or more recent job title?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your current or more recent job title?",
+    "last_seen": 1781983048,
+    "source": "llm:0.70",
+    "value": "Software Engineer"
+  },
+  "who is your current or most recent employer?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Who is your current or most recent employer?",
+    "last_seen": 1781983048,
+    "source": "llm:0.65",
+    "value": "Freelance"
+  },
+  "will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?*",
+    "last_seen": 1781982797,
+    "source": "llm:0.95",
+    "value": "No"
+  },
+  "will you now or in the future require sponsorship for a visa?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require sponsorship for a visa? *",
+    "last_seen": 1781982235,
+    "source": "llm:0.95",
+    "value": "No"
+  },
+  "work authorization": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you legally authorized to work in the United States? *",
+    "last_seen": 1782026590,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "years of experience": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Years of Experience *",
+    "last_seen": 1781982231,
+    "source": "llm:0.95",
+    "value": "5–10 years"
+  },
+  "yes, i agree to a background check": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "Yes, I agree to a background check",
+    "last_seen": 1781982233,
+    "source": "llm:0.95",
+    "value": "Yes"
+  }
+}

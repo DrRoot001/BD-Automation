@@ -41,6 +41,50 @@ _HARDCODED_PROFILE_KEYS = {
 }
 
 
+def _enrich_profile(profile: Dict[str, Any]) -> Dict[str, Any]:
+    """Populate derivable defaults so the LLM doesn't have to guess them.
+
+    Why: M3 currently doesn't write current_title / current_company columns to
+    the candidates table, so the LLM was being asked to invent them and
+    answered "Software Engineer" / "Freelance" with 0.65-0.70 confidence. We
+    can derive equivalent values deterministically from years_exp + tech_stack
+    at zero token cost. M3 will eventually backfill from parsed resumes — this
+    is the M4-side safety net so the form always fills.
+    """
+    p = dict(profile or {})
+    if not p.get("current_title"):
+        try:
+            years = int(float(str(p.get("experience_years") or p.get("years_exp") or 0)))
+        except (ValueError, TypeError):
+            years = 0
+        stack = str(p.get("tech_stack") or "").lower()
+        if any(t in stack for t in ("react native", "ios", "android", "swift", "kotlin")):
+            base = "Mobile Engineer"
+        elif any(t in stack for t in ("react", "vue", "angular", "next.js", "frontend")):
+            base = "Frontend Engineer"
+        elif any(t in stack for t in ("kubernetes", "terraform", "devops", "sre", "ansible")):
+            base = "DevOps Engineer"
+        elif any(t in stack for t in ("pytorch", "tensorflow", "ml", "machine learning", "data scientist")):
+            base = "Machine Learning Engineer"
+        else:
+            base = "Software Engineer"
+        if years >= 8:
+            p["current_title"] = f"Senior {base}"
+        elif years >= 4:
+            p["current_title"] = base
+        elif years >= 1:
+            p["current_title"] = f"Junior {base}"
+        else:
+            p["current_title"] = base
+    if not p.get("current_company"):
+        p["current_company"] = "Freelance"
+    if not p.get("education"):
+        p["education"] = "Bachelor's Degree"
+    if not p.get("referral_source"):
+        p["referral_source"] = "LinkedIn"
+    return p
+
+
 def _profile_direct_value(field: FormField, profile: Dict[str, Any]) -> Optional[str]:
     """Cheap pre-LLM lookup for blindingly-obvious fields (name/email/phone).
 
@@ -65,7 +109,28 @@ def _profile_direct_value(field: FormField, profile: Dict[str, Any]) -> Optional
     return None
 
 
-def _format_field_for_llm(field: FormField, index: int) -> Dict[str, Any]:
+# Token-optimization: cap the options list shown to the LLM. Country/state
+# pickers can have 200+ entries which inflates the prompt by ~1k tokens per
+# field. The LLM only needs to see a window large enough to find the match —
+# and the post-fill custom-select widget logic does its own substring match
+# against the FULL option list at apply time.
+_MAX_OPTIONS_SHOWN = 25
+
+
+def _trim_options(options: List[str], profile: Dict[str, Any]) -> List[str]:
+    if not options or len(options) <= _MAX_OPTIONS_SHOWN:
+        return options
+    # Heuristic: keep options whose first word matches profile location /
+    # country tokens, then pad with the first N entries of the original list.
+    needles = " ".join(
+        str(profile.get(k, "")) for k in ("location", "country", "current_company")
+    ).lower()
+    matched = [o for o in options if o and any(w in needles for w in o.lower().split()[:2])]
+    rest = [o for o in options if o not in matched]
+    return (matched + rest)[:_MAX_OPTIONS_SHOWN]
+
+
+def _format_field_for_llm(field: FormField, index: int, profile: Dict[str, Any]) -> Dict[str, Any]:
     out: Dict[str, Any] = {
         "id": index,
         "label": field.label,
@@ -73,8 +138,14 @@ def _format_field_for_llm(field: FormField, index: int) -> Dict[str, Any]:
         "required": field.required,
     }
     if field.options:
-        out["options"] = field.options
+        out["options"] = _trim_options(field.options, profile)
     return out
+
+
+# Profile keys the LLM rarely needs for field decisions — dropping them trims
+# ~200 tokens per call when tech_stack is long.
+_PROFILE_DROP_KEYS = {"tech_stack"}  # kept only for current_title derivation, not LLM
+_JOB_CONTEXT_KEEP_KEYS = {"platform", "ats_type"}  # job_url is long and unused for decisions
 
 
 def _build_llm_prompt(
@@ -83,61 +154,36 @@ def _build_llm_prompt(
     screening_answers: Dict[str, str],
     job_context: Optional[Dict[str, Any]] = None,
 ) -> str:
-    safe_profile = {k: v for k, v in profile.items() if v not in (None, "")}
-    fields_payload = [_format_field_for_llm(f, idx) for idx, f in fields]
+    safe_profile = {
+        k: v for k, v in profile.items()
+        if v not in (None, "") and k not in _PROFILE_DROP_KEYS
+    }
+    safe_job_ctx = {
+        k: v for k, v in (job_context or {}).items() if k in _JOB_CONTEXT_KEEP_KEYS
+    }
+    fields_payload = [_format_field_for_llm(f, idx, profile) for idx, f in fields]
 
-    rules = """
-You are an automated job-application agent filling a web form on behalf of a
-candidate. For each field below, output the single best value to enter.
-
-HARD RULES (do not violate):
-  1. Return STRICT JSON only. Schema:
-     {
-       "answers": [
-         {"id": <int>, "value": "<string>", "confidence": 0.0-1.0,
-          "reason": "<<= 80 chars>"}, ...
-       ]
-     }
-  2. One entry per field, in the same order as the input.
-  3. For select / radio / checkbox: pick a value EXACTLY from the provided
-     options list. Never invent a new option.
-  4. For yes/no work-authorization questions, answer "Yes" if the profile's
-     work_authorization is "Yes". For sponsorship questions, answer the
-     OPPOSITE of work_authorization (authorized → no sponsorship).
-  5. For EEO / demographic fields (gender, race, ethnicity, veteran status,
-     disability), pick the "Decline to self-identify" / "Prefer not to answer"
-     option when present. Never invent demographic data.
-  6. For salary expectations, prefer the value in the profile. If none, use a
-     reasonable USD range string like "Market rate" or "Negotiable".
-  7. REQUIRED FIELDS WITH MISSING PROFILE DATA — DO NOT LEAVE BLANK.
-     If a field is required:true and the profile lacks a direct value, INFER a
-     defensible answer from what you DO have:
-       - current_company missing -> "Freelance" or "Self-employed"
-       - current_title missing  -> infer from years_exp + tech_stack
-         (e.g. >=5y JS/React  -> "Senior Software Engineer";
-                <3y any stack -> "Software Engineer";
-                3-5y          -> "Software Engineer" or "Full-Stack Engineer")
-       - education missing      -> "Bachelor's Degree"
-       - referral_source missing -> "Company Website" or "LinkedIn"
-       - any other required text -> pick the most generic plausible value
-     Use confidence 0.55-0.75 when inferring, 0.85+ when the profile has it.
-  8. If you are <0.4 confident, still output your best guess but lower the
-     confidence; the caller may skip low-confidence answers on optional fields.
-  9. NEVER output PII you weren't given. If the profile lacks a value and the
-     field is OPTIONAL (required:false), use confidence 0.0 with value "" and
-     reason="no_data".
-"""
+    # Condensed rules. ~70% fewer tokens than the prior verbose form while
+    # preserving every load-bearing behavior (JSON schema, EEO defaults,
+    # required-must-not-be-blank, work-auth/sponsorship inversion).
+    rules = (
+        "Job-application form filler. For each field, return the value to enter.\n"
+        "Return JSON ONLY: {\"answers\":[{\"id\":int,\"value\":str,\"confidence\":0..1,\"reason\":str<=60}]}\n"
+        "RULES:\n"
+        "1. select/radio/checkbox: value MUST be exactly one of the provided options.\n"
+        "2. work_authorization=Yes => yes-auth questions \"Yes\", sponsorship questions \"No\". Invert if No.\n"
+        "3. EEO/demographic (gender/race/veteran/disability): pick \"Decline\" / \"Prefer not\" option if present.\n"
+        "4. Required fields MUST be non-empty. Profile already has current_title/current_company/education/"
+        "referral_source pre-filled - use those verbatim. Salary missing => \"Negotiable\".\n"
+        "5. Optional + no data => value:\"\", confidence:0.0, reason:\"no_data\".\n"
+        "6. confidence: 0.9+ profile-direct, 0.7 inferred, <0.4 wild guess.\n"
+    )
     return (
         rules
-        + "\nCANDIDATE PROFILE (JSON):\n"
-        + _json(safe_profile)
-        + "\n\nPRE-ANSWERED SCREENING QUESTIONS (use these verbatim if a field matches):\n"
-        + _json(screening_answers or {})
-        + "\n\nJOB CONTEXT:\n"
-        + _json(job_context or {})
-        + "\n\nFIELDS TO FILL:\n"
-        + _json(fields_payload)
-        + "\n\nNow return the JSON object as described."
+        + "PROFILE:" + _json(safe_profile)
+        + "\nSCREENING:" + _json(screening_answers or {})
+        + "\nJOB:" + _json(safe_job_ctx)
+        + "\nFIELDS:" + _json(fields_payload)
     )
 
 
@@ -186,14 +232,19 @@ async def _apply_value_to_field(
             await locator.set_input_files(value, timeout=8000)
             return True
 
-        # Visibility/scroll for typed fields
+        # Scroll FIRST so off-viewport-but-visible fields don't fail the
+        # visibility check. (Was the inverse — caused false-negative skips
+        # on Greenhouse-hosted forms with long question lists.)
         if ftype in ("text", "email", "phone", "textarea", "url", "date", "select"):
+            try:
+                await locator.scroll_into_view_if_needed(timeout=3000)
+            except Exception:
+                pass
             try:
                 await locator.wait_for(state="visible", timeout=3000)
             except Exception:
                 logger.info(f"[LLMFill] Skipping non-visible field '{field.label}'")
                 return False
-            await locator.scroll_into_view_if_needed()
             await asyncio.sleep(random.uniform(0.1, 0.3))
 
         if ftype in ("text", "email", "phone", "textarea", "url", "date"):
@@ -280,6 +331,7 @@ async def fill_form_with_llm(
     job_context: Optional[Dict[str, Any]] = None,
     resume_path: Optional[str] = None,
     cover_letter_path: Optional[str] = None,
+    candidate_id: Optional[str] = None,
 ) -> bool:
     """LLM-driven form fill. Returns True if every required field was filled.
 
@@ -293,6 +345,7 @@ async def fill_form_with_llm(
     whether to retry with the regex filler.
     """
     screening_answers = screening_answers or {}
+    profile = _enrich_profile(profile)
     success = True
     filled = 0
     skipped = 0
@@ -313,7 +366,7 @@ async def fill_form_with_llm(
             continue
 
         # Memory first
-        remembered = field_memory.recall(field.label, field.field_type, field.options)
+        remembered = field_memory.recall(field.label, field.field_type, field.options, candidate_id=candidate_id)
         if remembered:
             resolved[idx] = (remembered, "memory")
             continue
@@ -374,6 +427,7 @@ async def fill_form_with_llm(
                     field_memory.record_failure(
                         field.label, field.field_type, field.options, None,
                         "no_value_resolved_by_llm_or_memory",
+                        candidate_id=candidate_id,
                     )
                 except Exception:
                     pass
@@ -393,7 +447,7 @@ async def fill_form_with_llm(
                 and source not in ("memory",)
             ):
                 try:
-                    field_memory.remember(field.label, field.field_type, str(value), source)
+                    field_memory.remember(field.label, field.field_type, str(value), source, candidate_id=candidate_id)
                 except Exception:
                     pass
             await asyncio.sleep(random.uniform(0.1, 0.4))
@@ -404,6 +458,7 @@ async def fill_form_with_llm(
                     field_memory.record_failure(
                         field.label, field.field_type, field.options, str(value),
                         f"apply_failed_source={source}",
+                        candidate_id=candidate_id,
                     )
                 except Exception:
                     pass
