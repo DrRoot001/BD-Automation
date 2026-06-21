@@ -103,6 +103,14 @@
     "source": "llm:0.90",
     "value": "Prefer not to answer"
   },
+  "do you have any deadlines or timeline considerations we should be aware of": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have any deadlines or timeline considerations we should be aware of?",
+    "last_seen": 1782029172,
+    "source": "llm:0.80",
+    "value": "Available to start immediately"
+  },
   "do you live in santiago?": {
     "count": 1,
     "field_type": "radio",

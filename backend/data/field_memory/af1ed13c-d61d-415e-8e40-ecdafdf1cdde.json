@@ -23,6 +23,14 @@
     "source": "llm:0.70",
     "value": "Yes"
   },
+  "do you have any deadlines or timeline considerations we should be aware of": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have any deadlines or timeline considerations we should be aware of?",
+    "last_seen": 1782029172,
+    "source": "llm:0.80",
+    "value": "Available to start immediately"
+  },
   "email": {
     "count": 1,
     "field_type": "text",
