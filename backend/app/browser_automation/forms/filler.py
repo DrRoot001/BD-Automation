@@ -14,6 +14,139 @@ logger = logging.getLogger(__name__)
 # Human-Like Typing Engine
 # ─────────────────────────────────────────────────────────────────────────────
 
+async def _commit_react_select_widget(page: Page, locator, value: str) -> bool:
+    """Drive a react-select (Greenhouse / Ashby / Workday) custom dropdown.
+
+    Mirrors the proven sequence from diag_two_in_sequence.py:
+      1. page.evaluate finds wrapper via getElementById, dispatches mousedown+mouseup
+      2. Focus the input via page.locator(#id)
+      3. page.keyboard.type to filter / materialize options
+      4. page.evaluate finds the right option by id prefix and dispatches
+         mousedown+mouseup+click (the click is critical — without it the
+         option never commits)
+    """
+    field_id = await locator.get_attribute("id") or ""
+    if not field_id:
+        logger.warning(f"[react-select] no field_id on locator — value='{value}'")
+        return False
+
+    open_info = await page.evaluate(
+        """(id) => {
+            const el = document.getElementById(id);
+            if (!el) return false;
+            const ctrl = el.closest('.select__control, .react-select__control');
+            if (!ctrl) return false;
+            ctrl.scrollIntoView({block:'center', behavior:'instant'});
+            ctrl.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
+            ctrl.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, button:0}));
+            return true;
+        }""",
+        field_id,
+    )
+    if not open_info:
+        return False
+    await asyncio.sleep(0.5)
+
+    try:
+        await page.locator(f"#{field_id}").first.focus()
+        await page.keyboard.type(value, delay=30)
+        await asyncio.sleep(0.4)
+    except Exception as exc:
+        logger.debug(f"[react-select] type failed for #{field_id}: {exc}")
+
+    option_id_prefix = f"react-select-{field_id}-option-" if field_id else ""
+
+    # If typing FILTERED OUT all options (e.g. "Prefer not to answer" doesn't
+    # match any Gender option), clear the input so we can see and decline-
+    # match against the FULL option list.
+    if option_id_prefix:
+        current_options_count = await page.evaluate(
+            "(prefix) => document.querySelectorAll('[id^=\"' + prefix + '\"]').length",
+            option_id_prefix,
+        )
+        if current_options_count == 0:
+            logger.debug(f"[react-select] typed value filtered to 0 options; clearing input")
+            try:
+                await page.locator(f"#{field_id}").first.focus()
+                # Press backspace enough times to clear whatever we typed
+                for _ in range(len(value) + 5):
+                    await page.keyboard.press("Backspace")
+                await asyncio.sleep(0.4)
+            except Exception:
+                pass
+
+    chosen_id = await page.evaluate(
+        """({prefix, want}) => {
+            const wantLc = want.trim().toLowerCase();
+            const declineIntent = /\\b(decline|prefer not|rather not|don.t (wish|want)|do not (wish|want)|not (wish|want).?to.?answer|don.t.? answer|self.?identify|prefer.?not.?to.?say|wish to remain anonymous)\\b/i.test(want);
+            const declineOptionPat = /\\b(decline|prefer not|rather not|don.t wish|do not wish|don.t want|do not want|prefer not to say|self.?identify|not to answer|wish to remain anonymous|not protected|i don.t wish|i do not want)\\b/i;
+            // STRICT scoping: when we know our dropdown's option-id prefix,
+            // ONLY consider options whose id starts with that prefix. Never
+            // fall back to a global [role=option] query — the page may have
+            // other widgets (intl-tel-input phone country picker, etc.) that
+            // also use role=option, and matching their options would assign
+            // wrong values silently (e.g. "Afghanistan" into the Gender field).
+            let opts;
+            if (prefix) {
+                opts = Array.from(document.querySelectorAll('[id^="' + prefix + '"]'));
+            } else {
+                opts = Array.from(document.querySelectorAll(
+                    '.select__menu .select__option, .react-select__menu .react-select__option, '
+                    + '.select__menu [role="option"], .react-select__menu [role="option"]'
+                ));
+            }
+            if (opts.length === 0) return null;  // menu not yet open; caller falls back to Enter
+            if (declineIntent) {
+                const decline = opts.find(o => declineOptionPat.test((o.textContent||'')));
+                if (decline) return decline.id || null;
+            }
+            const exact = opts.find(o => (o.textContent||'').trim().toLowerCase() === wantLc);
+            if (exact) return exact.id || null;
+            const starts = opts.find(o => (o.textContent||'').trim().toLowerCase().startsWith(wantLc));
+            if (starts) return starts.id || null;
+            const contains = opts.find(o => (o.textContent||'').trim().toLowerCase().includes(wantLc));
+            if (contains) return contains.id || null;
+            return opts[0].id || null;
+        }""",
+        {"prefix": option_id_prefix, "want": value},
+    )
+    logger.debug(f"[react-select] chosen_id for #{field_id} value='{value}': {chosen_id}")
+    if chosen_id:
+        clicked = await page.evaluate(
+            """(id) => {
+                const opt = document.getElementById(id);
+                if (!opt) return false;
+                opt.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
+                opt.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, button:0}));
+                opt.dispatchEvent(new MouseEvent('click',     {bubbles:true, button:0}));
+                return true;
+            }""",
+            chosen_id,
+        )
+        if clicked:
+            await asyncio.sleep(0.5)
+            # Read back the committed value for debugging
+            committed = await page.evaluate(
+                """(id) => {
+                    const el = document.getElementById(id);
+                    if (!el) return '';
+                    const ctrl = el.closest('.select__control');
+                    const sv = ctrl ? ctrl.querySelector('.select__single-value') : null;
+                    return sv ? sv.textContent.trim() : '';
+                }""",
+                field_id,
+            )
+            logger.debug(f"[react-select] post-click read for #{field_id}: {committed!r}")
+            return True
+
+    try:
+        await page.keyboard.press("Enter")
+        await asyncio.sleep(0.3)
+        return True
+    except Exception:
+        return False
+
+
 async def human_type(page: Page, selector: str, text: str):
     """Type text character-by-character with realistic human-like delays.
     Includes random micro-pauses and occasional speed bursts to mimic
@@ -187,6 +320,19 @@ def _smart_infer_answer(label: str, field_type: str, options: List[str], profile
     """
     lbl = label.lower().strip()
     opts_lower = [o.lower().strip() for o in options] if options else []
+
+    # ── 0. Legal-restriction questions ("non-compete", "currently bound by") ──
+    # Default to "No" — candidates without active legal restrictions can apply
+    # freely. This is the safe positive answer for both candidate and employer.
+    restriction_keywords = (
+        "non-compete", "non compete", "noncompete", "currently bound",
+        "non-solicit", "any agreements that may restrict",
+        "any agreement that may restrict", "restrict your ability to work",
+        "restrictive covenant", "garden leave",
+    )
+    if any(k in lbl for k in restriction_keywords):
+        logger.debug(f"[SmartInfer] legal-restriction question '{label}' -> 'No'")
+        return "No"
 
     # ── 1. EEO / demographic ──────────────────────────────────────────────────
     eeo_keywords = ("gender", "race", "ethnicity", "veteran", "disability",
@@ -530,8 +676,34 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                 logger.info(f"FILLED [file] '{label}' = '{value_to_fill}'")
 
             elif field.field_type in ("text", "email", "phone", "textarea", "url"):
-                await locator.click(force=True, timeout=ACTION_TIMEOUT_MS)
-                await locator.fill(value_to_fill, timeout=ACTION_TIMEOUT_MS)
+                # React-controlled inputs: use the native-setter trick so
+                # React's internal _valueTracker registers the value. Plain
+                # locator.fill() writes the DOM but React rerenders later
+                # and clears the field if the value tracker is out of sync.
+                try:
+                    await locator.click(force=True, timeout=ACTION_TIMEOUT_MS)
+                except Exception:
+                    pass
+                committed = await locator.evaluate(
+                    """(el, v) => {
+                        try {
+                            const proto = el.tagName === 'TEXTAREA'
+                                ? window.HTMLTextAreaElement.prototype
+                                : window.HTMLInputElement.prototype;
+                            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                            setter.call(el, v);
+                            el.dispatchEvent(new Event('input',  {bubbles:true}));
+                            el.dispatchEvent(new Event('change', {bubbles:true}));
+                            return el.value === v;
+                        } catch (e) { return false; }
+                    }""",
+                    value_to_fill,
+                )
+                if not committed:
+                    try:
+                        await locator.fill(value_to_fill, timeout=ACTION_TIMEOUT_MS)
+                    except Exception:
+                        pass
                 filled_count += 1
                 did_fill = True
                 logger.info(f"FILLED [{field.field_type}] '{label}' = '{value_to_fill}'")
@@ -545,55 +717,41 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
 
             elif field.field_type == "select":
                 if getattr(field, "custom_widget", False):
-                    # Greenhouse / Workday / Ashby custom dropdowns.
-                    # 1. Click the trigger to open the menu
-                    # 2. Wait for option list to render
-                    # 3. Find option by partial text match, escape quotes
-                    safe_val = value_to_fill.replace("'", "\\'").replace('"', '\\"')
+                    # CRITICAL: if a previous filler pass already set this
+                    # dropdown, do NOT re-open it — re-opening a filled
+                    # react-select clears the displayed value transiently and
+                    # any race condition during the re-click loses it. Read
+                    # the current .select__single-value and skip if present.
                     try:
-                        await locator.click(force=True, timeout=ACTION_TIMEOUT_MS)
-                        await asyncio.sleep(random.uniform(0.4, 0.8))
-
-                        # Try several option selectors common across ATS platforms
-                        option_selectors = [
-                            f"[role='option']:has-text('{safe_val}')",
-                            f"li[role='option']:has-text('{safe_val}')",
-                            f".select__option:has-text('{safe_val}')",
-                            f".react-select__option:has-text('{safe_val}')",
-                            f".select-shell-list-item:has-text('{safe_val}')",
-                            f"li:has-text('{safe_val}')",
-                        ]
-                        clicked = False
-                        for opt_sel in option_selectors:
-                            try:
-                                option_locator = page.locator(opt_sel).first
-                                if await option_locator.count() > 0:
-                                    await option_locator.click(timeout=3000)
-                                    clicked = True
-                                    break
-                            except Exception:
-                                continue
-
-                        if not clicked:
-                            # Fallback: type the value and press Enter (keyboard navigation)
-                            await page.keyboard.type(value_to_fill, delay=50)
-                            await asyncio.sleep(0.4)
-                            await page.keyboard.press("Enter")
-                            clicked = True
-
-                        if clicked:
-                            filled_count += 1
-                            did_fill = True
-                            logger.info(f"FILLED [custom-select] '{label}' = '{value_to_fill}'")
-                    except Exception as exc:
-                        logger.warning(f"Custom dropdown click failed for '{label}': {exc}")
-                        # Close any open menu
+                        existing = await locator.evaluate("""el => {
+                            const ctrl = el.closest('.select__control, .react-select__control');
+                            if (!ctrl) return '';
+                            const sv = ctrl.querySelector('.select__single-value, .react-select__single-value');
+                            return sv ? sv.textContent.trim() : '';
+                        }""")
+                    except Exception:
+                        existing = ""
+                    if existing:
+                        logger.info(f"SKIPPED [custom-select] '{label}' — already filled with '{existing}'")
+                        filled_count += 1
+                        did_fill = True
+                    else:
                         try:
-                            await page.keyboard.press("Escape")
-                        except Exception:
-                            pass
-                        if field.required:
-                            required_failures.append((label, matched_key))
+                            ok = await _commit_react_select_widget(page, locator, value_to_fill)
+                            if ok:
+                                filled_count += 1
+                                did_fill = True
+                                logger.info(f"FILLED [custom-select] '{label}' = '{value_to_fill}'")
+                            elif field.required:
+                                required_failures.append((label, matched_key))
+                        except Exception as exc:
+                            logger.warning(f"Custom dropdown click failed for '{label}': {exc}")
+                            try:
+                                await page.keyboard.press("Escape")
+                            except Exception:
+                                pass
+                            if field.required:
+                                required_failures.append((label, matched_key))
                 else:
                     target_option = _best_select_match(field.options or [], value_to_fill)
                     if target_option:

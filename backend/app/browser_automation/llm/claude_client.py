@@ -43,9 +43,9 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 # Output-token caps. Kept well under typical OpenRouter free-tier headroom
 # (~3,000 tokens). Vision calls return short JSON; field-fill JSON is bounded
 # by field count. If you see 402 errors, lower these further or top up credit.
-_MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "1200"))
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
-_MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "1200"))  # back-compat
+_MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "600"))
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "500"))
+_MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "600"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 
 
