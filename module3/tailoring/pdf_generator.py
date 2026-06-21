@@ -31,13 +31,16 @@ def generate_resume_pdf(
     skills: list[str],
     experience: list[dict],
     education: list[dict],
-    certifications: list[str]
+    certifications: list[str],
+    projects: list[dict] = None  # NEW: Added projects for rendering only
 ) -> None:
     """Generate a clean, ATS-compliant PDF resume using the HTML template."""
+    if projects is None:
+        projects = []
+        
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     template = env.get_template("resume_template.html")
     
-    # Map the old arguments to the new JSON schema expected by the template
     resume_data = {
         "basics": {
             "name": name,
@@ -52,7 +55,7 @@ def generate_resume_pdf(
         "experience": experience,
         "education": education,
         "certifications": certifications,
-        "projects": [] 
+        "projects": projects  # Passed to template, but not returned to DB
     }
     
     html_content = template.render(resume=resume_data)
