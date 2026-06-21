@@ -14,6 +14,8 @@ from module3.scoring.fit_scorer import score_job_fit, MatchResult
 from module3.tailoring.resume_tailor import tailor_resume, TailoredResume
 from module3.cover_letter.generator import generate_cover_letter, CoverLetter
 from module3.qa.question_answerer import answer_screening_questions
+from module3.utils.storage import upload_file_to_supabase
+import uuid
 
 # Event publishing
 try:
@@ -76,12 +78,24 @@ async def orchestrate_application_package(
             parsed_resume = await parse_resume(base_resume_pdf_path, candidate_id=candidate_id)
             
             # Save base resume to central database
+                        
+            # Find next version for new base resume
+            all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")
+            next_version = 1
+            if all_resumes_resp.status_code == 200 and all_resumes_resp.json():
+                existing_resumes = all_resumes_resp.json()
+                versions = [r.get("version", 0) for r in existing_resumes if r.get("version") is not None]
+                if versions:
+                    next_version = max(versions) + 1
+                    
             print("[ORCHESTRATOR] Uploading parsed base resume to central database...")
+            parsed_json_data = parsed_resume.sections.model_dump()
+            parsed_json_data["file_hash"] = parsed_resume.file_hash
             upload_payload = {
                 "candidate_id": candidate_id,
-                "version": 1,
+                "version": next_version,
                 "file_url": base_resume_pdf_path,
-                "parsed_json": parsed_resume.sections.model_dump(),
+                "parsed_json": parsed_json_data,
                 "is_base": True
             }
             resp = await client.post("/api/resumes", json=upload_payload)
@@ -92,6 +106,7 @@ async def orchestrate_application_package(
             base_resume_id = uploaded_resume["id"]
             parsed_resume.resume_id = base_resume_id
             resume_data = parsed_resume
+            base_resume_version = next_version
             print(f"[ORCHESTRATOR] Created base resume record in database (ID: {base_resume_id})")
 
         # 3. Fetch Job details
@@ -217,6 +232,22 @@ async def orchestrate_application_package(
         tailored_resume = results[0]
         cover_letter = results[1]
         screening_answers = results[2] if screening_questions else {}
+        
+        # Upload to Supabase Storage
+        remote_resume_url = await upload_file_to_supabase(
+            tailored_resume.pdf_url, 
+            "updated_resume", 
+            f"{candidate_id}_{job_id}_v{next_version}.pdf"
+        )
+        tailored_resume.pdf_url = remote_resume_url
+        
+        remote_cl_url = await upload_file_to_supabase(
+            cover_letter.pdf_url,
+            "cover_letter",
+            f"{candidate_id}_{job_id}_cl.pdf"
+        )
+        cover_letter.pdf_url = remote_cl_url
+
         
         print(f"[ORCHESTRATOR] Resume tailored. ATS Score improved from {tailored_resume.ats_score_before} to {tailored_resume.ats_score_after}")
         
@@ -358,6 +389,7 @@ async def prepare_package_for_live_application(
                     if patch_resp.status_code not in (200, 204):
                         print(f"[ORCHESTRATOR] Warning: could not persist parsed_json ({patch_resp.status_code}): {patch_resp.text}")
                     resume_data = parsed_resume
+                    base_resume_version = next_version
                     resume_data.resume_id = base_resume_id
                     print(f"[ORCHESTRATOR] Auto-parsed base resume and updated DB (ID: {base_resume_id})")
 
@@ -494,6 +526,9 @@ async def prepare_package_for_live_application(
             existing_resumes = all_resumes_resp.json()
             for r in existing_resumes:
                 if r.get("tailored_for_job_id") == job_id:
+                    if r.get("version", 0) < base_resume_version:
+                        print(f"[ORCHESTRATOR] Found existing tailored resume but it is older than the current base resume. Ignoring it.")
+                        continue
                     tailored_resume_id = r["id"]
                     resume_pdf_url = r["file_url"]
                     print(f"[ORCHESTRATOR] Found existing tailored resume for job {job_id} (ID: {tailored_resume_id})")
@@ -513,6 +548,15 @@ async def prepare_package_for_live_application(
             # Tailor the resume
             tailored_resume = await tailor_resume(resume_data, job, candidate, version=next_version)
             resume_pdf_url = tailored_resume.pdf_url
+            
+            # Upload to Supabase Storage
+            remote_resume_url = await upload_file_to_supabase(
+                resume_pdf_url, 
+                "updated_resume", 
+                f"{candidate_id}_{job_id}_v{next_version}.pdf"
+            )
+            resume_pdf_url = remote_resume_url
+            tailored_resume.pdf_url = remote_resume_url
             
             # Upload Tailored Resume to DB
             tailored_payload = {
@@ -554,6 +598,14 @@ async def prepare_package_for_live_application(
             print("[ORCHESTRATOR] Generating cover letter...")
             cover_letter = await generate_cover_letter(resume_data, job, candidate)
             cover_letter_url = cover_letter.pdf_url
+            
+            # Upload to Supabase Storage
+            remote_cl_url = await upload_file_to_supabase(
+                cover_letter_url,
+                "cover_letter",
+                f"{candidate_id}_{job_id}_cl.pdf"
+            )
+            cover_letter_url = remote_cl_url
             
             # Update application status to COVER_LETTER_CREATED
             update_payload = {

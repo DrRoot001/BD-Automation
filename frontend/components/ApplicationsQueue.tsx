@@ -4,8 +4,6 @@ import { useQuery } from '@tanstack/react-query'
 import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
 import { formatDistanceToNow } from './utils'
-import { Briefcase, Search, Sprout, Zap, Building, Target, Globe, Rocket, FileText } from 'lucide-react'
-import { ReactNode } from 'react'
 
 function StatusBadge({ status }: { status: string }) {
   const s = status.toLowerCase()
@@ -22,23 +20,9 @@ function StatusBadge({ status }: { status: string }) {
   }
   return (
     <span className={clsx('badge', map[s] ?? 'badge-found')}>
-      <span className="w-1.5 h-1.5 rounded-full bg-current opacity-80" />
       {status.replace('_', ' ')}
     </span>
   )
-}
-
-function getPlatformIcon(platform: string): ReactNode {
-  const key = platform.toLowerCase()
-  if (key.includes('linkedin')) return <Briefcase className="w-4 h-4" />
-  if (key.includes('indeed')) return <Search className="w-4 h-4" />
-  if (key.includes('greenhouse')) return <Sprout className="w-4 h-4" />
-  if (key.includes('lever')) return <Zap className="w-4 h-4" />
-  if (key.includes('workday')) return <Building className="w-4 h-4" />
-  if (key.includes('ashby') || key.includes('smartrecruiters')) return <Target className="w-4 h-4" />
-  if (key.includes('glassdoor')) return <Globe className="w-4 h-4" />
-  if (key.includes('angellist') || key.includes('wellfound')) return <Rocket className="w-4 h-4" />
-  return <FileText className="w-4 h-4" />
 }
 
 export function ApplicationsQueue() {
@@ -51,35 +35,29 @@ export function ApplicationsQueue() {
   const apps = data ?? []
 
   return (
-    <div className="card animate-slide-up">
-      {/* Header */}
-      <div className="flex items-center justify-between px-5 py-4 border-b border-bg-border">
-        <div className="flex items-center gap-3">
-          <h2 className="font-semibold text-text-primary">Application Queue</h2>
+    <div className="card">
+      <div className="card-header">
+        <div className="flex items-center gap-2">
+          <h2 className="card-title">Application Queue</h2>
           {!isLoading && (
-            <span className="badge bg-accent/10 text-accent border border-accent/20 text-xs">
-              {apps.length} total
-            </span>
+            <span className="text-xs text-text-muted">{apps.length} total</span>
           )}
         </div>
-        <div className="flex items-center gap-2 text-xs text-text-muted">
+        <div className="flex items-center gap-1.5 text-xs text-text-muted">
           <span className="live-dot" />
           Live
         </div>
       </div>
 
-      {/* Table */}
       <div className="overflow-x-auto">
         {isLoading ? (
-          <div className="p-5 space-y-3">
+          <div className="p-4 space-y-2">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="skeleton h-12 rounded-lg" />
+              <div key={i} className="skeleton h-10 rounded" />
             ))}
           </div>
         ) : isError ? (
-          <div className="p-8 text-center text-danger text-sm">
-            Failed to load applications
-          </div>
+          <div className="p-8 text-center text-danger text-sm">Failed to load applications</div>
         ) : apps.length === 0 ? (
           <div className="p-10 text-center text-text-muted text-sm">
             No applications yet. Start by running the job discovery pipeline.
@@ -87,30 +65,27 @@ export function ApplicationsQueue() {
         ) : (
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-bg-border text-text-muted text-xs uppercase tracking-wider">
-                <th className="text-left px-5 py-3">Position</th>
-                <th className="text-left px-3 py-3">Platform</th>
-                <th className="text-left px-3 py-3">Status</th>
-                <th className="text-right px-3 py-3">Fit</th>
-                <th className="text-right px-5 py-3">Added</th>
+              <tr className="border-b border-bg-border text-text-muted text-xs">
+                <th className="text-left px-5 py-2.5 font-medium">Position</th>
+                <th className="text-left px-3 py-2.5 font-medium">Platform</th>
+                <th className="text-left px-3 py-2.5 font-medium">Status</th>
+                <th className="text-right px-3 py-2.5 font-medium">Fit</th>
+                <th className="text-right px-5 py-2.5 font-medium">Added</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-bg-border/50">
+            <tbody>
               {apps.map((app) => (
-                <tr key={app.application_id} className="table-row-hover">
+                <tr key={app.application_id} className="table-row-hover border-b border-bg-border/40 last:border-0">
                   <td className="px-5 py-3">
-                    <div className="font-medium text-text-primary truncate max-w-[200px]">
+                    <div className="font-medium text-text-primary truncate max-w-[200px] text-sm">
                       {app.job_title}
                     </div>
-                    <div className="text-text-muted text-xs truncate max-w-[200px]">
+                    <div className="text-text-muted text-xs truncate max-w-[200px] mt-0.5">
                       {app.company}
                     </div>
                   </td>
                   <td className="px-3 py-3">
-                    <span className="flex items-center gap-1.5 text-text-secondary">
-                      {getPlatformIcon(app.platform)}
-                      <span className="capitalize text-xs">{app.platform}</span>
-                    </span>
+                    <span className="text-xs text-text-secondary capitalize">{app.platform}</span>
                   </td>
                   <td className="px-3 py-3">
                     <StatusBadge status={app.status} />
@@ -119,12 +94,10 @@ export function ApplicationsQueue() {
                     {app.fit_score != null ? (
                       <span
                         className={clsx(
-                          'text-xs font-mono font-medium',
-                          app.fit_score >= 80
-                            ? 'text-success'
-                            : app.fit_score >= 60
-                            ? 'text-warning'
-                            : 'text-text-muted',
+                          'text-xs font-medium tabular-nums',
+                          app.fit_score >= 80 ? 'text-success'
+                          : app.fit_score >= 60 ? 'text-warning'
+                          : 'text-text-muted',
                         )}
                       >
                         {app.fit_score.toFixed(0)}%

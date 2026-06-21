@@ -79,23 +79,13 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
         "Please evaluate the attached resume."
     )
 
-    import google.genai.types as genai_types
-    from google import genai
+    from module3.utils.gemini import generate_content_with_retry
     
-    api_key = os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key)
-    
-    loop = asyncio.get_event_loop()
-    response = await loop.run_in_executor(
-        None,
-        lambda: client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=combined_prompt,
-            config=genai_types.GenerateContentConfig(
-                system_instruction=_SYSTEM_PROMPT,
-                temperature=0.0, 
-            ),
-        )
+    full_prompt = f"{_SYSTEM_PROMPT}\n\n{combined_prompt}"
+    response = await generate_content_with_retry(
+        contents=full_prompt,
+        temperature=0.0,
+        response_mime_type="application/json"
     )
 
     try:

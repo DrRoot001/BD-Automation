@@ -24,7 +24,7 @@ const CustomTooltip = ({
 }) => {
   if (!active || !payload?.length) return null
   return (
-    <div className="bg-bg-card border border-bg-border rounded-xl p-3 shadow-card text-sm">
+    <div className="bg-bg-card border border-bg-border rounded-md p-3 text-sm" style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.1)' }}>
       <p className="text-text-secondary font-medium mb-2 capitalize">{label}</p>
       {payload.map((p) => (
         <div key={p.name} className="flex items-center gap-2">
@@ -50,17 +50,17 @@ export function PlatformStatsChart() {
   }))
 
   return (
-    <div className="card animate-slide-up">
-      <div className="px-5 py-4 border-b border-bg-border">
-        <h2 className="font-semibold text-text-primary">Applications by Platform</h2>
-        <p className="text-xs text-text-muted mt-0.5">
-          Interview vs application ratio per job board
-        </p>
+    <div className="card">
+      <div className="card-header">
+        <div>
+          <h2 className="card-title">By Platform</h2>
+        </div>
+        <p className="text-xs text-text-muted">interviews vs applications</p>
       </div>
 
-      <div className="p-5">
+      <div className="p-4">
         {isLoading ? (
-          <div className="skeleton h-48 rounded-lg" />
+          <div className="skeleton h-48 rounded" />
         ) : isError || platformData.length === 0 ? (
           <div className="h-48 flex items-center justify-center">
             <div className="text-center text-text-muted">
@@ -73,37 +73,37 @@ export function PlatformStatsChart() {
             <BarChart data={platformData} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
               <CartesianGrid
                 strokeDasharray="3 3"
-                stroke="#252535"
+                stroke="#e4e4dc"
                 vertical={false}
               />
               <XAxis
                 dataKey="platform"
-                tick={{ fill: '#64748b', fontSize: 11 }}
+                tick={{ fill: '#8a8a7a', fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}
               />
               <YAxis
-                tick={{ fill: '#64748b', fontSize: 11 }}
+                tick={{ fill: '#8a8a7a', fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}
               />
-              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(99,102,241,0.06)' }} />
+              <Tooltip content={<CustomTooltip />} cursor={{ fill: 'rgba(0,0,0,0.03)' }} />
               <Legend
                 formatter={(value) => (
-                  <span style={{ color: '#94a3b8', fontSize: 11, textTransform: 'capitalize' }}>
+                  <span style={{ color: '#44443c', fontSize: 11, textTransform: 'capitalize' }}>
                     {value}
                   </span>
                 )}
               />
               <Bar
                 dataKey="applications"
-                fill="#6366f1"
+                fill="#111110"
                 radius={[4, 4, 0, 0]}
                 maxBarSize={40}
               />
               <Bar
                 dataKey="interviews"
-                fill="#a855f7"
+                fill="#8a8a7a"
                 radius={[4, 4, 0, 0]}
                 maxBarSize={40}
               />

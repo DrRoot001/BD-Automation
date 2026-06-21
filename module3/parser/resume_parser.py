@@ -28,6 +28,10 @@ class EducationEntry(BaseModel):
 
 class ResumeSection(BaseModel):
     summary: str = Field(description="Professional summary or profile description")
+    current_company: Optional[str] = Field(None, description="Name of the candidate's current or most recent employer company. Return None if not explicitly clear.")
+    current_title: Optional[str] = Field(None, description="Candidate's current or most recent job title. Return None if not explicitly clear.")
+    salary_expectation: Optional[str] = Field(None, description="Any mention of salary expectations or current salary. Return None if absent.")
+    website: Optional[str] = Field(None, description="Personal website, portfolio, GitHub, or LinkedIn URL extracted from contact info. Return None if absent.")
     skills: List[str] = Field(default_factory=list, description="Technical and soft skills")
     keywords: List[str] = Field(default_factory=list, description="Core keywords extracted from summary + skills + experience")
     experience: List[ExperienceEntry] = Field(default_factory=list, description="Employment and work experience details")
@@ -38,6 +42,7 @@ class ResumeData(BaseModel):
     candidate_id: Optional[str] = None
     resume_id: Optional[str] = None
     file_url: str
+    file_hash: Optional[str] = None
     sections: ResumeSection
     raw_text: str
 
@@ -118,10 +123,18 @@ async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resum
         print("Raw response:", response.text)
         raise ValueError(f"Failed to structure resume data: {e}")
         
+    # Calculate file hash for idempotency if a valid file path was provided
+    file_hash = None
+    if os.path.exists(file_path):
+        import hashlib
+        with open(file_path, "rb") as f:
+            file_hash = hashlib.sha256(f.read()).hexdigest()
+            
     return ResumeData(
         candidate_id=candidate_id,
         resume_id=resume_id,
         file_url=file_path,
+        file_hash=file_hash,
         sections=sections,
         raw_text=raw_text
     )
