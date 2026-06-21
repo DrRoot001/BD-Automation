@@ -3,9 +3,7 @@ from __future__ import annotations
 
 import os
 import asyncio
-from pydantic import BaseModel, Field
-from google import genai
-from google.genai import types
+from pydantic import BaseModel
 
 from module2.normalization.schemas import NormalizedJob
 from module3.parser.resume_parser import ResumeData
@@ -24,7 +22,6 @@ async def generate_cover_letter(
     output_pdf_dir: str = "backend/data/cover_letters"
 ) -> CoverLetter:
     """Generate a highly tailored cover letter PDF for a candidate and job description."""
-    # Format experience for context
     experience_text = "\n".join([
         f"- {exp.title} at {exp.company} ({exp.start_date} - {exp.end_date or 'Present'}): {exp.description} (Tech: {', '.join(exp.technologies)})"
         for exp in resume.sections.experience
@@ -58,7 +55,6 @@ async def generate_cover_letter(
     
     letter_content = response.text.strip()
     
-    # Render PDF cover letter
     pdf_filename = f"cover_letter_{resume.candidate_id or 'unknown'}_{job.job_id or 'unknown'}.pdf"
     output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
     
@@ -72,7 +68,10 @@ async def generate_cover_letter(
         candidate_info += f"  |  {candidate_phone}"
         
     print(f"Compiling cover letter PDF to: {output_pdf_path}...")
-    generate_cover_letter_pdf(
+    
+    # Non-blocking generation using to_thread
+    await asyncio.to_thread(
+        generate_cover_letter_pdf,
         output_path=output_pdf_path,
         candidate_name=candidate_name,
         candidate_info=candidate_info,
