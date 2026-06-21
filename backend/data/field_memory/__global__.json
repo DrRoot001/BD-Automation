@@ -1,4 +1,12 @@
 {
+  "": {
+    "count": 1,
+    "field_type": "email",
+    "label": "*",
+    "last_seen": 1782039070,
+    "source": "llm:0.90",
+    "value": "sabih0364@gmail.com"
+  },
   "ai policy for application": {
     "count": 1,
     "field_type": "select",
@@ -95,6 +103,14 @@
     "source": "llm:0.95",
     "value": "United States"
   },
+  "degree": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Degree",
+    "last_seen": 1782051487,
+    "source": "rules",
+    "value": "Bachelor's Degree"
+  },
   "disability status": {
     "count": 1,
     "field_type": "text",
@@ -111,11 +127,19 @@
     "source": "llm:0.80",
     "value": "Available to start immediately"
   },
+  "do you have hands-on experience building production user interfaces using modern frontend technologies such as react, htmx, or similar frameworks": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you have hands-on experience building production user interfaces using modern frontend technologies such as React, HTMX, or similar frameworks?\n*",
+    "last_seen": 1782051437,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
   "do you live in santiago?": {
     "count": 1,
     "field_type": "radio",
     "label": "Do you live in Santiago?*",
-    "last_seen": 1781971769,
+    "last_seen": 1781972731,
     "source": "smart_infer",
     "value": "Yes"
   },
@@ -135,6 +159,14 @@
     "source": "llm:0.90",
     "value": "Prefer not to answer"
   },
+  "have you been employed by cockroach labs in the past": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you been employed by Cockroach Labs in the past?*",
+    "last_seen": 1782056318,
+    "source": "llm:0.90",
+    "value": "No"
+  },
   "have you ever interviewed at anthropic before": {
     "count": 1,
     "field_type": "select",
@@ -142,6 +174,22 @@
     "last_seen": 1782028447,
     "source": "llm:0.40",
     "value": "No"
+  },
+  "have you worked on production-grade systems involving distributed systems, infrastructure platforms, workflow orchestration, or high-availability services": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you worked on production-grade systems involving distributed systems, infrastructure platforms, workflow orchestration, or high-availability services?\n*",
+    "last_seen": 1782051440,
+    "source": "llm:0.40",
+    "value": "No"
+  },
+  "how did you first hear about cockroach labs": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you first hear about Cockroach Labs?*",
+    "last_seen": 1782056315,
+    "source": "llm:0.90",
+    "value": "Online"
   },
   "how did you hear about this position": {
     "count": 1,
@@ -167,6 +215,14 @@
     "source": "llm:0.95",
     "value": "Yes"
   },
+  "please confirm you live in the nyc metro area": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Please confirm you live in the NYC Metro area.*",
+    "last_seen": 1782051435,
+    "source": "llm:0.30",
+    "value": "No"
+  },
   "veteran status": {
     "count": 1,
     "field_type": "text",
@@ -182,6 +238,14 @@
     "last_seen": 1782026591,
     "source": "rules",
     "value": "No"
+  },
+  "what are your salary expectations": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What are your salary expectations?",
+    "last_seen": 1782048808,
+    "source": "llm:0.85",
+    "value": "Negotiable"
   },
   "what is your current or more recent job title?": {
     "count": 1,

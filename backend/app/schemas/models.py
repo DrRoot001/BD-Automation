@@ -151,7 +151,7 @@ class ApplicationBase(BaseModel):
     screenshot_url: Optional[str] = None
     submitted_at: Optional[datetime] = None
     error_message: Optional[str] = None
-    retry_count: int = 0
+    retry_count: Optional[int] = 0
 
 class Application(ApplicationBase):
     id: UUID

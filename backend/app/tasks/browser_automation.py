@@ -3,12 +3,16 @@ import os
 import json
 import datetime
 import httpx
+import logging
 from celery.exceptions import Retry
 import redis.asyncio as aioredis
 
 from app.celery_app import celery_app
+from app.services.events import publish_event
 from app.browser_automation.services.models import ApplicationPackage, ApplicationResult
 from app.browser_automation.services.executor import ApplicationExecutor
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Internal helper
@@ -104,6 +108,11 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     app_id = package_dict["application_id"]
 
     async with httpx.AsyncClient(timeout=30) as client:
+        await publish_event("pipeline.progress", {
+            "application_id": str(app_id),
+            "step": "preparing_package",
+            "message": "Preparing tailored resume and cover letter..."
+        })
         app_resp = await client.get(f"{api_base}/applications/{app_id}")
         app_resp.raise_for_status()
         app_data = app_resp.json()
@@ -205,6 +214,8 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         "application_id":   app_id,
         "candidate_id":     cand_id,
         "job_id":           job_id,
+        "job_title":        job_data.get("title") or "",
+        "job_description":  job_data.get("description") or "",
         "job_url":          job_data.get("source_url") or "",
         "platform":         job_data.get("source") or "",
         "ats_type":         job_data.get("ats_type") or "",
@@ -215,15 +226,35 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     }
     
     package = ApplicationPackage(**full_package_dict)
+    
+    logger.info(f"Loaded executor payload. Hydration complete.")
+    await publish_event("pipeline.progress", {
+        "application_id": str(package.application_id),
+        "step": "form_filling",
+        "message": f"Initializing browser to fill application at {package.platform.capitalize()}..."
+    })
+    
     executor = ApplicationExecutor()
     result = await executor.execute(package, retry_count=retry_count)
     
     if result.status == "SUBMITTED":
+        await publish_event("pipeline.progress", {
+            "application_id": str(package.application_id),
+            "step": "submitting",
+            "message": "Application successfully submitted with evidence!"
+        })
         await publish_application_submitted(
             application_id=result.application_id,
             screenshot_url=result.screenshot_url or "",
             confirmation_text=result.confirmation_text or ""
         )
+    else:
+        await publish_event("pipeline.progress", {
+            "application_id": str(package.application_id),
+            "step": "failed",
+            "message": f"Automation ended with status: {result.status}"
+        })
+        
     return result
 
 @celery_app.task(
@@ -253,6 +284,7 @@ def execute_application(self, package_dict: dict):
                 retry_eligible=False
             ))
         elif result.status in ["FAILED", "CAPTCHA_FAILED"]:
+            logger.info(f"Automation execution completed: {result.status}")
             raise Exception(f"Execution failed: {result.error_message}")
             
         return result.dict()

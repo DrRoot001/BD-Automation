@@ -42,7 +42,7 @@ class GreenhouseAdapter(BasePlatformAdapter):
     def __init__(self):
         # Set during navigate_to_application
         self._iframe_mode: bool = False
-        self._frame: Optional[Frame] = None
+        self._frame_locator = None
 
     # ──────────────────────────────────────────────────────────────────────────
     # Navigation
@@ -129,39 +129,28 @@ class GreenhouseAdapter(BasePlatformAdapter):
         self._iframe_mode = False
         self._frame = None
         try:
-            await page.wait_for_selector(_IFRAME_SEL, timeout=_IFRAME_TIMEOUT_MS)
-            logger.info(f"[GH] Found #{_IFRAME_SEL} selector — checking {len(page.frames)} frame(s)")
-            for frame in page.frames:
-                logger.debug(f"[GH]   Frame: name={frame.name!r} url={frame.url!r}")
-                if "greenhouse" in (frame.url or "") or frame.name == "grnhse_iframe":
-                    self._frame = frame
-                    break
-            if not self._frame:
-                for frame in page.frames:
-                    if "greenhouse.io" in (frame.url or ""):
-                        self._frame = frame
-                        break
-            if self._frame:
+            iframe_el = await page.wait_for_selector(_IFRAME_SEL, timeout=_IFRAME_TIMEOUT_MS)
+            if iframe_el:
+                logger.info(f"[GH] Found #{_IFRAME_SEL} selector")
+                self._frame_locator = page.frame_locator(_IFRAME_SEL)
                 self._iframe_mode = True
-                logger.info(f"[GH] Embedded iframe mode detected (frame url: {self._frame.url})")
+                logger.info("[GH] Embedded iframe mode detected (using frame_locator)")
                 # Wait for the iframe content to be ready
                 try:
-                    await self._frame.wait_for_load_state("domcontentloaded", timeout=15_000)
-                    await self._frame.locator("input, select, textarea").first.wait_for(
+                    await self._frame_locator.locator("input, select, textarea").first.wait_for(
                         state="attached", timeout=_FIELD_TIMEOUT_MS
                     )
                     logger.info("[GH] Iframe form content is ready")
                 except Exception as exc:
                     logger.warning(f"[GH] Iframe content wait: {exc}")
             else:
-                logger.warning("[GH] #grnhse_iframe found but no matching Frame resolved; "
-                               "falling back to hosted-board mode")
+                logger.warning("[GH] #grnhse_iframe selector wait timed out; falling back to hosted-board mode")
         except Exception:
             logger.info("[GH] No #grnhse_iframe detected — hosted boards mode (direct page)")
 
         # ── 3. If we're on a job LISTING page, click "Apply" to reach the form ──
         # boards.greenhouse.io job pages show description + an Apply link, not the form itself.
-        target = self._frame if self._iframe_mode else page
+        target = self._frame_locator if self._iframe_mode else page
         has_inputs = False
         try:
             await target.locator("input, select, textarea").first.wait_for(
@@ -178,7 +167,7 @@ class GreenhouseAdapter(BasePlatformAdapter):
             apply_candidates = learned + [s for s in _APPLY_SELECTORS if s not in learned]
             for sel in apply_candidates:
                 try:
-                    btn = page.locator(sel).first
+                    btn = target.locator(sel).first
                     if await btn.count() > 0 and await btn.is_visible():
                         href = await btn.get_attribute("href") or ""
                         logger.info(f"[GH] Clicking Apply button: {sel!r} (href={href!r})")
@@ -191,12 +180,22 @@ class GreenhouseAdapter(BasePlatformAdapter):
                             await page.wait_for_load_state("domcontentloaded", timeout=10_000)
                         await self.human_delay(1.0, 2.0)
                         logger.info(f"[GH] After Apply click → {page.url!r}")
+                        if self._iframe_mode:
+                            logger.info("[GH] Iframe swap expected after Apply click. Waiting for DOM stability proactively...")
+                            from ..frame_utils import wait_for_stability
+                            stable = await wait_for_stability(page, self._frame_locator, is_iframe_mode=True)
+                            if not stable:
+                                logger.warning(f"[GH] Stability wait failed for selector {sel!r}, retrying click if possible...")
+                                # Try clicking again and waiting again
+                                await self.human_delay(1.0, 2.0)
+                                await btn.click()
+                                await wait_for_stability(page, self._frame_locator, is_iframe_mode=True)
                         break
                 except Exception as exc:
                     logger.debug(f"[GH] Apply selector {sel!r} failed: {exc}")
 
         # ── 4. Wait for the application form inputs ──
-        target = self._frame if self._iframe_mode else page
+        target = self._frame_locator if self._iframe_mode else page
         try:
             await target.locator("input, select, textarea").first.wait_for(
                 state="attached", timeout=_FIELD_TIMEOUT_MS
@@ -205,10 +204,32 @@ class GreenhouseAdapter(BasePlatformAdapter):
         except Exception:
             logger.warning("[GH] Timed out waiting for form inputs; proceeding anyway")
 
+        # Dismiss cookie banners to prevent pointer event interception
+        try:
+            cookie_btns = [
+                "button#onetrust-accept-btn-handler",
+                "button#onetrust-reject-all-handler",
+                "button.osano-cm-accept",
+                "button.osano-cm-deny"
+            ]
+            for btn_sel in cookie_btns:
+                btn = page.locator(btn_sel).first
+                if await btn.count() > 0 and await btn.is_visible():
+                    await btn.click(timeout=2000)
+                    logger.info(f"[GH] Dismissed cookie banner via: {btn_sel}")
+                    await asyncio.sleep(0.5)
+                    break
+        except Exception:
+            pass
+
         await self.human_delay(0.5, 1.5)
 
     async def detect_application_type(self, page: Page) -> str:
         return "EXTERNAL_FORM"
+
+    async def refresh_frame(self, page: Page) -> None:
+        if self._iframe_mode:
+            logger.info("[GH] refresh_frame called: frame_locator resolves lazily, no action needed")
 
     # ──────────────────────────────────────────────────────────────────────────
     # Form filling
@@ -224,17 +245,23 @@ class GreenhouseAdapter(BasePlatformAdapter):
         pre_detected_form=None,
         candidate_id: Optional[str] = None,
     ) -> bool:
-        ctx = self._frame if self._iframe_mode else page
+        from ..frame_utils import get_live_frame
+        live_frame = await get_live_frame(self._frame_locator) if self._iframe_mode else None
+        eval_ctx = live_frame if self._iframe_mode else page
+        loc_ctx = self._frame_locator if self._iframe_mode else page
 
-        form = pre_detected_form or await detect_form(ctx, container_selector=self.container_selector)
+        form = pre_detected_form or await detect_form(eval_ctx, container_selector=self.container_selector)
 
         file_fields = [f for f in form.fields if f.field_type == "file"]
         logger.info(f"[GH] Detected {len(file_fields)} file field(s): "
                     f"{[(f.label, f.selector) for f in file_fields]}")
 
-        fill_success = await fill_form(ctx, form, profile, screening_answers, candidate_id=candidate_id)
+        fill_success = await fill_form(loc_ctx, form, profile, screening_answers, candidate_id=candidate_id)
 
-        await self._upload_greenhouse_files(ctx, page, resume_path, cover_letter_path)
+        # Re-fetch the live frame because fill_form (and LLM generation) may take a long time,
+        # during which the original eval_ctx (Frame object) may have become detached or stale.
+        eval_ctx_for_upload = (await get_live_frame(self._frame_locator)) if self._iframe_mode else page
+        await self._upload_greenhouse_files(eval_ctx_for_upload, loc_ctx, resume_path, cover_letter_path)
 
         # Re-scan DISABLED while debugging: rescan calls detect_form which
         # iterates DOM elements; on some Greenhouse builds this triggers a
@@ -261,8 +288,8 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
     async def _upload_greenhouse_files(
         self,
-        ctx,          # Frame or Page — the context where form lives
-        page: Page,   # Always the parent Page (for fallbacks)
+        eval_ctx,     # Frame or Page for evaluate()
+        loc_ctx,      # FrameLocator or Page for locator()
         resume_path: Optional[str],
         cover_letter_path: Optional[str],
     ) -> None:
@@ -271,10 +298,14 @@ class GreenhouseAdapter(BasePlatformAdapter):
         Uses a single JS call to read ALL file inputs and their surrounding
         context at once, then maps each PDF to the correct slot by label.
         """
+        if not eval_ctx:
+            logger.warning("[GH] eval_ctx is missing, cannot evaluate file inputs")
+            return
+
         # ── Classify file inputs by walking up to the fieldset.attachment ancestor ──
         # Greenhouse wraps each file input in <fieldset class="attachment"> whose
         # text content starts with the label ("Resume / CV*" or "Cover Letter").
-        file_info = await ctx.evaluate("""() => {
+        file_info = await eval_ctx.evaluate("""() => {
             let inputs = document.querySelectorAll("input[name='file-attachment'], input[type='file']");
             let results = [];
             for (let i = 0; i < inputs.length; i++) {
@@ -333,10 +364,10 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
         logger.info(f"[GH] Found {len(file_info)} file input(s)")
 
-        gh_inputs = ctx.locator("input[name='file-attachment']")
+        gh_inputs = loc_ctx.locator("input[name='file-attachment']")
         count = await gh_inputs.count()
         if count == 0:
-            gh_inputs = ctx.locator("input[type='file']")
+            gh_inputs = loc_ctx.locator("input[type='file']")
             count = await gh_inputs.count()
 
         resume_slot = None
@@ -385,7 +416,7 @@ class GreenhouseAdapter(BasePlatformAdapter):
     # ──────────────────────────────────────────────────────────────────────────
 
     async def submit(self, page: Page) -> bool:
-        ctx = self._frame if self._iframe_mode else page
+        ctx = self._frame_locator if self._iframe_mode else page
         # Try learned selectors first, then the hardcoded fallback list
         learned = get_learned_fixes("greenhouse").get("submit")
         hardcoded = [
@@ -416,7 +447,9 @@ class GreenhouseAdapter(BasePlatformAdapter):
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
         # Check page content first, then the frame if in iframe mode
-        for ctx in ([self._frame, page] if self._iframe_mode else [page]):
+        from ..frame_utils import get_live_frame
+        live_frame = await get_live_frame(self._frame_locator) if self._iframe_mode else None
+        for ctx in ([live_frame, page] if self._iframe_mode else [page]):
             if ctx is None:
                 continue
             try:

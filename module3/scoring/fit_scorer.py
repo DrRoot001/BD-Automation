@@ -121,8 +121,8 @@ async def score_job_fit(
     should_apply = combined_score >= 70.0
 
     return MatchResult(
-        job_id=job.job_id or "job-unknown",
-        candidate_id=candidate.get("id") or "candidate-unknown",
+        job_id=str(job.job_id) if job.job_id else "job-unknown",
+        candidate_id=str(candidate.get("id")) if candidate.get("id") else "candidate-unknown",
         fit_score=fit_score,
         ats_score=ats_score,
         combined_score=combined_score,

@@ -4,6 +4,7 @@ import logging
 import asyncio
 import tempfile
 import httpx
+import traceback
 import redis.asyncio as redis
 
 from typing import Optional, Dict, Literal
@@ -14,7 +15,7 @@ from ..browser import BrowserContextManager
 from ..adapters import get_adapter, BasePlatformAdapter
 from ..forms import detect_form, fill_form, fill_form_with_llm
 from ..captcha import CaptchaService
-from ..agent import PageAgent, diagnose_failure, get_learned_fixes
+from ..agent import AgentLoop, LoopResult, PageAgent, diagnose_failure, get_learned_fixes
 
 from .models import ApplicationPackage, ApplicationResult
 from .screenshot import capture_and_store_screenshot
@@ -64,11 +65,45 @@ class RateLimiter:
 # File resolution helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _supabase_auth_headers() -> dict:
+    """Return Supabase auth headers if credentials are available, else empty dict.
+
+    The resume/cover-letter buckets are private (not public in Supabase Storage
+    settings), so downloads from /object/public/... return 400 without auth.
+    We reuse the same anon key the uploader (module3/utils/storage.py) uses.
+    """
+    def _read_env_file(path: str, key: str) -> str:
+        try:
+            with open(path) as f:
+                for line in f:
+                    if line.startswith(f"{key}="):
+                        return line.strip().split("=", 1)[1]
+        except Exception:
+            pass
+        return ""
+
+    # Prefer env var, fall back to frontend .env files (same as storage.py does)
+    anon_key = (
+        os.getenv("SUPABASE_ANON_KEY")
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        or _read_env_file("frontend/.env.local", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+        or _read_env_file("frontend/.env", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    )
+    if not anon_key:
+        return {}
+    return {
+        "Authorization": f"Bearer {anon_key}",
+        "apikey": anon_key,
+    }
+
+
 async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") -> Optional[str]:
     """Return a local filesystem path for the given URL or path.
 
     - If it's already a valid local path → return as-is.
     - If it's an HTTP(S) URL → download to a temp file and return the path.
+      Supabase storage URLs are downloaded with auth headers because the
+      resume/cover-letter buckets are private.
       The temp file is NOT cleaned up here; the caller is responsible.
     - If resolution fails → return None.
     """
@@ -81,9 +116,16 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
         logger.error(f"Local file not found: {url_or_path}")
         return None
 
+    # Add Supabase auth headers for private-bucket URLs
+    headers = {}
+    if "supabase.co/storage" in url_or_path:
+        headers = _supabase_auth_headers()
+        if not headers:
+            logger.warning("[M4] Supabase URL detected but no anon key found — download may fail")
+
     try:
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-            resp = await client.get(url_or_path)
+            resp = await client.get(url_or_path, headers=headers)
             resp.raise_for_status()
         # Write to a persistent temp file (not inside a with-block so it survives)
         tf = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
@@ -190,8 +232,9 @@ class ApplicationExecutor:
             if use_agent:
                 try:
                     page_agent = PageAgent(ats=package.platform)
+                    frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                     state = await page_agent.classify_page(
-                        page, frame=getattr(adapter, "_frame", None),
+                        page, frame=frame_loc,
                     )
                     logger.info(
                         f"[Agent] page_state={state.kind} confidence={state.confidence:.2f} "
@@ -219,7 +262,7 @@ class ApplicationExecutor:
                         if not clicked_via:
                             clicked_via = await page_agent.find_and_click(
                                 page, "apply_button", candidates,
-                                frame=getattr(adapter, "_frame", None),
+                                frame=frame_loc,
                             )
                         if clicked_via:
                             get_learned_fixes(package.platform).add("apply_button", clicked_via)
@@ -232,274 +275,363 @@ class ApplicationExecutor:
                 except Exception as exc:
                     logger.warning(f"[Agent] classify/click-apply failed (non-fatal): {exc}")
 
-            # ── STEP 6: Detect form (done inside fill_application; get ref for screening) ──
-            ctx = adapter._frame if getattr(adapter, '_iframe_mode', False) else page
-            form = await detect_form(ctx, container_selector=adapter.container_selector)
-
-            # ── STEP 6.5: Call M3 only for screening answers (URLs already resolved) ──
-            #
-            # We already have the tailored resume and cover letter from the M3 event.
-            # We call M3's prepare-package endpoint ONLY to obtain answers to any
-            # screening questions found in the form that weren't pre-answered.
-            # We NEVER overwrite resume_url or cover_letter_url if they are already set.
-            screening_answers: Dict[str, str] = dict(package.screening_answers or {})
-
-            exclude_kw = {"first name", "last name", "email", "phone", "resume", "cover letter", "cv"}
-            open_questions = [
-                field.label for field in form.fields
-                if field.field_type in ("text", "textarea", "select", "radio", "checkbox")
-                and not any(kw in field.label.lower() for kw in exclude_kw)
-                and field.label.lower() not in {q.lower() for q in screening_answers}
-            ]
-            needs_cover_letter = any(
-                "cover" in f.label.lower() for f in form.fields if f.field_type == "file"
-            )
-
-            if open_questions:
-                api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+            # Always refresh the frame before starting AgentLoop because cross-origin 
+            # navigations or delayed iframe loads might have detached the old Frame object.
+            if hasattr(adapter, 'refresh_frame'):
                 try:
-                    async with httpx.AsyncClient(timeout=300.0) as client:
-                        resp = await client.post(
-                            f"{api_base}/applications/prepare-package",
-                            json={
-                                "candidate_id": package.candidate_id,
-                                "job_id": package.job_id,
-                                "needs_cover_letter": needs_cover_letter and (_temp_cover is None),
-                                "screening_questions": open_questions,
-                            },
-                        )
-                    if resp.status_code == 200:
-                        m3 = resp.json()
-                        logger.info(f"[M4] M3 prepare-package answered {len(open_questions)} question(s)")
-
-                        # Only adopt URLs from M3 if we don't already have local paths
-                        if not _temp_cover and m3.get("cover_letter_pdf_url"):
-                            _temp_cover = await _resolve_file_to_local_path(
-                                m3["cover_letter_pdf_url"], ".pdf"
-                            )
-
-                        # Merge M3 screening answers (don't overwrite already-answered ones)
-                        for q, a in (m3.get("screening_answers") or {}).items():
-                            if q not in screening_answers:
-                                screening_answers[q] = a
-
-                        if not m3.get("should_apply", True):
-                            logger.warning(f"[M4] M3 returned should_apply=False; abandoning")
-                            await transition_status(package.application_id, "ANALYZED",
-                                                    {"reason": "score_below_threshold"})
-                            if context_mgr and context:
-                                await context_mgr.destroy_context(context)
-                            _cleanup_temp(_temp_resume, _temp_cover)
-                            return ApplicationResult(
-                                application_id=package.application_id,
-                                status="FAILED",
-                                error_message="Abandoned: score below threshold",
-                                execution_time_seconds=_elapsed(),
-                                retry_count=retry_count,
-                            )
-                    else:
-                        logger.warning(f"[M4] M3 prepare-package returned {resp.status_code}: {resp.text[:200]}")
+                    await adapter.refresh_frame(page)
                 except Exception as exc:
-                    logger.warning(f"[M4] M3 prepare-package call failed (non-fatal): {exc}")
+                    logger.warning(f"[M4] Failed to refresh frame before AgentLoop: {exc}")
 
-            # ── STEP 7: Fill form ──
-            # If USE_LLM_FILLER=true, drive the fill through Gemini first. On
-            # LLM failure we fall back to the deterministic adapter path so the
-            # pipeline never blocks on the AI.
-            use_llm_fill = os.getenv("USE_LLM_FILLER", "true").lower() == "true"
-            fill_ctx = adapter._frame if getattr(adapter, "_iframe_mode", False) else page
-            fill_success = False
-            if use_llm_fill:
+            # ── STEP 5.7: AgentLoop — autonomous vision-driven fill + submit ──────────
+            # Runs BEFORE the scripted pipeline. On success the scripted steps 6-10
+            # are skipped entirely. On wrong-page / explicit abort the application is
+            # halted immediately. On any other failure we fall through to the existing
+            # deterministic pipeline so the run never blocks on the AI.
+            _agent_submitted = False
+            _agent_confirmation: Optional[str] = None
+
+            use_agent_loop = os.getenv("USE_AGENT_LOOP", "true").lower() == "true"
+            if use_agent_loop:
                 try:
-                    job_ctx = {
+                    job_ctx_for_loop = {
                         "platform": package.platform,
-                        "ats_type": package.ats_type,
+                        "ats_type": package.ats_type or package.platform,
                         "job_url": package.job_url,
                     }
-                    fill_success = await fill_form_with_llm(
-                        fill_ctx,
-                        form,
-                        package.candidate_profile,
-                        screening_answers=screening_answers,
-                        job_context=job_ctx,
+                    agent_loop = AgentLoop(
+                        candidate_profile=package.candidate_profile,
+                        job_context=job_ctx_for_loop,
                         resume_path=_temp_resume,
                         cover_letter_path=_temp_cover,
+                    )
+                    frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
+                    loop_result: LoopResult = await agent_loop.run(
+                        page, frame=frame_loc
+                    )
+                    logger.info(
+                        f"[M4] AgentLoop finished: status={loop_result.status} "
+                        f"steps={loop_result.steps_taken} error={loop_result.error!r}"
+                    )
+
+                    if loop_result.status == "SUBMITTED":
+                        _agent_submitted = True
+                        _agent_confirmation = loop_result.confirmation
+                        await transition_status(package.application_id, "FORM_COMPLETED")
+
+                    elif loop_result.status in ("WRONG_PAGE", "ABORTED"):
+                        raise Exception(f"AgentLoop aborted: {loop_result.error}")
+
+                    else:
+                        # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR — fall back
+                        logger.warning(
+                            f"[M4] AgentLoop non-terminal ({loop_result.status}) — "
+                            "falling back to scripted pipeline"
+                        )
+
+                except Exception as exc:
+                    if "AgentLoop aborted" in str(exc):
+                        raise  # propagate intentional aborts
+                    logger.warning(f"[M4] AgentLoop raised (non-fatal, falling back): {exc}")
+
+            if not _agent_submitted:
+                # ── STEP 6: Detect form (done inside fill_application; get ref for screening) ──
+                if hasattr(adapter, 'refresh_frame'):
+                    try:
+                        await adapter.refresh_frame(page)
+                    except Exception as exc:
+                        logger.warning(f"[M4] Failed to refresh frame before detect_form: {exc}")
+                
+                from ..frame_utils import get_live_frame
+                frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
+                if getattr(adapter, '_iframe_mode', False):
+                    ctx = await get_live_frame(frame_loc)
+                else:
+                    ctx = page
+                    
+                form = await detect_form(ctx, container_selector=adapter.container_selector)
+
+                # ── STEP 6.5: Call M3 only for screening answers (URLs already resolved) ──
+                #
+                # We already have the tailored resume and cover letter from the M3 event.
+                # We call M3's prepare-package endpoint ONLY to obtain answers to any
+                # screening questions found in the form that weren't pre-answered.
+                # We NEVER overwrite resume_url or cover_letter_url if they are already set.
+                screening_answers: Dict[str, str] = dict(package.screening_answers or {})
+
+                exclude_kw = {"first name", "last name", "email", "phone", "resume", "cover letter", "cv"}
+                open_questions = [
+                    field.label for field in form.fields
+                    if field.field_type in ("text", "textarea", "select", "radio", "checkbox")
+                    and not any(kw in field.label.lower() for kw in exclude_kw)
+                    and field.label.lower() not in {q.lower() for q in screening_answers}
+                ]
+                needs_cover_letter = any(
+                    "cover" in f.label.lower() for f in form.fields if f.field_type == "file"
+                )
+
+                if open_questions:
+                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+                    try:
+                        async with httpx.AsyncClient(timeout=300.0) as client:
+                            resp = await client.post(
+                                f"{api_base}/applications/prepare-package",
+                                json={
+                                    "candidate_id": package.candidate_id,
+                                    "job_id": package.job_id,
+                                    "needs_cover_letter": needs_cover_letter and (_temp_cover is None),
+                                    "screening_questions": open_questions,
+                                },
+                            )
+                        if resp.status_code == 200:
+                            m3 = resp.json()
+                            logger.info(f"[M4] M3 prepare-package answered {len(open_questions)} question(s)")
+
+                            # Only adopt URLs from M3 if we don't already have local paths
+                            if not _temp_cover and m3.get("cover_letter_pdf_url"):
+                                _temp_cover = await _resolve_file_to_local_path(
+                                    m3["cover_letter_pdf_url"], ".pdf"
+                                )
+
+                            # Merge M3 screening answers (don't overwrite already-answered ones)
+                            for q, a in (m3.get("screening_answers") or {}).items():
+                                if q not in screening_answers:
+                                    screening_answers[q] = a
+
+                            if not m3.get("should_apply", True):
+                                logger.warning(f"[M4] M3 returned should_apply=False; abandoning")
+                                await transition_status(package.application_id, "ANALYZED",
+                                                        {"reason": "score_below_threshold"})
+                                if context_mgr and context:
+                                    await context_mgr.destroy_context(context)
+                                _cleanup_temp(_temp_resume, _temp_cover)
+                                return ApplicationResult(
+                                    application_id=package.application_id,
+                                    status="FAILED",
+                                    error_message="Abandoned: score below threshold",
+                                    execution_time_seconds=_elapsed(),
+                                    retry_count=retry_count,
+                                )
+                        else:
+                            logger.warning(f"[M4] M3 prepare-package returned {resp.status_code}: {resp.text[:200]}")
+                    except Exception as exc:
+                        logger.warning(f"[M4] M3 prepare-package call failed (non-fatal): {exc}")
+
+                # ── STEP 7: Fill form ──
+                # If USE_LLM_FILLER=true, drive the fill through Gemini first. On
+                # LLM failure we fall back to the deterministic adapter path so the
+                # pipeline never blocks on the AI.
+                use_llm_fill = os.getenv("USE_LLM_FILLER", "true").lower() == "true"
+                fill_ctx = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None) if getattr(adapter, "_iframe_mode", False) else page
+                fill_success = False
+                if use_llm_fill:
+                    try:
+                        job_ctx = {
+                            "platform": package.platform,
+                            "ats_type": package.ats_type,
+                            "job_url": package.job_url,
+                            "job_title": getattr(package, "job_title", ""),
+                            "job_description": getattr(package, "job_description", ""),
+                        }
+                        fill_success = await fill_form_with_llm(
+                            fill_ctx,
+                            form,
+                            package.candidate_profile,
+                            screening_answers=screening_answers,
+                            job_context=job_ctx,
+                            resume_path=_temp_resume,
+                            cover_letter_path=_temp_cover,
+                            candidate_id=package.candidate_id,
+                        )
+                        logger.info(f"[M4] LLM filler returned success={fill_success}")
+                    except Exception as exc:
+                        logger.warning(f"[M4] LLM filler raised — falling back to adapter: {exc}")
+                        fill_success = False
+                if not fill_success:
+                    # Adapter path includes file uploads and re-scans (e.g. Greenhouse)
+                    fill_success = await adapter.fill_application(
+                        page,
+                        package.candidate_profile,
+                        _temp_resume,
+                        _temp_cover,
+                        screening_answers,
+                        pre_detected_form=form,
                         candidate_id=package.candidate_id,
                     )
-                    logger.info(f"[M4] LLM filler returned success={fill_success}")
-                except Exception as exc:
-                    logger.warning(f"[M4] LLM filler raised — falling back to adapter: {exc}")
-                    fill_success = False
-            if not fill_success:
-                # Adapter path includes file uploads and re-scans (e.g. Greenhouse)
-                fill_success = await adapter.fill_application(
-                    page,
-                    package.candidate_profile,
-                    _temp_resume,
-                    _temp_cover,
-                    screening_answers,
-                    pre_detected_form=form,
-                    candidate_id=package.candidate_id,
-                )
-            # End-of-fill DOM snapshot — read all react-select rendered values.
-            # Reports the actual visible state for debugging. ALSO retries any
-            # dropdowns that ended up empty using the in-place commit code, so
-            # this is the FINAL safety net before submission.
-            try:
-                ctx_for_final = getattr(adapter, "_frame", None) or page
-                final_state = await ctx_for_final.evaluate(
-                    """() => {
-                        const out = [];
-                        document.querySelectorAll('.select__control').forEach(ctrl => {
-                            // Skip intl-tel-input phone-prefix widget — not a form field
-                            if (ctrl.closest('.iti, .iti__country-list, .iti--container')) return;
-                            const sv = ctrl.querySelector('.select__single-value');
-                            const ph = ctrl.querySelector('.select__placeholder');
-                            const inp = ctrl.querySelector('[role=combobox], input');
-                            const lblEl = (() => {
-                                if (!inp) return null;
-                                const ll = inp.getAttribute('aria-labelledby');
-                                return ll ? document.getElementById(ll) : null;
-                            })();
-                            out.push({
-                                id: inp ? inp.id : '',
-                                label: lblEl ? lblEl.textContent.trim().slice(0,80) : '?',
-                                value: sv ? sv.textContent.trim() : '',
-                                placeholder: ph ? ph.textContent.trim() : '',
-                            });
-                        });
-                        return out;
-                    }"""
-                )
-                logger.info("[M4] Final dropdown state after all fill passes:")
-                for d in final_state or []:
-                    display = d['value'] if d['value'] else f"<PLACEHOLDER>{d['placeholder']}"
-                    logger.info(f"      {d['label'][:60]!r:65} = {display!r}")
-
-                # Final file-upload snapshot: Greenhouse REPLACES the
-                # <input type=file> with a filename-display element after a
-                # successful upload. We look for [class*=filename] / .file-
-                # attachment-name as evidence that the files are committed.
-                attached = await ctx_for_final.evaluate(
-                    """() => {
-                        const out = [];
-                        document.querySelectorAll(
-                            '.file-attachment-name, .attachment-name, '
-                            + '[class*="filename"], [class*="uploaded-file"]'
-                        ).forEach(el => {
-                            if (el.offsetParent && el.textContent.trim()) {
-                                out.push(el.textContent.trim().slice(0, 80));
-                            }
-                        });
-                        return out;
-                    }"""
-                )
-                if attached:
-                    logger.info(f"[M4] Files attached (visible in UI): {attached}")
-                else:
-                    logger.info("[M4] No filename evidence found in UI — uploads may have silently failed")
-            except Exception as exc:
-                logger.debug(f"[M4] final-state snapshot failed: {exc}")
-
-            if not fill_success:
-                # Diagnose what went wrong before we bail. The result is written
-                # to learned_fixes/ for the next run.
+                # End-of-fill DOM snapshot — read all react-select rendered values.
+                # Reports the actual visible state for debugging. ALSO retries any
+                # dropdowns that ended up empty using the in-place commit code, so
+                # this is the FINAL safety net before submission.
                 try:
-                    from pathlib import Path as _P
-                    adapter_module_path = _P(__file__).resolve().parents[1] / "adapters" / f"{package.platform.lower()}.py"
-                    await diagnose_failure(
-                        page=page,
-                        ats=package.platform,
-                        action="fill_form",
-                        failure_reason="one or more required fields could not be filled",
-                        adapter_source_path=adapter_module_path if adapter_module_path.exists() else None,
-                        frame=getattr(adapter, "_frame", None),
+                    from ..frame_utils import get_live_frame
+                    frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
+                    ctx_for_final = (await get_live_frame(frame_loc)) if getattr(adapter, "_iframe_mode", False) else page
+                    final_state = await ctx_for_final.evaluate(
+                        """() => {
+                            const out = [];
+                            document.querySelectorAll('.select__control').forEach(ctrl => {
+                                // Skip intl-tel-input phone-prefix widget — not a form field
+                                if (ctrl.closest('.iti, .iti__country-list, .iti--container')) return;
+                                const sv = ctrl.querySelector('.select__single-value');
+                                const ph = ctrl.querySelector('.select__placeholder');
+                                const inp = ctrl.querySelector('[role=combobox], input');
+                                const lblEl = (() => {
+                                    if (!inp) return null;
+                                    const ll = inp.getAttribute('aria-labelledby');
+                                    return ll ? document.getElementById(ll) : null;
+                                })();
+                                out.push({
+                                    id: inp ? inp.id : '',
+                                    label: lblEl ? lblEl.textContent.trim().slice(0,80) : '?',
+                                    value: sv ? sv.textContent.trim() : '',
+                                    placeholder: ph ? ph.textContent.trim() : '',
+                                });
+                            });
+                            return out;
+                        }"""
                     )
+                    logger.info("[M4] Final dropdown state after all fill passes:")
+                    for d in final_state or []:
+                        display = d['value'] if d['value'] else f"<PLACEHOLDER>{d['placeholder']}"
+                        logger.info(f"      {d['label'][:60]!r:65} = {display!r}")
+
+                    # Final file-upload snapshot: Greenhouse REPLACES the
+                    # <input type=file> with a filename-display element after a
+                    # successful upload. We look for [class*=filename] / .file-
+                    # attachment-name as evidence that the files are committed.
+                    attached = await ctx_for_final.evaluate(
+                        """() => {
+                            const out = [];
+                            document.querySelectorAll(
+                                '.file-attachment-name, .attachment-name, '
+                                + '[class*="filename"], [class*="uploaded-file"]'
+                            ).forEach(el => {
+                                if (el.offsetParent && el.textContent.trim()) {
+                                    out.push(el.textContent.trim().slice(0, 80));
+                                }
+                            });
+                            return out;
+                        }"""
+                    )
+                    if attached:
+                        logger.info(f"[M4] Files attached (visible in UI): {attached}")
+                    else:
+                        logger.info("[M4] No filename evidence found in UI — uploads may have silently failed")
                 except Exception as exc:
-                    logger.warning(f"[M4] diagnose_failure non-fatal exception: {exc}")
-                raise Exception("Form fill incomplete — one or more required fields could not be filled")
+                    logger.debug(f"[M4] final-state snapshot failed: {exc}")
 
-            # ── STEP 8: Captcha ──
-            dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
-            provider = os.getenv("CAPTCHA_PROVIDER", "2captcha").lower()
-            raw_key = os.getenv(
-                "TWO_CAPTCHA_API_KEY" if provider == "2captcha" else
-                "ANTI_CAPTCHA_API_KEY" if provider == "anticaptcha" else
-                "OCILAR_API_KEY",
-                "",
-            )
-            key_configured = bool(raw_key) and not raw_key.lower().startswith("your_")
-
-            if form.has_captcha:
-                if dry_run or not key_configured:
-                    logger.warning(
-                        f"[M4] Captcha detected ({form.captcha_type}) — skipping solve "
-                        f"(dry_run={dry_run}, solver_configured={key_configured})"
-                    )
-                else:
-                    captcha_svc = CaptchaService(provider=provider)
-                    solution = await captcha_svc.solve(page, form.captcha_type)
-                    if not solution.success:
-                        status = "CAPTCHA_FAILED"
-                        error_message = f"Captcha solving exhausted all attempts: {form.captcha_type}"
-                        screenshot_path = await capture_and_store_screenshot(page, package.application_id)
-                        logger.error(f"[M4] {error_message}")
-                        _cleanup_temp(_temp_resume, _temp_cover)
-                        return ApplicationResult(
-                            application_id=package.application_id,
-                            status=status,
-                            screenshot_url=screenshot_path,
-                            error_message=error_message,
-                            execution_time_seconds=_elapsed(),
-                            retry_count=retry_count,
-                        )
-
-            # ── STEP 9: FORM_COMPLETED ──
-            await transition_status(package.application_id, "FORM_COMPLETED")
-
-            # ── STEP 10: Submit ──
-            if dry_run:
-                logger.info("[DRY RUN] Skipping submission click")
-                submitted = True
-                verified = True
-                confirmation_text = "DRY RUN SUCCESS (no submit)"
-            else:
-                submitted = await adapter.submit(page)
-                if not submitted and use_agent:
-                    # Adapter selectors missed — try the vision agent before failing.
-                    try:
-                        page_agent = PageAgent(ats=package.platform)
-                        tried = get_learned_fixes(package.platform).get("submit")
-                        clicked_via = await page_agent.find_and_click(
-                            page, "submit", tried,
-                            frame=getattr(adapter, "_frame", None),
-                        )
-                        if clicked_via:
-                            get_learned_fixes(package.platform).add("submit", clicked_via)
-                            try:
-                                await page.wait_for_load_state("domcontentloaded", timeout=15_000)
-                            except Exception:
-                                pass
-                            submitted = True
-                    except Exception as exc:
-                        logger.warning(f"[Agent] vision submit recovery failed: {exc}")
-                if not submitted:
-                    # Last-resort diagnosis before bailing
+                if not fill_success:
+                    # Diagnose what went wrong before we bail. The result is written
+                    # to learned_fixes/ for the next run.
                     try:
                         from pathlib import Path as _P
                         adapter_module_path = _P(__file__).resolve().parents[1] / "adapters" / f"{package.platform.lower()}.py"
+                        frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                         await diagnose_failure(
                             page=page,
                             ats=package.platform,
-                            action="submit",
-                            failure_reason="all submit selectors missed",
+                            action="fill_form",
+                            failure_reason="one or more required fields could not be filled",
                             adapter_source_path=adapter_module_path if adapter_module_path.exists() else None,
-                            frame=getattr(adapter, "_frame", None),
+                            log_tail=traceback.format_exc(),
+                            frame=frame_loc,
                         )
-                    except Exception:
-                        pass
-                    raise Exception("Submit click failed — no submit button found or click unsuccessful")
-                verified, confirmation_text = await adapter.verify_success(page)
+                    except Exception as exc:
+                        logger.warning(f"[M4] diagnose_failure non-fatal exception: {exc}")
+                    raise Exception("Form fill incomplete — one or more required fields could not be filled")
+
+                # ── STEP 8: Captcha ──
+                dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
+                provider = os.getenv("CAPTCHA_PROVIDER", "2captcha").lower()
+                raw_key = os.getenv(
+                    "TWO_CAPTCHA_API_KEY" if provider == "2captcha" else
+                    "ANTI_CAPTCHA_API_KEY" if provider == "anticaptcha" else
+                    "OCILAR_API_KEY",
+                    "",
+                )
+                key_configured = bool(raw_key) and not raw_key.lower().startswith("your_")
+
+                if form.has_captcha:
+                    if dry_run or not key_configured:
+                        logger.warning(
+                            f"[M4] Captcha detected ({form.captcha_type}) — skipping solve "
+                            f"(dry_run={dry_run}, solver_configured={key_configured})"
+                        )
+                    else:
+                        captcha_svc = CaptchaService(provider=provider)
+                        solution = await captcha_svc.solve(page, form.captcha_type)
+                        if not solution.success:
+                            status = "CAPTCHA_FAILED"
+                            error_message = f"Captcha solving exhausted all attempts: {form.captcha_type}"
+                            screenshot_path = await capture_and_store_screenshot(page, package.application_id)
+                            logger.error(f"[M4] {error_message}")
+                            _cleanup_temp(_temp_resume, _temp_cover)
+                            return ApplicationResult(
+                                application_id=package.application_id,
+                                status=status,
+                                screenshot_url=screenshot_path,
+                                error_message=error_message,
+                                execution_time_seconds=_elapsed(),
+                                retry_count=retry_count,
+                            )
+
+                # ── STEP 9: FORM_COMPLETED ──
+                await transition_status(package.application_id, "FORM_COMPLETED")
+
+                # ── STEP 10: Submit ──
+                if dry_run:
+                    logger.info("[DRY RUN] Skipping submission click")
+                    submitted = True
+                    verified = True
+                    confirmation_text = "DRY RUN SUCCESS (no submit)"
+                else:
+                    submitted = await adapter.submit(page)
+                    if not submitted and use_agent:
+                        # Adapter selectors missed — try the vision agent before failing.
+                        try:
+                            page_agent = PageAgent(ats=package.platform)
+                            tried = get_learned_fixes(package.platform).get("submit")
+                            frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
+                            clicked_via = await page_agent.find_and_click(
+                                page, "submit", tried,
+                                frame=frame_loc,
+                            )
+                            if clicked_via:
+                                get_learned_fixes(package.platform).add("submit", clicked_via)
+                                try:
+                                    await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+                                except Exception:
+                                    pass
+                                submitted = True
+                        except Exception as exc:
+                            logger.warning(f"[Agent] vision submit recovery failed: {exc}")
+                    if not submitted:
+                        # Last-resort diagnosis before bailing
+                        try:
+                            from pathlib import Path as _P
+                            adapter_module_path = _P(__file__).resolve().parents[1] / "adapters" / f"{package.platform.lower()}.py"
+                            await diagnose_failure(
+                                page=page,
+                                ats=package.platform,
+                                action="submit",
+                                failure_reason="all submit selectors missed",
+                                adapter_source_path=adapter_module_path if adapter_module_path.exists() else None,
+                                log_tail=traceback.format_exc(),
+                                frame=getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None),
+                            )
+                        except Exception:
+                            pass
+                        raise Exception("Submit click failed — no submit button found or click unsuccessful")
+                    verified, confirmation_text = await adapter.verify_success(page)
+
+            else:
+                # ── Agent-submitted fast path ──────────────────────────────────────────
+                # AgentLoop already filled and submitted the form. Skip straight to the
+                # screenshot. We treat confirmation as verified=True since the agent
+                # explicitly returned status="SUBMITTED".
+                submitted = True
+                verified = True
+                confirmation_text = _agent_confirmation
 
             # ── STEP 11: Screenshot ──
             # Scroll to the form section so the screenshot captures the filled fields

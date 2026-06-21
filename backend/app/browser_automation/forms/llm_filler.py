@@ -145,7 +145,7 @@ def _format_field_for_llm(field: FormField, index: int, profile: Dict[str, Any])
 # Profile keys the LLM rarely needs for field decisions — dropping them trims
 # ~200 tokens per call when tech_stack is long.
 _PROFILE_DROP_KEYS = {"tech_stack"}  # kept only for current_title derivation, not LLM
-_JOB_CONTEXT_KEEP_KEYS = {"platform", "ats_type"}  # job_url is long and unused for decisions
+_JOB_CONTEXT_KEEP_KEYS = {"platform", "ats_type", "job_title", "job_description"}  # job_url is long and unused for decisions
 
 
 def _build_llm_prompt(
@@ -359,7 +359,8 @@ async def fill_form_with_llm(
         # File inputs are wired to caller-supplied paths
         if field.field_type == "file":
             lbl = field.label.lower()
-            if "cover" in lbl and cover_letter_path:
+            sel = field.selector.lower()
+            if ("cover" in lbl or "cover" in sel) and cover_letter_path:
                 resolved[idx] = (cover_letter_path, "file_cover")
             elif resume_path:
                 resolved[idx] = (resume_path, "file_resume")
@@ -568,18 +569,15 @@ async def _commit_custom_select(page: Page, locator, field: FormField, value: st
     #    pattern that's proven to commit values reliably. locator.evaluate
     #    behaved differently on some forms; document.getElementById is
     #    100% deterministic.
-    opened = await page.evaluate(
-        """(id) => {
-            const el = document.getElementById(id);
-            if (!el) return false;
+    opened = await locator.evaluate(
+        """(el) => {
             const ctrl = el.closest('.select__control, .react-select__control');
             if (!ctrl) return false;
             ctrl.scrollIntoView({block:'center', behavior:'instant'});
             ctrl.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
             ctrl.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, button:0}));
             return true;
-        }""",
-        field_id,
+        }"""
     )
     if not opened:
         return False
@@ -587,8 +585,9 @@ async def _commit_custom_select(page: Page, locator, field: FormField, value: st
 
     # 2. Focus + type to filter
     try:
-        await page.locator(f"#{field_id}").first.focus()
-        await page.keyboard.type(value, delay=30)
+        loc_field = page.locator(f"#{field_id}").first
+        await loc_field.focus()
+        await loc_field.press_sequentially(value, delay=30)
         await asyncio.sleep(0.4)
     except Exception as exc:
         logger.debug(f"[LLMFill] custom-select typing failed for '{field.label}': {exc}")
@@ -599,21 +598,22 @@ async def _commit_custom_select(page: Page, locator, field: FormField, value: st
 
     # If typing filtered the menu to zero matches, clear input to see all options.
     if option_id_prefix:
-        cur_count = await page.evaluate(
-            "(prefix) => document.querySelectorAll('[id^=\"' + prefix + '\"]').length",
+        cur_count = await locator.evaluate(
+            "(el, prefix) => document.querySelectorAll('[id^=\"' + prefix + '\"]').length",
             option_id_prefix,
         )
         if cur_count == 0:
             try:
-                await page.locator(f"#{field_id}").first.focus()
+                loc_field = page.locator(f"#{field_id}").first
+                await loc_field.focus()
                 for _ in range(len(value) + 5):
-                    await page.keyboard.press("Backspace")
+                    await loc_field.press("Backspace")
                 await asyncio.sleep(0.4)
             except Exception:
                 pass
 
-    chosen_id = await page.evaluate(
-        """({prefix, want}) => {
+    chosen_id = await locator.evaluate(
+        """(el, {prefix, want}) => {
             const wantLc = want.trim().toLowerCase();
             const declineIntent = /\\b(decline|prefer not|rather not|don.t (wish|want)|do not (wish|want)|not (wish|want).?to.?answer|don.t.? answer|self.?identify|prefer.?not.?to.?say|wish to remain anonymous)\\b/i.test(want);
             const declineOptionPat = /\\b(decline|prefer not|rather not|don.t wish|do not wish|don.t want|do not want|prefer not to say|self.?identify|not to answer|wish to remain anonymous|not protected|i don.t wish|i do not want)\\b/i;
@@ -650,8 +650,8 @@ async def _commit_custom_select(page: Page, locator, field: FormField, value: st
     )
 
     if chosen_id and not chosen_id.startswith("__no_id__:"):
-        clicked = await page.evaluate(
-            """(id) => {
+        clicked = await locator.evaluate(
+            """(el, id) => {
                 const opt = document.getElementById(id);
                 if (!opt) return false;
                 opt.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
@@ -667,7 +667,7 @@ async def _commit_custom_select(page: Page, locator, field: FormField, value: st
 
     # 5. Last-resort: press Enter — react-select auto-selects highlighted option
     try:
-        await page.keyboard.press("Enter")
+        await page.locator(f"#{field_id}").first.press("Enter")
         await asyncio.sleep(0.3)
         return True
     except Exception:

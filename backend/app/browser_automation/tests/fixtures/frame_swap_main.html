@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Greenhouse Embedded Wrapper</title>
+</head>
+<body>
+    <div id="container">
+        <iframe id="grnhse_iframe" name="grnhse_iframe" src="frame_swap_iframe.html"></iframe>
+    </div>
+    <script>
+        // Parent listens for message to swap iframe
+        window.addEventListener('message', (event) => {
+            if (event.data === 'swap_iframe') {
+                const container = document.getElementById('container');
+                container.innerHTML = '<iframe id="grnhse_iframe" name="grnhse_iframe" src="frame_content.html"></iframe>';
+                // Simulate the target closed error by destroying it immediately again
+                setTimeout(() => {
+                    container.innerHTML = '<iframe id="grnhse_iframe" name="grnhse_iframe" src="frame_content.html?reloaded=1"></iframe>';
+                }, 500);
+            }
+        });
+    </script>
+</body>
+</html>

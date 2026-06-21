@@ -23,6 +23,11 @@ export function useWebSocket(onEvent?: (evt: WSEvent) => void) {
   const delayRef = useRef(RECONNECT_DELAY_MS)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
+  
+  const onEventRef = useRef(onEvent)
+  useEffect(() => {
+    onEventRef.current = onEvent
+  }, [onEvent])
 
   const invalidateAll = useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['kpis'] })
@@ -72,7 +77,7 @@ export function useWebSocket(onEvent?: (evt: WSEvent) => void) {
             invalidateAll()
         }
 
-        onEvent?.(parsed)
+        onEventRef.current?.(parsed)
       } catch {
         // ignore parse errors
       }
@@ -80,7 +85,7 @@ export function useWebSocket(onEvent?: (evt: WSEvent) => void) {
 
     ws.onclose = () => {
       if (!mountedRef.current) return
-      onEvent?.({ event: 'disconnected' })
+      onEventRef.current?.({ event: 'disconnected' })
       timerRef.current = setTimeout(() => {
         delayRef.current = Math.min(delayRef.current * 2, MAX_RECONNECT_DELAY_MS)
         connect()
@@ -90,7 +95,7 @@ export function useWebSocket(onEvent?: (evt: WSEvent) => void) {
     ws.onerror = () => {
       ws.close()
     }
-  }, [queryClient, invalidateAll, onEvent])
+  }, [queryClient, invalidateAll])
 
   useEffect(() => {
     mountedRef.current = true

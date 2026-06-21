@@ -5,6 +5,8 @@ class ApplicationPackage(BaseModel):
     application_id: str
     candidate_id: str
     job_id: str
+    job_title: Optional[str] = None
+    job_description: Optional[str] = None
     job_url: str
     platform: str
     ats_type: Optional[str] = None

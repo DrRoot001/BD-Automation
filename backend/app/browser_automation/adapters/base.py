@@ -28,5 +28,8 @@ class BasePlatformAdapter(ABC):
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
         pass
 
+    async def refresh_frame(self, page: Page) -> None:
+        pass
+
     async def human_delay(self, min_s=2.0, max_s=8.0):
         await asyncio.sleep(random.uniform(min_s, max_s))

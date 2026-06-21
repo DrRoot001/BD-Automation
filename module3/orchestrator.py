@@ -29,14 +29,19 @@ async def orchestrate_application_package(
     job_id: str,
     base_resume_pdf_path: Optional[str] = None,
     screening_questions: Optional[List[str]] = None,
-    api_base_url: str = "http://127.0.0.1:8000"
+    api_base_url: str = "http://127.0.0.1:8000",
+    skip_gate: bool = False
 ) -> Dict[str, any]:
     """
     Orchestrate candidate application flow:
     Score -> Validate Gate -> Tailor Resume -> Generate Cover Letter -> QA -> Queue.
     """
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
-    
+    if api_base_url.endswith("/api"):
+        api_base_url = api_base_url[:-4]
+    elif api_base_url.endswith("/api/"):
+        api_base_url = api_base_url[:-5]
+        
     async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
         # 1. Fetch Candidate details
         print("[ORCHESTRATOR] Fetching candidate details...")
@@ -88,13 +93,23 @@ async def orchestrate_application_package(
                 if versions:
                     next_version = max(versions) + 1
                     
+            if base_resume_pdf_path.startswith("http://") or base_resume_pdf_path.startswith("https://"):
+                remote_base_url = base_resume_pdf_path
+            else:
+                print("[ORCHESTRATOR] Uploading base resume to Supabase...")
+                remote_base_url = await upload_file_to_supabase(
+                    base_resume_pdf_path, 
+                    "resume", 
+                    f"{candidate_id}_base_v{next_version}.pdf"
+                )
+            
             print("[ORCHESTRATOR] Uploading parsed base resume to central database...")
             parsed_json_data = parsed_resume.sections.model_dump()
             parsed_json_data["file_hash"] = parsed_resume.file_hash
             upload_payload = {
                 "candidate_id": candidate_id,
                 "version": next_version,
-                "file_url": base_resume_pdf_path,
+                "file_url": remote_base_url,
                 "parsed_json": parsed_json_data,
                 "is_base": True
             }
@@ -161,7 +176,7 @@ async def orchestrate_application_package(
         print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
         
         # Check Gate Threshold
-        if not match_result.should_apply:
+        if not skip_gate and not match_result.should_apply:
             print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
             
             # Transition to ANALYZED
@@ -236,7 +251,7 @@ async def orchestrate_application_package(
         # Upload to Supabase Storage
         remote_resume_url = await upload_file_to_supabase(
             tailored_resume.pdf_url, 
-            "updated_resume", 
+            "resume", 
             f"{candidate_id}_{job_id}_v{next_version}.pdf"
         )
         tailored_resume.pdf_url = remote_resume_url
@@ -346,7 +361,11 @@ async def prepare_package_for_live_application(
     Runs synchronously and only executes required pipeline steps.
     """
     print(f"\n[ORCHESTRATOR] Synchronous package preparation for Candidate: {candidate_id} | Job: {job_id}")
-    
+    if api_base_url.endswith("/api"):
+        api_base_url = api_base_url[:-4]
+    elif api_base_url.endswith("/api/"):
+        api_base_url = api_base_url[:-5]
+        
     async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
         # 1. Fetch Candidate details
         print("[ORCHESTRATOR] Fetching candidate details...")
@@ -377,6 +396,7 @@ async def prepare_package_for_live_application(
                     raw_text="[Loaded from DB]"
                 )
                 print(f"[ORCHESTRATOR] Loaded existing base resume from DB (ID: {base_resume_id})")
+                base_resume_version = base_resume.get("version", 1)
             else:
                 # Base resume record exists but parsed_json is NULL — auto-parse from file_url
                 file_url = base_resume.get("file_url", "")
@@ -389,7 +409,7 @@ async def prepare_package_for_live_application(
                     if patch_resp.status_code not in (200, 204):
                         print(f"[ORCHESTRATOR] Warning: could not persist parsed_json ({patch_resp.status_code}): {patch_resp.text}")
                     resume_data = parsed_resume
-                    base_resume_version = next_version
+                    base_resume_version = base_resume.get("version", 1)
                     resume_data.resume_id = base_resume_id
                     print(f"[ORCHESTRATOR] Auto-parsed base resume and updated DB (ID: {base_resume_id})")
 
@@ -551,8 +571,8 @@ async def prepare_package_for_live_application(
             
             # Upload to Supabase Storage
             remote_resume_url = await upload_file_to_supabase(
-                resume_pdf_url, 
-                "updated_resume", 
+                tailored_resume.pdf_url, 
+                "resume", 
                 f"{candidate_id}_{job_id}_v{next_version}.pdf"
             )
             resume_pdf_url = remote_resume_url

@@ -40,7 +40,7 @@ def score_job(job: Any, profile: Dict[str, Any]) -> MatchTrace:
 
     # Salary
     desired_min = profile.get("desired_salary_min")
-    sal_min, sal_max, period = parse_salary(job.salary_text or job.description or "")
+    sal_min, sal_max, period = parse_salary(getattr(job, "salary_text", None) or job.description or "")
     salary_score = 0.0
     if desired_min and sal_min:
         salary_score = 1.0 if sal_min >= desired_min else sal_min / desired_min

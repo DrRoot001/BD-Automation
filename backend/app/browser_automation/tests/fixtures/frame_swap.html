@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Greenhouse Simulator</title>
+</head>
+<body>
+    <h1>Job Listing</h1>
+    <button id="apply_btn">Apply Now</button>
+    <div id="container"></div>
+
+    <script>
+        document.getElementById('apply_btn').addEventListener('click', () => {
+            // Simulate navigation/load delay
+            setTimeout(() => {
+                const container = document.getElementById('container');
+                container.innerHTML = '<iframe id="grnhse_iframe" name="grnhse_iframe" src="frame_content.html"></iframe>';
+                
+                // Simulate frame destruction and recreation (e.g. form validation fail)
+                setTimeout(() => {
+                    container.innerHTML = '<iframe id="grnhse_iframe" name="grnhse_iframe" src="frame_content.html?reloaded=1"></iframe>';
+                }, 1000);
+            }, 500);
+        });
+    </script>
+</body>
+</html>

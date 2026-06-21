@@ -110,10 +110,12 @@ class PageAgent:
     # Page state classification
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def classify_page(self, page: Page, frame: Optional[Frame] = None) -> PageState:
+    async def classify_page(self, page: Page, frame: Optional[Any] = None) -> PageState:
         """Return the agent's best guess at the current page state."""
+        from ..frame_utils import get_live_frame
         try:
-            ctx = frame or page
+            live_frame = await get_live_frame(frame) if frame else None
+            ctx = live_frame or page
             # JPEG quality 50 keeps the screenshot small enough for cheap vision
             # while preserving enough detail for page-state classification.
             screenshot = await page.screenshot(
@@ -160,8 +162,10 @@ class PageAgent:
         dom_scope_selector: Optional[str] = None,
     ) -> List[str]:
         """Ask Gemini for new selector candidates given the current DOM."""
+        from ..frame_utils import get_live_frame
         try:
-            ctx = frame or page
+            live_frame = await get_live_frame(frame) if frame else None
+            ctx = live_frame or page
             if dom_scope_selector:
                 el = await ctx.query_selector(dom_scope_selector)
                 if el:
@@ -211,11 +215,14 @@ class PageAgent:
         page: Page,
         channel: str,
         tried: List[str],
-        frame: Optional[Frame] = None,
+        frame: Optional[Any] = None,
     ) -> Optional[str]:
         """Ask the agent to find a working selector and click it. Returns the
         winning selector, or None if all proposals failed."""
         suggestions = await self.suggest_selectors(page, channel, tried, frame=frame)
+        
+        # We don't strictly need the live frame here because FrameLocator has .locator(),
+        # but to be consistent with ctx we can use frame directly if it's a FrameLocator.
         ctx = frame or page
         for sel in suggestions:
             try:

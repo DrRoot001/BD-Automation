@@ -7,7 +7,8 @@ import Link from 'next/link'
 import CandidateProfileForm from '@/components/CandidateProfileForm'
 import { ApplicationsQueue } from '@/components/ApplicationsQueue'
 import { api } from '@/lib/api'
-import { Mail, Check, Loader2, AlertTriangle, X } from 'lucide-react'
+import { Mail, Check, Loader2, AlertTriangle, X, Activity } from 'lucide-react'
+import { useWebSocket } from '@/hooks/useWebSocket'
 
 export default function CandidateDetailPage() {
   const { id } = useParams()
@@ -16,6 +17,18 @@ export default function CandidateDetailPage() {
   const [applyResult, setApplyResult] = useState<any>(null)
   const [showAutoApply, setShowAutoApply] = useState(false)
   const [maxApps, setMaxApps] = useState(10)
+  const [progressLogs, setProgressLogs] = useState<{timestamp: string, message: string}[]>([])
+
+  useWebSocket((evt) => {
+    if (evt.event === 'pipeline.progress' && evt.data) {
+      // Check if it belongs to this candidate or an application for this candidate
+      // For simplicity, we capture all pipeline progress while on this page
+      setProgressLogs((prev) => [...prev, {
+        timestamp: evt.timestamp || new Date().toISOString(),
+        message: evt.data?.message as string
+      }])
+    }
+  })
 
   const { data: candidate, isLoading, isError, refetch } = useQuery({
     queryKey: ['candidate', id],
@@ -58,6 +71,7 @@ export default function CandidateDetailPage() {
   const triggerApply = async () => {
     setIsApplying(true)
     setApplyResult(null)
+    setProgressLogs([])
     try {
       const data = await api.triggerApply(id as string, maxApps)
       setApplyResult(data)
@@ -139,34 +153,64 @@ export default function CandidateDetailPage() {
         </div>
 
         {showAutoApply && (
-          <div className="bg-bg-secondary border border-bg-border rounded-xl p-5 mb-6 shadow-card animate-fade-in flex items-end gap-4">
-            <div className="flex-1">
-              <h2 className="text-sm font-semibold text-text-primary mb-1">Trigger Job Search & Apply</h2>
-              <p className="text-xs text-text-muted">
-                Run the background pipeline to discover jobs and auto-submit applications for this candidate.
-              </p>
+          <div className="bg-bg-secondary border border-bg-border rounded-xl p-5 mb-6 shadow-card animate-fade-in flex flex-col gap-4">
+            <div className="flex items-end gap-4">
+              <div className="flex-1">
+                <h2 className="text-sm font-semibold text-text-primary mb-1">Trigger Job Search & Apply</h2>
+                <p className="text-xs text-text-muted">
+                  Run the background pipeline to discover jobs and auto-submit applications for this candidate.
+                </p>
+              </div>
+              <div className="w-32">
+                <label className="block text-xs font-medium text-text-secondary mb-1">Max Applications</label>
+                <input
+                  type="number"
+                  value={maxApps}
+                  onChange={(e) => setMaxApps(Number(e.target.value))}
+                  className="w-full bg-bg-primary border border-bg-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
+                  min={1} max={50}
+                />
+              </div>
+              <button
+                onClick={triggerApply}
+                disabled={isApplying}
+                className="bg-accent text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-accent/90 disabled:opacity-50 h-[38px] flex items-center justify-center min-w-[120px]"
+              >
+                {isApplying ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Run Now'}
+              </button>
             </div>
-            <div className="w-32">
-              <label className="block text-xs font-medium text-text-secondary mb-1">Max Applications</label>
-              <input
-                type="number"
-                value={maxApps}
-                onChange={(e) => setMaxApps(Number(e.target.value))}
-                className="w-full bg-bg-primary border border-bg-border rounded-lg px-3 py-2 text-sm text-text-primary focus:outline-none focus:border-accent"
-                min={1} max={50}
-              />
-            </div>
-            <button
-              onClick={triggerApply}
-              disabled={isApplying}
-              className="bg-accent text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-accent/90 disabled:opacity-50 h-[38px]"
-            >
-              {isApplying ? 'Triggering...' : 'Run Now'}
-            </button>
+
+            {progressLogs.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-bg-border">
+                <div className="flex items-center gap-2 mb-3">
+                  <Activity className="w-4 h-4 text-accent" />
+                  <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Pipeline Progress</h3>
+                </div>
+                <div className="space-y-2 max-h-60 overflow-y-auto pr-2 custom-scrollbar">
+                  {progressLogs.map((log, i) => (
+                    <div key={i} className="flex items-start gap-3 animate-fade-in">
+                      <div className="mt-1 flex-shrink-0">
+                        {i === progressLogs.length - 1 && isApplying ? (
+                          <Loader2 className="w-3.5 h-3.5 text-accent animate-spin" />
+                        ) : (
+                          <Check className="w-3.5 h-3.5 text-success" />
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-sm text-text-primary">{log.message}</p>
+                        <p className="text-[10px] text-text-muted mt-0.5">
+                          {new Date(log.timestamp).toLocaleTimeString()}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
-        {applyResult && (
+        {applyResult && !isApplying && progressLogs.length === 0 && (
           <div className="mb-6 p-4 rounded-lg bg-bg-secondary border border-bg-border text-xs text-text-secondary">
             <pre>{JSON.stringify(applyResult, null, 2)}</pre>
           </div>

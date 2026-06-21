@@ -30,26 +30,24 @@ async def _commit_react_select_widget(page: Page, locator, value: str) -> bool:
         logger.warning(f"[react-select] no field_id on locator — value='{value}'")
         return False
 
-    open_info = await page.evaluate(
-        """(id) => {
-            const el = document.getElementById(id);
-            if (!el) return false;
+    open_info = await locator.evaluate(
+        """(el) => {
             const ctrl = el.closest('.select__control, .react-select__control');
             if (!ctrl) return false;
             ctrl.scrollIntoView({block:'center', behavior:'instant'});
             ctrl.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
             ctrl.dispatchEvent(new MouseEvent('mouseup',   {bubbles:true, button:0}));
             return true;
-        }""",
-        field_id,
+        }"""
     )
     if not open_info:
         return False
     await asyncio.sleep(0.5)
 
     try:
-        await page.locator(f"#{field_id}").first.focus()
-        await page.keyboard.type(value, delay=30)
+        loc_field = page.locator(f"#{field_id}").first
+        await loc_field.focus()
+        await loc_field.press_sequentially(value, delay=30)
         await asyncio.sleep(0.4)
     except Exception as exc:
         logger.debug(f"[react-select] type failed for #{field_id}: {exc}")
@@ -60,23 +58,24 @@ async def _commit_react_select_widget(page: Page, locator, value: str) -> bool:
     # match any Gender option), clear the input so we can see and decline-
     # match against the FULL option list.
     if option_id_prefix:
-        current_options_count = await page.evaluate(
-            "(prefix) => document.querySelectorAll('[id^=\"' + prefix + '\"]').length",
+        current_options_count = await locator.evaluate(
+            "(el, prefix) => document.querySelectorAll('[id^=\"' + prefix + '\"]').length",
             option_id_prefix,
         )
         if current_options_count == 0:
             logger.debug(f"[react-select] typed value filtered to 0 options; clearing input")
             try:
-                await page.locator(f"#{field_id}").first.focus()
+                loc_field = page.locator(f"#{field_id}").first
+                await loc_field.focus()
                 # Press backspace enough times to clear whatever we typed
                 for _ in range(len(value) + 5):
-                    await page.keyboard.press("Backspace")
+                    await loc_field.press("Backspace")
                 await asyncio.sleep(0.4)
             except Exception:
                 pass
 
-    chosen_id = await page.evaluate(
-        """({prefix, want}) => {
+    chosen_id = await locator.evaluate(
+        """(el, {prefix, want}) => {
             const wantLc = want.trim().toLowerCase();
             const declineIntent = /\\b(decline|prefer not|rather not|don.t (wish|want)|do not (wish|want)|not (wish|want).?to.?answer|don.t.? answer|self.?identify|prefer.?not.?to.?say|wish to remain anonymous)\\b/i.test(want);
             const declineOptionPat = /\\b(decline|prefer not|rather not|don.t wish|do not wish|don.t want|do not want|prefer not to say|self.?identify|not to answer|wish to remain anonymous|not protected|i don.t wish|i do not want)\\b/i;
@@ -112,8 +111,8 @@ async def _commit_react_select_widget(page: Page, locator, value: str) -> bool:
     )
     logger.debug(f"[react-select] chosen_id for #{field_id} value='{value}': {chosen_id}")
     if chosen_id:
-        clicked = await page.evaluate(
-            """(id) => {
+        clicked = await locator.evaluate(
+            """(el, id) => {
                 const opt = document.getElementById(id);
                 if (!opt) return false;
                 opt.dispatchEvent(new MouseEvent('mousedown', {bubbles:true, button:0}));
@@ -126,11 +125,11 @@ async def _commit_react_select_widget(page: Page, locator, value: str) -> bool:
         if clicked:
             await asyncio.sleep(0.5)
             # Read back the committed value for debugging
-            committed = await page.evaluate(
-                """(id) => {
-                    const el = document.getElementById(id);
-                    if (!el) return '';
-                    const ctrl = el.closest('.select__control');
+            committed = await locator.evaluate(
+                """(el, id) => {
+                    const el2 = document.getElementById(id);
+                    if (!el2) return '';
+                    const ctrl = el2.closest('.select__control');
                     const sv = ctrl ? ctrl.querySelector('.select__single-value') : null;
                     return sv ? sv.textContent.trim() : '';
                 }""",
@@ -140,7 +139,7 @@ async def _commit_react_select_widget(page: Page, locator, value: str) -> bool:
             return True
 
     try:
-        await page.keyboard.press("Enter")
+        await page.locator(f"#{field_id}").first.press("Enter")
         await asyncio.sleep(0.3)
         return True
     except Exception:

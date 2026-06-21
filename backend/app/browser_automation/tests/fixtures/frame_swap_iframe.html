@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Job Listing in Iframe</title>
+</head>
+<body>
+    <h1>Job Listing</h1>
+    <a href="#" id="apply_btn" class="button">Apply Now</a>
+    <script>
+        document.getElementById('apply_btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            // Tell parent to swap us out
+            window.parent.postMessage('swap_iframe', '*');
+        });
+    </script>
+</body>
+</html>

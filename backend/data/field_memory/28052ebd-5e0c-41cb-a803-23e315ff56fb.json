@@ -1,0 +1,82 @@
+{
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1782053491,
+    "source": "profile_direct",
+    "value": "harmain.dev@gmail.com"
+  },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name",
+    "last_seen": 1782053487,
+    "source": "profile_direct",
+    "value": "Harmain"
+  },
+  "have you been employed by cockroach labs in the past": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you been employed by Cockroach Labs in the past?*",
+    "last_seen": 1782056318,
+    "source": "llm:0.90",
+    "value": "No"
+  },
+  "how did you first hear about cockroach labs": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you first hear about Cockroach Labs?*",
+    "last_seen": 1782056315,
+    "source": "llm:0.90",
+    "value": "Online"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name",
+    "last_seen": 1782053489,
+    "source": "profile_direct",
+    "value": "Ali"
+  },
+  "location (city)": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Location (City)*",
+    "last_seen": 1782053501,
+    "source": "profile_direct",
+    "value": "US"
+  },
+  "phone": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Phone",
+    "last_seen": 1782053492,
+    "source": "profile_direct",
+    "value": "+1 (650) 555-1234"
+  },
+  "please confirm you live near our new york city office location and understand the in-office expectation of mondays, tuesdays and thursdays": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Please confirm you live near our New York City office location and understand the in-office expectation of Mondays, Tuesdays and Thursdays. *",
+    "last_seen": 1782056312,
+    "source": "profile_direct",
+    "value": "US"
+  },
+  "please confirm you live near our new york, ny office location and understand the in-office expectation of mondays, tuesdays and thursdays": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Please confirm you live near our New York, NY office location and understand the in-office expectation of Mondays, Tuesdays and Thursdays. *",
+    "last_seen": 1782057167,
+    "source": "rules",
+    "value": "US"
+  },
+  "preferred first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred First Name",
+    "last_seen": 1782053490,
+    "source": "profile_direct",
+    "value": "Harmain"
+  }
+}

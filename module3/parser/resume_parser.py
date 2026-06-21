@@ -67,6 +67,23 @@ def render_pdf_to_images(file_path: str) -> List[Image.Image]:
 
 async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resume_id: Optional[str] = None) -> ResumeData:
     """Parse a PDF resume into structured ResumeData using Gemini API. Handles both text and image-based PDFs."""
+    temp_file_path = None
+    original_url = file_path
+    if file_path.startswith("http://") or file_path.startswith("https://"):
+        print(f"Downloading remote resume: {file_path}")
+        import httpx
+        import tempfile
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(file_path)
+                resp.raise_for_status()
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(resp.content)
+                    temp_file_path = tmp.name
+            file_path = temp_file_path
+        except Exception as e:
+            raise FileNotFoundError(f"Failed to download remote resume from {file_path}: {e}")
+            
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Resume file not found at: {file_path}")
         
@@ -130,10 +147,16 @@ async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resum
         with open(file_path, "rb") as f:
             file_hash = hashlib.sha256(f.read()).hexdigest()
             
+    if temp_file_path and os.path.exists(temp_file_path):
+        try:
+            os.remove(temp_file_path)
+        except OSError:
+            pass
+            
     return ResumeData(
         candidate_id=candidate_id,
         resume_id=resume_id,
-        file_url=file_path,
+        file_url=original_url,
         file_hash=file_hash,
         sections=sections,
         raw_text=raw_text

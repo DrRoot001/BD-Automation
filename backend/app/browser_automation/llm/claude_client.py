@@ -47,7 +47,7 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 # Old default (600) truncated Gemini's JSON mid-response on multi-field forms.
 # Gemini's free tier gives generous quota — raising the cap is safe.
 _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "600"))
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "1000"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
@@ -57,14 +57,28 @@ _GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 _GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 
 
+def _resolve_api_keys() -> list[str]:
+    """Return all configured API keys, deduplicated, non-empty, in priority order."""
+    candidates = [
+        os.getenv("ANTHROPIC_API_KEY", ""),
+        os.getenv("ANTHROPIC_API_KEY_2", ""),
+        os.getenv("CLAUDE_API_KEY", ""),
+        os.getenv("OPENROUTER_API_KEY", ""),
+        os.getenv("GEMINI_API_KEY", ""),
+    ]
+    seen: set[str] = set()
+    result = []
+    for k in candidates:
+        k = k.strip()
+        if k and k not in seen:
+            seen.add(k)
+            result.append(k)
+    return result
+
+
 def _resolve_api_key() -> str:
-    return (
-        os.getenv("ANTHROPIC_API_KEY")
-        or os.getenv("CLAUDE_API_KEY")
-        or os.getenv("OPENROUTER_API_KEY")
-        or os.getenv("GEMINI_API_KEY")
-        or ""
-    ).strip()
+    keys = _resolve_api_keys()
+    return keys[0] if keys else ""
 
 
 def _detect_provider(key: str) -> str:
@@ -93,27 +107,40 @@ class ClaudeClient:
         model: Optional[str] = None,
         provider: Optional[str] = None,
     ):
-        self.api_key = (api_key or _resolve_api_key()).strip()
         self.model_name = model or _DEFAULT_MODEL
-        self.provider = provider or _detect_provider(self.api_key)
-        self._anthropic = None  # SDK client for native Anthropic
-        if not self.api_key:
+
+        if api_key:
+            self._keys = [api_key.strip()]
+        else:
+            self._keys = _resolve_api_keys()
+
+        if not self._keys:
             logger.warning(
-                "[Claude] No API key found (ANTHROPIC_API_KEY / OPENROUTER_API_KEY / "
-                "GEMINI_API_KEY)"
+                "[Claude] No API key found (ANTHROPIC_API_KEY / ANTHROPIC_API_KEY_2 / "
+                "OPENROUTER_API_KEY / GEMINI_API_KEY)"
             )
+            self.api_key = ""
+            self.provider = "anthropic"
+            self._anthropic = None
             return
+
+        self.api_key = self._keys[0]
+        self.provider = provider or _detect_provider(self.api_key)
+        self._anthropic = self._make_anthropic_client(self.api_key)
         logger.info(
             f"[Claude] provider={self.provider} model={self.model_name} "
-            f"key_prefix={self.api_key[:7]!r}"
+            f"key_prefix={self.api_key[:7]!r} fallback_keys={len(self._keys) - 1}"
         )
-        if self.provider == "anthropic":
-            try:
-                from anthropic import AsyncAnthropic
-                self._anthropic = AsyncAnthropic(api_key=self.api_key)
-            except Exception as exc:
-                logger.error(f"[Claude] Anthropic SDK import failed: {exc}")
-                self._anthropic = None
+
+    def _make_anthropic_client(self, key: str):
+        if _detect_provider(key) != "anthropic":
+            return None
+        try:
+            from anthropic import AsyncAnthropic
+            return AsyncAnthropic(api_key=key)
+        except Exception as exc:
+            logger.error(f"[Claude] Anthropic SDK import failed: {exc}")
+            return None
 
     def _ensure(self) -> None:
         if not self.api_key:
@@ -341,11 +368,40 @@ class ClaudeClient:
         system: Optional[str] = None,
     ) -> str:
         self._ensure()
-        if self.provider == "openrouter":
-            return await self._call_openrouter(prompt, image_bytes, temperature, timeout_s, system)
-        if self.provider == "gemini":
-            return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system)
-        return await self._call_anthropic(prompt, image_bytes, temperature, timeout_s, system)
+        last_exc: Exception = LLMUnavailable("No keys to try")
+        for key in list(self._keys):
+            provider = _detect_provider(key)
+            try:
+                if provider == "openrouter":
+                    # Temporarily swap key for this call
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_openrouter(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                elif provider == "gemini":
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                else:
+                    anthropic_client = self._anthropic if key == self._keys[0] else self._make_anthropic_client(key)
+                    if anthropic_client is None:
+                        continue
+                    orig_client, self._anthropic = self._anthropic, anthropic_client
+                    try:
+                        return await self._call_anthropic(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self._anthropic = orig_client
+            except LLMUnavailable as exc:
+                if "402" in str(exc) or "Payment Required" in str(exc):
+                    logger.warning(f"[Claude] key prefix={key[:7]!r} returned 402. Removing from future attempts.")
+                    if key in self._keys:
+                        self._keys.remove(key)
+                logger.warning(f"[Claude] key prefix={key[:7]!r} failed: {exc} — trying next key")
+                last_exc = exc
+        raise last_exc
 
     async def generate_json(
         self,
@@ -353,12 +409,14 @@ class ClaudeClient:
         image_bytes: Optional[bytes] = None,
         temperature: float = 0.1,
         timeout_s: float = 25.0,
+        system: Optional[str] = None,
     ) -> Any:
-        system = (
-            "You are a strict-JSON API. Respond with exactly one JSON object "
-            "matching the schema implied by the user prompt. Do not include "
-            "prose, markdown fences, or explanations."
-        )
+        if system is None:
+            system = (
+                "You are a strict-JSON API. Respond with exactly one JSON object "
+                "matching the schema implied by the user prompt. Do not include "
+                "prose, markdown fences, or explanations."
+            )
         text = await self._call(prompt, image_bytes, temperature, timeout_s, system=system)
         cleaned = self._strip_json_fences(text)
         try:

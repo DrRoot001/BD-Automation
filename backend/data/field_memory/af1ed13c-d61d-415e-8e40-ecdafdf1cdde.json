@@ -1,4 +1,12 @@
 {
+  "": {
+    "count": 1,
+    "field_type": "email",
+    "label": "*",
+    "last_seen": 1782039070,
+    "source": "llm:0.90",
+    "value": "sabih0364@gmail.com"
+  },
   "ai policy for application": {
     "count": 1,
     "field_type": "select",
@@ -23,6 +31,14 @@
     "source": "llm:0.70",
     "value": "Yes"
   },
+  "degree": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Degree",
+    "last_seen": 1782051487,
+    "source": "rules",
+    "value": "Bachelor's Degree"
+  },
   "do you have any deadlines or timeline considerations we should be aware of": {
     "count": 1,
     "field_type": "text",
@@ -30,6 +46,14 @@
     "last_seen": 1782029172,
     "source": "llm:0.80",
     "value": "Available to start immediately"
+  },
+  "do you have hands-on experience building production user interfaces using modern frontend technologies such as react, htmx, or similar frameworks": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you have hands-on experience building production user interfaces using modern frontend technologies such as React, HTMX, or similar frameworks?\n*",
+    "last_seen": 1782051437,
+    "source": "llm:0.95",
+    "value": "Yes"
   },
   "email": {
     "count": 1,
@@ -55,6 +79,14 @@
     "source": "llm:0.40",
     "value": "No"
   },
+  "have you worked on production-grade systems involving distributed systems, infrastructure platforms, workflow orchestration, or high-availability services": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you worked on production-grade systems involving distributed systems, infrastructure platforms, workflow orchestration, or high-availability services?\n*",
+    "last_seen": 1782051440,
+    "source": "llm:0.40",
+    "value": "No"
+  },
   "last name": {
     "count": 1,
     "field_type": "text",
@@ -63,6 +95,14 @@
     "source": "rules",
     "value": "Haider"
   },
+  "location (city)": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Location (City)*",
+    "last_seen": 1782051432,
+    "source": "profile_direct",
+    "value": "US"
+  },
   "phone": {
     "count": 1,
     "field_type": "phone",
@@ -70,6 +110,30 @@
     "last_seen": 1782028296,
     "source": "rules",
     "value": "+923410084746"
+  },
+  "please confirm you live in the nyc metro area": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Please confirm you live in the NYC Metro area.*",
+    "last_seen": 1782051435,
+    "source": "llm:0.30",
+    "value": "No"
+  },
+  "preferred first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred First Name",
+    "last_seen": 1782048804,
+    "source": "profile_direct",
+    "value": "Sabih"
+  },
+  "what are your salary expectations": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What are your salary expectations?",
+    "last_seen": 1782048808,
+    "source": "llm:0.85",
+    "value": "Negotiable"
   },
   "what is the address from which you plan on working if you would need to relocate, please type \"relocating\"": {
     "count": 1,

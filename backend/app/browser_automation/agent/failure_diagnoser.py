@@ -77,7 +77,12 @@ def _truncate(s: str, n: int) -> str:
     return s if len(s) <= n else s[:n] + " …"
 
 
-async def _capture(page: Page, frame: Optional[Frame] = None):
+async def _capture(page: Page, frame: Optional[Any] = None):
+    if frame and hasattr(frame, "owner"):
+        from .frame_utils import get_live_frame
+        f = await get_live_frame(frame, max_retries=1, page=page)
+        if f:
+            frame = f
     ctx = frame or page
     try:
         screenshot = await page.screenshot(
@@ -87,7 +92,11 @@ async def _capture(page: Page, frame: Optional[Frame] = None):
     except Exception:
         screenshot = None
     try:
-        dom = _truncate(await ctx.content(), 5_000)
+        if hasattr(ctx, "content"):
+            dom_text = await ctx.content()
+        else:
+            dom_text = await ctx.locator("html").first.inner_html()
+        dom = _truncate(dom_text, 5_000)
     except Exception:
         dom = ""
     return screenshot, dom
@@ -100,7 +109,7 @@ async def diagnose_failure(
     failure_reason: str,
     adapter_source_path: Optional[Path] = None,
     log_tail: str = "",
-    frame: Optional[Frame] = None,
+    frame: Optional[Any] = None,
 ) -> Optional[dict]:
     """Capture context, ask Gemini, and persist learnings.
 

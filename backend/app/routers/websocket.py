@@ -54,6 +54,7 @@ SUBSCRIBED_CHANNELS = [
     "events:email.classified",
     "events:interview.detected",
     "events:job.discovered",
+    "events:pipeline.progress",
 ]
 
 _subscriber_task: asyncio.Task | None = None

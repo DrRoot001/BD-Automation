@@ -139,8 +139,20 @@ async def trigger_apply(candidate_id: str, request: ApplyRequest, db: AsyncSessi
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
         
-    from app.tasks.dynamic_apply import dynamic_apply
-    dynamic_apply.apply_async(args=[candidate_id, request.max_apps])
+    from app.tasks.dynamic_apply import _run
+    import asyncio
+    
+    # Bypass Celery due to Upstash Redis limitations. Run directly in background.
+    def run_in_background():
+        try:
+            asyncio.run(_run(candidate_id, request.max_apps))
+        except Exception as e:
+            import logging
+            logging.error(f"Failed background apply: {e}")
+
+    import threading
+    threading.Thread(target=run_in_background, daemon=True).start()
+    
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request.max_apps}
 
 from app.config import get_settings

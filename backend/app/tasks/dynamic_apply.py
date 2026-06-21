@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Set
 import httpx
 
 from app.celery_app import celery_app
+from app.services.sync_events import publish_event_sync
 
 logger = logging.getLogger(__name__)
 
@@ -126,9 +127,21 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
         if not keywords:
             return {"queued": [], "skipped": 0, "error": "no_candidate_keywords"}
 
+        publish_event_sync("pipeline.progress", {
+            "candidate_id": candidate_id,
+            "step": "fetching_jobs",
+            "message": "Fetching available jobs from database..."
+        })
+
         jobs = await _fetch_open_jobs(client)
         if not jobs:
             return {"queued": [], "skipped": 0, "error": "no_jobs"}
+
+        publish_event_sync("pipeline.progress", {
+            "candidate_id": candidate_id,
+            "step": "matching",
+            "message": f"Matching candidate profile against {len(jobs)} available jobs..."
+        })
 
         already = await _already_applied_job_ids(client, candidate_id)
 
@@ -145,7 +158,18 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
         scored = scored[:max_apps]
 
         if not scored:
+            publish_event_sync("pipeline.progress", {
+                "candidate_id": candidate_id,
+                "step": "no_matches",
+                "message": "No jobs found above the match score threshold."
+            })
             return {"queued": [], "skipped": len(jobs), "error": "no_matches_above_floor"}
+
+        publish_event_sync("pipeline.progress", {
+            "candidate_id": candidate_id,
+            "step": "matches_found",
+            "message": f"Found {len(scored)} suitable jobs. Preparing application packages..."
+        })
 
         # Lazy import to avoid celery_app circular imports
         from app.tasks.browser_automation import execute_application
