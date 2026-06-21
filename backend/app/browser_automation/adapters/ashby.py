@@ -127,11 +127,11 @@ class AshbyAdapter(BasePlatformAdapter):
         resume_path: str,
         cover_letter_path: Optional[str],
         screening_answers: Optional[dict],
-        pre_detected_form=None,
+        pre_detected_form=None, candidate_id=None,
     ) -> bool:
         ctx = self._frame if self._iframe_mode else page
         form = pre_detected_form or await detect_form(ctx, container_selector=self.container_selector)
-        fill_success = await fill_form(ctx, form, profile, screening_answers)
+        fill_success = await fill_form(ctx, form, profile, screening_answers, candidate_id=candidate_id)
 
         for field in form.fields:
             if field.field_type != "file":

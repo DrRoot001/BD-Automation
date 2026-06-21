@@ -119,7 +119,7 @@ class LinkedInEasyApplyAdapter(BasePlatformAdapter):
         resume_path: str,
         cover_letter_path: Optional[str],
         screening_answers: Optional[dict],
-        pre_detected_form=None,
+        pre_detected_form=None, candidate_id=None,
     ) -> bool:
         ok = True
         for step in range(1, _MAX_STEPS + 1):
@@ -136,7 +136,7 @@ class LinkedInEasyApplyAdapter(BasePlatformAdapter):
                 break
 
             if form.fields:
-                step_ok = await fill_form(page, form, profile, screening_answers)
+                step_ok = await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
                 ok = ok and step_ok
                 for field in form.fields:
                     if field.field_type != "file":

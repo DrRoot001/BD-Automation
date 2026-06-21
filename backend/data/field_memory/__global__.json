@@ -1,0 +1,250 @@
+{
+  "ai policy for application": {
+    "count": 1,
+    "field_type": "select",
+    "label": "AI Policy for Application*",
+    "last_seen": 1782028439,
+    "source": "llm:0.40",
+    "value": "Yes"
+  },
+  "are you currently bound by any agreements with a current or former employer that may restrict your ability to work for scale ai or perform the duties of the position for which you are applying? this includes, but is not limited to, non-compete agreements, non-solicitation agreements, confidentiality or non-disclosure agreements, or any other contractual obligations that could limit your employment activities": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you currently bound by any agreements with a current or former employer that may restrict your ability to work for Scale AI...",
+    "last_seen": 1781982795,
+    "source": "manual",
+    "value": "No"
+  },
+  "are you hispanic/latino": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1782028454,
+    "source": "llm:0.70",
+    "value": "Prefer not to answer"
+  },
+  "are you hispanic/latino?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1781982798,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "are you legally authorized to work in the country where the job is located?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you legally authorized to work in the country where the job is located?*",
+    "last_seen": 1781982796,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "are you legally authorized to work in the united states?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you legally authorized to work in the United States? *",
+    "last_seen": 1781982234,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "are you open to relocation for this role": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you open to relocation for this role? *",
+    "last_seen": 1782027095,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "are you open to working in person in our san francisco office 2-3 times a week?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you open to working in person in our San Francisco office 2-3 times a week?",
+    "last_seen": 1781982795,
+    "source": "llm:0.85",
+    "value": "Yes"
+  },
+  "are you open to working in-person in one of our offices 25% of the time": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you open to working in-person in one of our offices 25% of the time?*",
+    "last_seen": 1782028437,
+    "source": "llm:0.70",
+    "value": "Yes"
+  },
+  "are you willing to relocate": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you willing to relocate? *",
+    "last_seen": 1782026592,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "are you willing to relocate?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you willing to relocate? *",
+    "last_seen": 1781982235,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "country": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Country",
+    "last_seen": 1781982792,
+    "source": "llm:0.95",
+    "value": "United States"
+  },
+  "disability status": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Disability Status",
+    "last_seen": 1781982799,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "do you live in santiago?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you live in Santiago?*",
+    "last_seen": 1781971769,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
+  "earliest start date": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Earliest start date",
+    "last_seen": 1781982233,
+    "source": "llm:0.90",
+    "value": "Immediately"
+  },
+  "gender": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Gender",
+    "last_seen": 1781982797,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "have you ever interviewed at anthropic before": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you ever interviewed at Anthropic before?*",
+    "last_seen": 1782028447,
+    "source": "llm:0.40",
+    "value": "No"
+  },
+  "how did you hear about this position": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you hear about this position?",
+    "last_seen": 1782026587,
+    "source": "rules",
+    "value": "Online"
+  },
+  "how did you hear about this position?": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you hear about this position?",
+    "last_seen": 1781982232,
+    "source": "llm:0.85",
+    "value": "Online Job Board"
+  },
+  "i confirm and agree": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "I confirm and agree",
+    "last_seen": 1781982234,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "veteran status": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Veteran Status",
+    "last_seen": 1781982798,
+    "source": "llm:0.90",
+    "value": "Prefer not to answer"
+  },
+  "visa sponsorship": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require sponsorship for a visa? *",
+    "last_seen": 1782026591,
+    "source": "rules",
+    "value": "No"
+  },
+  "what is your current or more recent job title?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your current or more recent job title?",
+    "last_seen": 1781983048,
+    "source": "llm:0.70",
+    "value": "Software Engineer"
+  },
+  "when is the earliest you would want to start working with us": {
+    "count": 1,
+    "field_type": "text",
+    "label": "When is the earliest you would want to start working with us?",
+    "last_seen": 1782028431,
+    "source": "llm:0.90",
+    "value": "Immediately"
+  },
+  "who is your current or most recent employer?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Who is your current or most recent employer?",
+    "last_seen": 1781983048,
+    "source": "llm:0.65",
+    "value": "Freelance"
+  },
+  "why anthropic": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Why Anthropic?",
+    "last_seen": 1782028431,
+    "source": "llm:0.40",
+    "value": "I am highly interested in contributing to cutting-edge AI research and development at Anthropic. My experience as a Frontend Engineer aligns well with the innovative work being done here, and I am eager to apply my skills to impactful projects."
+  },
+  "will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?*",
+    "last_seen": 1781982797,
+    "source": "llm:0.95",
+    "value": "No"
+  },
+  "will you now or in the future require sponsorship for a visa?": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require sponsorship for a visa? *",
+    "last_seen": 1781982235,
+    "source": "llm:0.95",
+    "value": "No"
+  },
+  "work authorization": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you legally authorized to work in the United States? *",
+    "last_seen": 1782026590,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "years of experience": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Years of Experience *",
+    "last_seen": 1781982231,
+    "source": "llm:0.95",
+    "value": "5–10 years"
+  },
+  "yes, i agree to a background check": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "Yes, I agree to a background check",
+    "last_seen": 1781982233,
+    "source": "llm:0.95",
+    "value": "Yes"
+  }
+}

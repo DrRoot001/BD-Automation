@@ -222,6 +222,7 @@ class GreenhouseAdapter(BasePlatformAdapter):
         cover_letter_path: Optional[str],
         screening_answers: Optional[dict],
         pre_detected_form=None,
+        candidate_id: Optional[str] = None,
     ) -> bool:
         ctx = self._frame if self._iframe_mode else page
 
@@ -231,7 +232,7 @@ class GreenhouseAdapter(BasePlatformAdapter):
         logger.info(f"[GH] Detected {len(file_fields)} file field(s): "
                     f"{[(f.label, f.selector) for f in file_fields]}")
 
-        fill_success = await fill_form(ctx, form, profile, screening_answers)
+        fill_success = await fill_form(ctx, form, profile, screening_answers, candidate_id=candidate_id)
 
         await self._upload_greenhouse_files(ctx, page, resume_path, cover_letter_path)
 

@@ -386,6 +386,22 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
                 const r = trigger.getBoundingClientRect();
                 if (r.width < 20 || r.height < 10) continue;  // skip ghosts
 
+                // BUG B fix: skip intl-tel-input's country picker. The phone
+                // widget renders `<input role="combobox">` that we previously
+                // mis-detected as the form's Country dropdown — then memory
+                // recall wrote "United States" into the phone country picker
+                // and the real Country field stayed empty. Anything inside
+                // an .iti / .iti__country-list / .iti__selected-flag wrapper
+                // is the phone widget, not a form field.
+                if (trigger.closest('.iti, .iti__country-list, .iti__selected-flag, .iti--container')) {
+                    continue;
+                }
+                // Also skip triggers whose accessible name is just a dial code
+                // (some phone widgets don't wrap in .iti but render +N as the
+                // selected value).
+                const accName = (trigger.getAttribute('aria-label') || '').trim();
+                if (/^\\+\\d{1,3}$/.test(accName)) continue;
+
                 // Walk up to find the labelling container + label text
                 let label = '';
                 let labelEl = null;

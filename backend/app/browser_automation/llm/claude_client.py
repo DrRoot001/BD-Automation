@@ -43,10 +43,18 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 # Output-token caps. Kept well under typical OpenRouter free-tier headroom
 # (~3,000 tokens). Vision calls return short JSON; field-fill JSON is bounded
 # by field count. If you see 402 errors, lower these further or top up credit.
-_MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "600"))
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "500"))
-_MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "600"))  # back-compat
+# Output-token caps. Form-fill JSON for ~25 fields needs ~2000 tokens.
+# Old default (600) truncated Gemini's JSON mid-response on multi-field forms.
+# Gemini's free tier gives generous quota — raising the cap is safe.
+_MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "600"))
+_MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+# Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
+# Free tier on gemini-2.5-flash gives generous quota; no separate top-up needed.
+_GEMINI_BASE = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
+_GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+_GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 
 
 def _resolve_api_key() -> str:
@@ -62,13 +70,20 @@ def _resolve_api_key() -> str:
 def _detect_provider(key: str) -> str:
     """Pick a provider based on the API-key prefix.
 
-    Anthropic native keys begin with ``sk-ant-``. OpenRouter keys begin with
-    ``sk-or-``. Anything else we treat as Anthropic and let the API itself
-    return 401 — that's the most informative failure for the operator.
+    - ``sk-ant-*`` → native Anthropic
+    - ``sk-or-*``  → OpenRouter (routes to any model via OpenAI-compat API)
+    - everything else (``AIza*``, ``AQ.Ab*``, etc.) → native Gemini
+
+    Google AI Studio has shipped multiple key formats (``AIza...`` classic,
+    ``AQ.Ab...`` newer). Rather than chase prefixes, we treat any non-Anthropic /
+    non-OpenRouter key as Gemini — matches operator intent when they drop a
+    Google key into ``GEMINI_API_KEY``.
     """
+    if key.startswith("sk-ant-"):
+        return "anthropic"
     if key.startswith("sk-or-"):
         return "openrouter"
-    return "anthropic"
+    return "gemini"
 
 
 class ClaudeClient:
@@ -105,13 +120,23 @@ class ClaudeClient:
             raise LLMUnavailable("LLM API key missing")
         if self.provider == "anthropic" and self._anthropic is None:
             raise LLMUnavailable("Anthropic SDK not available")
+        # OpenRouter and Gemini use pure httpx — no extra SDK setup needed.
 
     @staticmethod
     def _strip_json_fences(text: str) -> str:
-        m = re.search(r"```(?:json)?\s*(.*?)```", text, flags=re.DOTALL)
+        """Strip ```json fences. Tolerates missing closing fence (truncated
+        responses still get the JSON body extracted instead of failing parse).
+        """
+        s = text.strip()
+        # Full ```...``` block
+        m = re.search(r"```(?:json)?\s*(.*?)```", s, flags=re.DOTALL)
         if m:
             return m.group(1).strip()
-        return text.strip()
+        # Opening fence with no closing fence (truncated)
+        m = re.match(r"```(?:json)?\s*(.*)$", s, flags=re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        return s
 
     # ──────────────────────────────────────────────────────────────────────
     # Anthropic-native content shape
@@ -255,6 +280,58 @@ class ClaudeClient:
         except Exception as exc:
             raise LLMUnavailable(f"OpenRouter response parse failed: {exc}") from exc
 
+    async def _call_gemini(
+        self,
+        prompt: str,
+        image_bytes: Optional[bytes],
+        temperature: float,
+        timeout_s: float,
+        system: Optional[str],
+    ) -> str:
+        model = _GEMINI_VISION_MODEL if image_bytes else _GEMINI_TEXT_MODEL
+        parts: list = []
+        if image_bytes:
+            mime = "image/jpeg" if image_bytes[:3] == b"\xff\xd8\xff" else "image/png"
+            parts.append({
+                "inline_data": {
+                    "mime_type": mime,
+                    "data": base64.b64encode(image_bytes).decode("ascii"),
+                }
+            })
+        parts.append({"text": prompt})
+        payload = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": _MAX_TOKENS_VISION if image_bytes else _MAX_TOKENS_TEXT,
+                "responseMimeType": "application/json" if not image_bytes else "text/plain",
+            },
+        }
+        if system:
+            payload["systemInstruction"] = {"parts": [{"text": system}]}
+        url = f"{_GEMINI_BASE}/models/{model}:generateContent?key={self.api_key}"
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                r = await client.post(url, json=payload)
+            if r.status_code != 200:
+                raise LLMUnavailable(f"Gemini HTTP {r.status_code}: {r.text[:400]}")
+            body = r.json()
+        except LLMUnavailable:
+            raise
+        except Exception as exc:
+            raise LLMUnavailable(f"Gemini call failed: {exc}") from exc
+        try:
+            cands = body.get("candidates") or []
+            if not cands:
+                raise LLMUnavailable(f"Gemini returned no candidates: {body}")
+            content = cands[0].get("content") or {}
+            parts_out = content.get("parts") or []
+            return "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+        except LLMUnavailable:
+            raise
+        except Exception as exc:
+            raise LLMUnavailable(f"Gemini response parse failed: {exc}") from exc
+
     async def _call(
         self,
         prompt: str,
@@ -266,6 +343,8 @@ class ClaudeClient:
         self._ensure()
         if self.provider == "openrouter":
             return await self._call_openrouter(prompt, image_bytes, temperature, timeout_s, system)
+        if self.provider == "gemini":
+            return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system)
         return await self._call_anthropic(prompt, image_bytes, temperature, timeout_s, system)
 
     async def generate_json(

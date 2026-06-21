@@ -331,6 +331,7 @@ async def fill_form_with_llm(
     job_context: Optional[Dict[str, Any]] = None,
     resume_path: Optional[str] = None,
     cover_letter_path: Optional[str] = None,
+    candidate_id: Optional[str] = None,
 ) -> bool:
     """LLM-driven form fill. Returns True if every required field was filled.
 
@@ -365,7 +366,7 @@ async def fill_form_with_llm(
             continue
 
         # Memory first
-        remembered = field_memory.recall(field.label, field.field_type, field.options)
+        remembered = field_memory.recall(field.label, field.field_type, field.options, candidate_id=candidate_id)
         if remembered:
             resolved[idx] = (remembered, "memory")
             continue
@@ -426,6 +427,7 @@ async def fill_form_with_llm(
                     field_memory.record_failure(
                         field.label, field.field_type, field.options, None,
                         "no_value_resolved_by_llm_or_memory",
+                        candidate_id=candidate_id,
                     )
                 except Exception:
                     pass
@@ -445,7 +447,7 @@ async def fill_form_with_llm(
                 and source not in ("memory",)
             ):
                 try:
-                    field_memory.remember(field.label, field.field_type, str(value), source)
+                    field_memory.remember(field.label, field.field_type, str(value), source, candidate_id=candidate_id)
                 except Exception:
                     pass
             await asyncio.sleep(random.uniform(0.1, 0.4))
@@ -456,6 +458,7 @@ async def fill_form_with_llm(
                     field_memory.record_failure(
                         field.label, field.field_type, field.options, str(value),
                         f"apply_failed_source={source}",
+                        candidate_id=candidate_id,
                     )
                 except Exception:
                     pass
