@@ -2,6 +2,7 @@ from .candidate import Candidate
 from .company import Company
 from .job import Job
 from .resume import Resume
+from .cover_letter import CoverLetter
 from .application import Application
 from .application_history import ApplicationHistory
 from .email import Email
