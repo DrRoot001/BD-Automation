@@ -12,6 +12,7 @@ from google.genai import types as genai_types
 from module2.normalization.schemas import NormalizedJob
 from module3.parser.resume_parser import ResumeData
 from module3.tailoring.pdf_generator import generate_cover_letter_pdf
+from module3.utils.storage import safe_filename
 
 logger = logging.getLogger("cover_letter_generator")
 
@@ -99,10 +100,11 @@ async def generate_cover_letter(
     letter_paragraphs = cl_json.get("paragraphs", [])
     letter_content = "\n\n".join(letter_paragraphs)
     
-    pdf_filename = f"cover_letter_{resume.candidate_id or 'unknown'}_{job.job_id or 'unknown'}.pdf"
+    candidate_name = candidate_profile.get("name", "Candidate")
+    pdf_filename = f"{safe_filename(candidate_name, default='candidate', extension='')}_cover_letter.pdf"
     output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
     
-    candidate_name = candidate_profile.get("name", "Candidate")
+    candidate_location = candidate_profile.get("location", "US")
     candidate_location = candidate_profile.get("location", "US")
     candidate_email = candidate_profile.get("email", "email@example.com")
     candidate_phone = candidate_profile.get("phone", "")

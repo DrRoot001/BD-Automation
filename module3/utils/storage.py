@@ -1,6 +1,23 @@
 import os
+import re
 import httpx
 from typing import Optional
+
+
+def safe_filename(filename: str, default: str = "file", extension: str = ".pdf") -> str:
+    if not filename:
+        filename = default
+    filename = str(filename).strip()
+    filename = filename.replace(" ", "_")
+    filename = re.sub(r"[^A-Za-z0-9._-]+", "_", filename)
+    filename = re.sub(r"_+", "_", filename)
+    filename = filename.strip("._-")
+    if not filename:
+        filename = default
+    if extension and not filename.lower().endswith(extension.lower()):
+        filename += extension
+    return filename
+
 
 def get_env_var_from_file(filepath: str, var_name: str) -> Optional[str]:
     try:
