@@ -294,16 +294,29 @@ class ApplicationExecutor:
             use_agent_loop = os.getenv("USE_AGENT_LOOP", "true").lower() == "true"
             if use_agent_loop:
                 try:
+                    # Pass the FULL job package so the AgentLoop can anchor the AI
+                    # on the actual role/company. job_description is truncated to keep
+                    # the system prompt tight; the AI only needs enough context to
+                    # answer "why this role?" type screening questions.
+                    job_desc = (package.job_description or "")[:1200]
                     job_ctx_for_loop = {
                         "platform": package.platform,
                         "ats_type": package.ats_type or package.platform,
                         "job_url": package.job_url,
+                        "job_title": package.job_title or "",
+                        "company": package.company or "",
+                        "job_description": job_desc,
                     }
+                    # Screening answers pre-resolved by M3 — pass to AgentLoop so the
+                    # AI uses M3's answers verbatim instead of re-inventing them.
+                    pre_answers = dict(package.screening_answers or {})
                     agent_loop = AgentLoop(
                         candidate_profile=package.candidate_profile,
                         job_context=job_ctx_for_loop,
                         resume_path=_temp_resume,
                         cover_letter_path=_temp_cover,
+                        screening_answers=pre_answers,
+                        candidate_id=package.candidate_id,
                     )
                     frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                     loop_result: LoopResult = await agent_loop.run(

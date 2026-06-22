@@ -1,0 +1,298 @@
+{
+  "are you a veteran or active member of the united states armed forces": {
+    "count": 16,
+    "field_type": "text",
+    "label": "Are you a veteran or active member of the United States Armed Forces?",
+    "last_seen": 1782156595,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you authorized to work in the uk": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you authorized to work in the UK?*",
+    "last_seen": 1782155397,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you currently based in any of these countries": {
+    "count": 26,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries?",
+    "last_seen": 1782156566,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the onl": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the onl",
+    "last_seen": 1782153411,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the only countries where we are accepting applications": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the only countries where we are accepting applications",
+    "last_seen": 1782153453,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "by submitting my application, i acknowledge that i have read and understand verc": {
+    "count": 4,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Verc",
+    "last_seen": 1782156569,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's applicant privacy notice": {
+    "count": 4,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Applicant Privacy Notice",
+    "last_seen": 1782151346,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's job applicant privacy notice": {
+    "count": 26,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Job Applicant Privacy Notice",
+    "last_seen": 1782155349,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's privacy policy": {
+    "count": 3,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Privacy Policy",
+    "last_seen": 1782155862,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's privacy policy and terms of service": {
+    "count": 2,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's privacy policy and terms of service",
+    "last_seen": 1782119829,
+    "source": "agent_loop",
+    "value": "on"
+  },
+  "do you have a disability or chronic condition": {
+    "count": 15,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition",
+    "last_seen": 1782156599,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning?",
+    "last_seen": 1782143318,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have hands-on experience building production user interfaces using modern": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Do you have hands-on experience building production user interfaces using modern",
+    "last_seen": 1782138563,
+    "source": "agent_loop",
+    "value": "Yes, I have 5 years of experience building production user interfaces using modern frameworks including React, Next.js, and TypeScript."
+  },
+  "do you identify as transgender": {
+    "count": 18,
+    "field_type": "text",
+    "label": "Do you identify as transgender?",
+    "last_seen": 1782156591,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "email": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1782133973,
+    "source": "agent_loop",
+    "value": "harmain.alibutt+test@example.com"
+  },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name",
+    "last_seen": 1782119725,
+    "source": "agent_loop",
+    "value": "Harmain"
+  },
+  "have you worked on production-grade systems involving distributed systems, infra": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Have you worked on production-grade systems involving distributed systems, infra",
+    "last_seen": 1782138574,
+    "source": "agent_loop",
+    "value": "Yes, I have 5 years of experience working on production-grade distributed systems using AWS, PostgreSQL, and Docker."
+  },
+  "how would you describe your gender identity": {
+    "count": 2,
+    "field_type": "text",
+    "label": "How would you describe your gender identity?",
+    "last_seen": 1782151647,
+    "source": "agent_loop",
+    "value": "Male"
+  },
+  "how would you describe your gender identity (mark all that apply)": {
+    "count": 19,
+    "field_type": "text",
+    "label": "How would you describe your gender identity? (mark all that apply)",
+    "last_seen": 1782156576,
+    "source": "agent_loop",
+    "value": "Man"
+  },
+  "how would you describe your racial/ethnic background": {
+    "count": 2,
+    "field_type": "text",
+    "label": "How would you describe your racial/ethnic background?",
+    "last_seen": 1782151656,
+    "source": "agent_loop",
+    "value": "South Asian"
+  },
+  "how would you describe your racial/ethnic background (mark all that apply)": {
+    "count": 16,
+    "field_type": "text",
+    "label": "How would you describe your racial/ethnic background? (mark all that apply)",
+    "last_seen": 1782156580,
+    "source": "agent_loop",
+    "value": "South Asian"
+  },
+  "how would you describe your sexual orientation": {
+    "count": 2,
+    "field_type": "text",
+    "label": "How would you describe your sexual orientation?",
+    "last_seen": 1782151660,
+    "source": "agent_loop",
+    "value": "Heterosexual"
+  },
+  "how would you describe your sexual orientation (mark all that apply)": {
+    "count": 16,
+    "field_type": "text",
+    "label": "How would you describe your sexual orientation? (mark all that apply)",
+    "last_seen": 1782156588,
+    "source": "agent_loop",
+    "value": "Heterosexual"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name",
+    "last_seen": 1782119731,
+    "source": "agent_loop",
+    "value": "Ali Butt"
+  },
+  "linkedin profile": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn Profile",
+    "last_seen": 1782119735,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
+  "location (city)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Location (City)*",
+    "last_seen": 1782134274,
+    "source": "agent_loop",
+    "value": "San Francisco, CA"
+  },
+  "phone": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone",
+    "last_seen": 1782131955,
+    "source": "agent_loop",
+    "value": "+1-415-555-0142"
+  },
+  "please double-check all the information provided above": {
+    "count": 4,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above",
+    "last_seen": 1782155866,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is cru": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is cru",
+    "last_seen": 1782143300,
+    "source": "agent_loop",
+    "value": "I have reviewed all information and confirm accuracy"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial": {
+    "count": 10,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial",
+    "last_seen": 1782156573,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial, as any errors or omissions may impact the review of your application": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial, as any errors or omissions may impact the review of your application.",
+    "last_seen": 1782153965,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "resume/cv": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Resume/CV",
+    "last_seen": 1782134507,
+    "source": "agent_loop",
+    "value": "resume"
+  },
+  "this role is a hands-on backend software engineering position requiring producti": {
+    "count": 2,
+    "field_type": "text",
+    "label": "This role is a hands-on backend software engineering position requiring producti",
+    "last_seen": 1782138587,
+    "source": "agent_loop",
+    "value": "Yes, I have 5 years of experience as a Senior Software Engineer working on backend systems with Python, TypeScript, AWS, PostgreSQL, and Docker in production environments."
+  },
+  "visa sponsorship": {
+    "count": 4,
+    "field_type": "text",
+    "label": "Will you require Visa Sponsorship now, or in the future?*",
+    "last_seen": 1782152936,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "website / github": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Website / GitHub:",
+    "last_seen": 1782134277,
+    "source": "agent_loop",
+    "value": "https://github.com/harmainalibutt"
+  },
+  "where did you first hear about this role": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Where did you first hear about this role?*",
+    "last_seen": 1782153987,
+    "source": "agent_loop",
+    "value": "LinkedIn"
+  },
+  "will you require visa sponsorship now, or in the future": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Will you require Visa Sponsorship now, or in the future?*",
+    "last_seen": 1782156612,
+    "source": "agent_loop",
+    "value": "No"
+  }
+}

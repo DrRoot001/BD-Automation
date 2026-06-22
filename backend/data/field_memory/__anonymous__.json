@@ -53,7 +53,7 @@
     "label": "LinkedIn Profile",
     "last_seen": 1781972727,
     "source": "rules",
-    "value": "https://www.linkedin.com/in/harmain-ali-butt"
+    "value": "N/A"
   },
   "linkedin profile url": {
     "count": 1,
@@ -61,7 +61,7 @@
     "label": "LinkedIn Profile URL",
     "last_seen": 1781982229,
     "source": "profile_direct",
-    "value": "https://linkedin.com/in/harmain-ali-butt"
+    "value": "N/A"
   },
   "location (city, state, country)": {
     "count": 1,

@@ -15,6 +15,46 @@
     "source": "llm:0.40",
     "value": "Yes"
   },
+  "are you a veteran or active member of the united states armed forces": {
+    "count": 16,
+    "field_type": "text",
+    "label": "Are you a veteran or active member of the United States Armed Forces?",
+    "last_seen": 1782156595,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you authorized to work in the uk": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you authorized to work in the UK?*",
+    "last_seen": 1782155397,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you currently based in any of these countries": {
+    "count": 26,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries?",
+    "last_seen": 1782156566,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the onl": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the onl",
+    "last_seen": 1782153411,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the only countries where we are accepting applications": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the only countries where we are accepting applications",
+    "last_seen": 1782153453,
+    "source": "agent_loop",
+    "value": "United States"
+  },
   "are you currently bound by any agreements with a current or former employer that may restrict your ability to work for scale ai or perform the duties of the position for which you are applying? this includes, but is not limited to, non-compete agreements, non-solicitation agreements, confidentiality or non-disclosure agreements, or any other contractual obligations that could limit your employment activities": {
     "count": 1,
     "field_type": "select",
@@ -95,6 +135,46 @@
     "source": "llm:0.95",
     "value": "Yes"
   },
+  "by submitting my application, i acknowledge that i have read and understand verc": {
+    "count": 4,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Verc",
+    "last_seen": 1782156569,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's applicant privacy notice": {
+    "count": 4,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Applicant Privacy Notice",
+    "last_seen": 1782151346,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's job applicant privacy notice": {
+    "count": 26,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Job Applicant Privacy Notice",
+    "last_seen": 1782155349,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's privacy policy": {
+    "count": 3,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Privacy Policy",
+    "last_seen": 1782155862,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel's privacy policy and terms of service": {
+    "count": 2,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel's privacy policy and terms of service",
+    "last_seen": 1782119829,
+    "source": "agent_loop",
+    "value": "on"
+  },
   "country": {
     "count": 1,
     "field_type": "text",
@@ -119,6 +199,22 @@
     "source": "llm:0.90",
     "value": "Prefer not to answer"
   },
+  "do you have a disability or chronic condition": {
+    "count": 15,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition",
+    "last_seen": 1782156599,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning?",
+    "last_seen": 1782143318,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "do you have any deadlines or timeline considerations we should be aware of": {
     "count": 1,
     "field_type": "text",
@@ -127,6 +223,14 @@
     "source": "llm:0.80",
     "value": "Available to start immediately"
   },
+  "do you have hands-on experience building production user interfaces using modern": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Do you have hands-on experience building production user interfaces using modern",
+    "last_seen": 1782138563,
+    "source": "agent_loop",
+    "value": "Yes, I have 5 years of experience building production user interfaces using modern frameworks including React, Next.js, and TypeScript."
+  },
   "do you have hands-on experience building production user interfaces using modern frontend technologies such as react, htmx, or similar frameworks": {
     "count": 1,
     "field_type": "select",
@@ -134,6 +238,14 @@
     "last_seen": 1782051437,
     "source": "llm:0.95",
     "value": "Yes"
+  },
+  "do you identify as transgender": {
+    "count": 18,
+    "field_type": "text",
+    "label": "Do you identify as transgender?",
+    "last_seen": 1782156591,
+    "source": "agent_loop",
+    "value": "No"
   },
   "do you live in santiago?": {
     "count": 1,
@@ -150,6 +262,14 @@
     "last_seen": 1781982233,
     "source": "llm:0.90",
     "value": "Immediately"
+  },
+  "end date year": {
+    "count": 1,
+    "field_type": "text",
+    "label": "End date year",
+    "last_seen": 1782075699,
+    "source": "screening",
+    "value": "2024"
   },
   "gender": {
     "count": 1,
@@ -174,6 +294,22 @@
     "last_seen": 1782028447,
     "source": "llm:0.40",
     "value": "No"
+  },
+  "have you led multiple large, parallel, technically complex engineering projects (multi-quarter in scope) to production simultaneously- without being a hands-on individual contributor": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you led multiple large, parallel, technically complex engineering projects (multi-quarter in scope) to production simultaneously-  without being a hands-on individual contributor?*",
+    "last_seen": 1782075739,
+    "source": "screening",
+    "value": "Not provided in candidate profile"
+  },
+  "have you worked on production-grade systems involving distributed systems, infra": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Have you worked on production-grade systems involving distributed systems, infra",
+    "last_seen": 1782138574,
+    "source": "agent_loop",
+    "value": "Yes, I have 5 years of experience working on production-grade distributed systems using AWS, PostgreSQL, and Docker."
   },
   "have you worked on production-grade systems involving distributed systems, infrastructure platforms, workflow orchestration, or high-availability services": {
     "count": 1,
@@ -207,6 +343,62 @@
     "source": "llm:0.85",
     "value": "Online Job Board"
   },
+  "how many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct ic reports)": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct IC reports)?\n*",
+    "last_seen": 1782075734,
+    "source": "screening",
+    "value": "Not provided in candidate profile - work history reflects individual contributor and technical leadership roles, not people management experience"
+  },
+  "how would you describe your gender identity": {
+    "count": 2,
+    "field_type": "text",
+    "label": "How would you describe your gender identity?",
+    "last_seen": 1782151647,
+    "source": "agent_loop",
+    "value": "Male"
+  },
+  "how would you describe your gender identity (mark all that apply)": {
+    "count": 19,
+    "field_type": "text",
+    "label": "How would you describe your gender identity? (mark all that apply)",
+    "last_seen": 1782156576,
+    "source": "agent_loop",
+    "value": "Man"
+  },
+  "how would you describe your racial/ethnic background": {
+    "count": 2,
+    "field_type": "text",
+    "label": "How would you describe your racial/ethnic background?",
+    "last_seen": 1782151656,
+    "source": "agent_loop",
+    "value": "South Asian"
+  },
+  "how would you describe your racial/ethnic background (mark all that apply)": {
+    "count": 16,
+    "field_type": "text",
+    "label": "How would you describe your racial/ethnic background? (mark all that apply)",
+    "last_seen": 1782156580,
+    "source": "agent_loop",
+    "value": "South Asian"
+  },
+  "how would you describe your sexual orientation": {
+    "count": 2,
+    "field_type": "text",
+    "label": "How would you describe your sexual orientation?",
+    "last_seen": 1782151660,
+    "source": "agent_loop",
+    "value": "Heterosexual"
+  },
+  "how would you describe your sexual orientation (mark all that apply)": {
+    "count": 16,
+    "field_type": "text",
+    "label": "How would you describe your sexual orientation? (mark all that apply)",
+    "last_seen": 1782156588,
+    "source": "agent_loop",
+    "value": "Heterosexual"
+  },
   "i confirm and agree": {
     "count": 1,
     "field_type": "checkbox",
@@ -223,6 +415,62 @@
     "source": "llm:0.30",
     "value": "No"
   },
+  "please double-check all the information provided above": {
+    "count": 4,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above",
+    "last_seen": 1782155866,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is cru": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is cru",
+    "last_seen": 1782143300,
+    "source": "agent_loop",
+    "value": "I have reviewed all information and confirm accuracy"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial": {
+    "count": 10,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial",
+    "last_seen": 1782156573,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial, as any errors or omissions may impact the review of your application": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial, as any errors or omissions may impact the review of your application.",
+    "last_seen": 1782153965,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "resume/cv": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Resume/CV",
+    "last_seen": 1782134507,
+    "source": "agent_loop",
+    "value": "resume"
+  },
+  "school": {
+    "count": 1,
+    "field_type": "select",
+    "label": "School",
+    "last_seen": 1782075710,
+    "source": "screening",
+    "value": "Not provided in candidate profile"
+  },
+  "this role is a hands-on backend software engineering position requiring producti": {
+    "count": 2,
+    "field_type": "text",
+    "label": "This role is a hands-on backend software engineering position requiring producti",
+    "last_seen": 1782138587,
+    "source": "agent_loop",
+    "value": "Yes, I have 5 years of experience as a Senior Software Engineer working on backend systems with Python, TypeScript, AWS, PostgreSQL, and Docker in production environments."
+  },
   "veteran status": {
     "count": 1,
     "field_type": "text",
@@ -232,12 +480,20 @@
     "value": "Prefer not to answer"
   },
   "visa sponsorship": {
-    "count": 1,
-    "field_type": "radio",
-    "label": "Will you now or in the future require sponsorship for a visa? *",
-    "last_seen": 1782026591,
-    "source": "rules",
+    "count": 5,
+    "field_type": "text",
+    "label": "Will you require Visa Sponsorship now, or in the future?*",
+    "last_seen": 1782152936,
+    "source": "agent_loop",
     "value": "No"
+  },
+  "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "What additional accommodations do you need to feel comfortable during your interview process? All responses will be kept private.",
+    "last_seen": 1782075701,
+    "source": "screening",
+    "value": "No specific accommodations needed at this time."
   },
   "what are your salary expectations": {
     "count": 1,
@@ -262,6 +518,22 @@
     "last_seen": 1782028431,
     "source": "llm:0.90",
     "value": "Immediately"
+  },
+  "where did you first hear about this role": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Where did you first hear about this role?*",
+    "last_seen": 1782153987,
+    "source": "agent_loop",
+    "value": "LinkedIn"
+  },
+  "which of the following best describes your current or most recent role level": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Which of the following best describes your current or most recent role level?*",
+    "last_seen": 1782075747,
+    "source": "screening",
+    "value": "Senior Engineer (based on current role as Senior Machine Learning Engineer at AMD)"
   },
   "who is your current or most recent employer?": {
     "count": 1,
@@ -295,13 +567,13 @@
     "source": "llm:0.95",
     "value": "No"
   },
-  "work authorization": {
-    "count": 1,
-    "field_type": "radio",
-    "label": "Are you legally authorized to work in the United States? *",
-    "last_seen": 1782026590,
-    "source": "rules",
-    "value": "Yes"
+  "will you require visa sponsorship now, or in the future": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Will you require Visa Sponsorship now, or in the future?*",
+    "last_seen": 1782156612,
+    "source": "agent_loop",
+    "value": "No"
   },
   "years of experience": {
     "count": 1,

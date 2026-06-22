@@ -69,10 +69,14 @@ _ALIAS_RULES = [
      "current company / employer"),
     (re.compile(r"what\s+is\s+your\s+(?:current|most\s+recent|recent).+(?:title|role|position)"),
      "current job title"),
-    (re.compile(r"(?:authorized|authorised|eligible)\s+to\s+work"),
-     "work authorization"),
-    (re.compile(r"(?:require|need|sponsor).+(?:sponsorship|visa)"),
-     "visa sponsorship"),
+    # NOTE: we intentionally do NOT alias "authorized to work" or
+    # "sponsorship/visa" questions to a single canonical key. Those answers are
+    # COUNTRY-SPECIFIC — "authorized to work in the US?" → Yes, but
+    # "authorized to work in the UK?" → No. Collapsing them to one key made a
+    # single poisoned answer (a UK "No") get recalled for the US question via
+    # memory pre-fill, silently filling "I am not authorized" and blocking
+    # submit. Each work-auth / sponsorship question now keeps its full label as
+    # its own key, so US and UK answers stay distinct.
 ]
 
 

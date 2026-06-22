@@ -29,6 +29,8 @@ from typing import Any, List, Optional
 
 import httpx
 
+from . import telemetry
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +49,10 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 # Old default (600) truncated Gemini's JSON mid-response on multi-field forms.
 # Gemini's free tier gives generous quota — raising the cap is safe.
 _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "1000"))
+# Lever 4 (cost optimization): AgentLoop vision turns return a single-action
+# JSON object — observed max ~70 tokens. Cap at 200 with ample headroom; the
+# capacity is what gets billed if not used, so this is purely upside.
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "200"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
@@ -235,7 +240,17 @@ class ClaudeClient:
             ],
         }
         if system:
-            kwargs["system"] = system
+            # Cache the system prompt on Anthropic. AgentLoop builds it once at
+            # session start and re-uses it for every turn — cache hits charge
+            # 0.1x normal input cost, saving ~90% on the 900+ token identity card.
+            if len(system) >= 1024:
+                kwargs["system"] = [{
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }]
+            else:
+                kwargs["system"] = system
         try:
             resp = await asyncio.wait_for(
                 self._anthropic.messages.create(**kwargs), timeout=timeout_s
@@ -245,7 +260,27 @@ class ClaudeClient:
         except Exception as exc:
             raise LLMUnavailable(f"Claude call failed: {exc}") from exc
         blocks = getattr(resp, "content", None) or []
-        return "".join(getattr(b, "text", "") or "" for b in blocks).strip()
+        text = "".join(getattr(b, "text", "") or "" for b in blocks).strip()
+        usage = getattr(resp, "usage", None)
+        # Anthropic returns cache_read_input_tokens / cache_creation_input_tokens
+        # when prompt caching is active. We add those to the input total so the
+        # telemetry reflects the *effective* tokens billed.
+        in_tok = (getattr(usage, "input_tokens", 0) or 0)
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        if not in_tok:
+            in_tok = telemetry.estimate_from_text(prompt)
+        telemetry.record(
+            provider="anthropic", model=model,
+            input_tokens=in_tok + cache_create + cache_read,
+            output_tokens=getattr(usage, "output_tokens", 0) or telemetry.estimate_from_text(text),
+            has_image=bool(image_bytes),
+        )
+        if cache_read or cache_create:
+            logger.info(
+                f"[Tokens] anthropic cache: read={cache_read} create={cache_create} fresh={in_tok}"
+            )
+        return text
 
     async def _call_openrouter(
         self,
@@ -300,10 +335,19 @@ class ClaudeClient:
             msg = (choices[0] if choices else {}).get("message") or {}
             content = msg.get("content")
             if isinstance(content, list):
-                return "".join(
+                text = "".join(
                     (c or {}).get("text", "") for c in content if isinstance(c, dict)
                 ).strip()
-            return str(content or "").strip()
+            else:
+                text = str(content or "").strip()
+            usage = body.get("usage") or {}
+            telemetry.record(
+                provider="openrouter", model=model,
+                input_tokens=int(usage.get("prompt_tokens") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("completion_tokens") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
         except Exception as exc:
             raise LLMUnavailable(f"OpenRouter response parse failed: {exc}") from exc
 
@@ -353,7 +397,15 @@ class ClaudeClient:
                 raise LLMUnavailable(f"Gemini returned no candidates: {body}")
             content = cands[0].get("content") or {}
             parts_out = content.get("parts") or []
-            return "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+            text = "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+            usage = body.get("usageMetadata") or {}
+            telemetry.record(
+                provider="gemini", model=model,
+                input_tokens=int(usage.get("promptTokenCount") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("candidatesTokenCount") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
         except LLMUnavailable:
             raise
         except Exception as exc:
@@ -421,9 +473,66 @@ class ClaudeClient:
         cleaned = self._strip_json_fences(text)
         try:
             return json.loads(cleaned)
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError:
+            # The model (especially reasoning-heavy ones like Opus) sometimes
+            # prefixes the action with prose ("I need to analyze... {json}").
+            # Rather than fail the whole turn, extract the LAST balanced
+            # top-level {...} object from the text and parse that. The action
+            # JSON is almost always the final object the model emits.
+            extracted = self._extract_json_object(text)
+            if extracted is not None:
+                try:
+                    obj = json.loads(extracted)
+                    logger.info(
+                        "[Claude] recovered JSON object from prose-wrapped response"
+                    )
+                    return obj
+                except json.JSONDecodeError:
+                    pass
             logger.warning(f"[Claude] JSON parse failed; raw head={text[:200]!r}")
-            raise LLMUnavailable(f"Claude returned non-JSON: {exc}") from exc
+            raise LLMUnavailable(
+                f"Claude returned non-JSON: {text[:80]!r}"
+            )
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[str]:
+        """Find the last balanced {...} object in free text.
+
+        Scans for brace pairs respecting string literals/escapes so a model
+        that 'thinks out loud' before emitting its action JSON still yields a
+        parseable object. Returns the substring, or None if no balanced
+        object is found.
+        """
+        if not text:
+            return None
+        candidates = []
+        depth = 0
+        start = -1
+        in_str = False
+        esc = False
+        for i, ch in enumerate(text):
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start >= 0:
+                        candidates.append(text[start:i + 1])
+                        start = -1
+        # Prefer the last balanced object (the action usually comes last).
+        return candidates[-1] if candidates else None
 
     async def generate_text(
         self,

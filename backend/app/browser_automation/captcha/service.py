@@ -17,6 +17,9 @@ _PROVIDER_ENV = {
     "2captcha":   "TWO_CAPTCHA_API_KEY",
     "anticaptcha": "ANTI_CAPTCHA_API_KEY",
     "ocilar":     "OCILAR_API_KEY",
+    # "ai" provider uses the same Claude/LLM client the AgentLoop talks to —
+    # no separate API key required; reuses ANTHROPIC_API_KEY / fallback chain.
+    "ai":         "ANTHROPIC_API_KEY",
 }
 
 # Ocilar REST endpoint — update if their docs differ.
@@ -30,9 +33,20 @@ class CaptchaService:
             raise ValueError(f"Provider must be one of {list(_PROVIDER_ENV)}")
 
         self.api_key = api_key or os.getenv(_PROVIDER_ENV[self.provider], "")
-        if not self.api_key:
-            raise ValueError(f"API Key for '{self.provider}' not found in environment "
-                             f"(expected env var: {_PROVIDER_ENV[self.provider]})")
+        # Treat placeholder values ("your_2captcha_api_key_here") as missing —
+        # otherwise the service raises and the AgentLoop's submit aborts.
+        if self.api_key and self.api_key.lower().startswith("your_"):
+            logger.warning(
+                f"[CAPTCHA] Provider {self.provider!r} key looks like a placeholder "
+                f"({self.api_key[:20]!r}…) — treating as unconfigured"
+            )
+            self.api_key = ""
+        # "ai" provider needs no external key — we use the LLM client's chain.
+        if not self.api_key and self.provider != "ai":
+            logger.warning(
+                f"[CAPTCHA] Provider {self.provider!r} has no API key configured. "
+                "The AI vision solver will still run first; paid provider will be skipped."
+            )
 
     # ──────────────────────────────────────────────────────────────────────────
     # 2Captcha
@@ -316,9 +330,20 @@ class CaptchaService:
         null_sol = CaptchaSolution(captcha_type=captcha_type, success=False,  # type: ignore[arg-type]
                                    solve_time_seconds=0, cost_usd=0)
 
+        # Guard: paid provider can only run if a real API key was given.
+        # The AI solver ran above this in solve() — if we got here it already
+        # failed; without a paid key there's nothing else to try.
+        if self.provider != "ai" and not self.api_key:
+            logger.info(f"[CAPTCHA] No paid key for {self.provider!r}; skipping external solve")
+            return null_sol
+
         if captcha_type == "recaptcha_v2":
             if not site_key:
                 logger.error("[CAPTCHA] reCAPTCHA v2 site key not found on page")
+                return null_sol
+            # Ocilar can't do v2 — short-circuit
+            if self.provider == "ocilar":
+                logger.info("[CAPTCHA] Ocilar cannot solve reCAPTCHA v2; skipping")
                 return null_sol
             solution = await self.solve_recaptcha_v2(site_key, page_url)
             if solution.success and solution.token:
@@ -343,10 +368,39 @@ class CaptchaService:
     async def solve(self, page: Page, captcha_type: str, max_attempts: int = 3) -> CaptchaSolution:
         """Solve a captcha with up to *max_attempts* retries.
 
-        Between attempts the captcha widget is refreshed so the provider
-        receives a new challenge.  After exhausting all attempts, Ocilar
-        is tried as an OCR fallback for image captchas.
+        Layered strategy (AI-first):
+          1. AI vision solver — silent checkbox pass / image-grid / OCR.
+             Free, fast, no external API key needed. Works on a fraction
+             of reCAPTCHA v2 cases and most simple OCR captchas.
+          2. Configured paid provider (2Captcha / AntiCaptcha / Ocilar).
+          3. Ocilar OCR fallback for image captchas.
+
+        Between attempts the captcha widget is refreshed so the next attempt
+        gets a fresh challenge.
         """
+        # ── Phase 0: try the in-process AI solver first ─────────────────────
+        # This is "AI is the master" applied to captchas: before we pay a
+        # third-party service, give Claude a shot at it. For reCAPTCHA v2 the
+        # silent checkbox pass works often on stealth-configured sessions.
+        try:
+            from .ai_solver import AICaptchaSolver
+            ai_solver = AICaptchaSolver()
+            ai_sol = await ai_solver.solve(page, captcha_type, max_attempts=2)
+            if ai_sol.success:
+                logger.info(f"[CAPTCHA] AI solver succeeded type={captcha_type} "
+                            f"token={(ai_sol.token or '')[:24]!r}")
+                if ai_sol.token and captcha_type == "recaptcha_v2" and ai_sol.token not in (
+                    "checkbox_passed", "grid_solved",
+                ):
+                    # Real token from provider — inject. (Our AI flow returns
+                    # sentinel strings instead because Google's token isn't
+                    # exposed to scripts; the DOM widget commits on its own.)
+                    await self._inject_recaptcha_token(page, ai_sol.token)
+                return ai_sol
+            logger.info(f"[CAPTCHA] AI solver did not succeed; falling through to provider={self.provider}")
+        except Exception as exc:
+            logger.warning(f"[CAPTCHA] AI solver raised (non-fatal): {exc}")
+
         last: Optional[CaptchaSolution] = None
 
         for attempt in range(1, max_attempts + 1):
