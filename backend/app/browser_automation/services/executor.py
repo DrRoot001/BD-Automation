@@ -6,6 +6,7 @@ import tempfile
 import httpx
 import traceback
 import redis.asyncio as redis
+from urllib.parse import urlparse, unquote
 
 from typing import Optional, Dict, Literal
 from playwright.async_api import async_playwright, Page, BrowserContext
@@ -127,12 +128,25 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
         async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
             resp = await client.get(url_or_path, headers=headers)
             resp.raise_for_status()
-        # Write to a persistent temp file (not inside a with-block so it survives)
-        tf = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-        tf.write(resp.content)
-        tf.close()
-        logger.info(f"Downloaded {url_or_path} → {tf.name}")
-        return tf.name
+
+        filename = None
+        parsed = urlparse(url_or_path)
+        if parsed.path:
+            filename = os.path.basename(parsed.path)
+        if not filename:
+            filename = os.path.basename(unquote(parsed.path))
+        if not filename:
+            filename = f"downloaded{suffix}"
+        if not filename.lower().endswith(suffix.lower()):
+            filename += suffix
+
+        temp_dir = tempfile.gettempdir()
+        temp_path = os.path.join(temp_dir, filename)
+        with open(temp_path, "wb") as f:
+            f.write(resp.content)
+
+        logger.info(f"Downloaded {url_or_path} → {temp_path}")
+        return temp_path
     except Exception as exc:
         logger.error(f"Failed to download {url_or_path}: {exc}")
         return None

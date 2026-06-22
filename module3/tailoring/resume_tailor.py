@@ -15,6 +15,7 @@ from module2.normalization.schemas import NormalizedJob
 from module3.parser.resume_parser import ResumeData, ExperienceEntry, EducationEntry
 from module3.scoring.ats_scorer import calculate_ats_score
 from module3.tailoring.pdf_generator import generate_resume_pdf
+from module3.utils.storage import safe_filename
 
 logger = logging.getLogger("resume_tailor")
 
@@ -242,10 +243,10 @@ async def tailor_resume(
             "date": edu.get("date", "")
         })
 
-    pdf_filename = f"tailored_{resume.candidate_id or 'unknown'}_{job.job_id or 'unknown'}_v{version}.pdf"
-    output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
-    
     basics = final_resume_json.get("basics", {})
+    candidate_name = basics.get("name", "Candidate")
+    pdf_filename = f"{safe_filename(candidate_name, default='candidate', extension='')}_resume_v{version}.pdf"
+    output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
     pdf_projects = final_resume_json.get("projects", [])
 
     # Wrap the synchronous rendering in asyncio.to_thread to prevent event loop blocking

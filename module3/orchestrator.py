@@ -14,7 +14,7 @@ from module3.scoring.fit_scorer import score_job_fit, MatchResult
 from module3.tailoring.resume_tailor import tailor_resume, TailoredResume
 from module3.cover_letter.generator import generate_cover_letter, CoverLetter
 from module3.qa.question_answerer import answer_screening_questions
-from module3.utils.storage import upload_file_to_supabase
+from module3.utils.storage import upload_file_to_supabase, safe_filename
 
 # Event publishing
 try:
@@ -222,10 +222,11 @@ async def orchestrate_application_package(
         print(f"[ORCHESTRATOR] Resume tailored. ATS Score improved from {tailored_resume.ats_score_before} to {tailored_resume.ats_score_after}")
         
         # Upload Tailored Resume to the CORRECT Bucket
+        candidate_name = candidate.get("name") or candidate_id
         remote_resume_url = await upload_file_to_supabase(
-            tailored_resume.pdf_url, 
-            "updated_resume",  # CHANGED from "resume"
-            f"{candidate_id}_{job_id}_v{next_version}.pdf"
+            tailored_resume.pdf_url,
+            "updated_resume",
+            f"{safe_filename(candidate_name, default=candidate_id, extension='')}_resume_v{next_version}.pdf"
         )
         resume_pdf_url = remote_resume_url
         tailored_resume.pdf_url = remote_resume_url
@@ -564,10 +565,11 @@ async def prepare_package_for_live_application(
             cover_letter_url = cover_letter.pdf_url
             
             # Upload Cover letter to the CORRECT Bucket
+            candidate_name = candidate.get("name") or candidate_id
             remote_cl_url = await upload_file_to_supabase(
-                cover_letter_url, 
-                "cover_letter", # CHANGED from "cover_letter"
-                f"{candidate_id}_{job_id}_cl.pdf"
+                cover_letter_url,
+                "cover_letter",
+                f"{safe_filename(candidate_name, default=candidate_id, extension='')}_cover_letter.pdf"
             )
             cover_letter_url = remote_cl_url
             
