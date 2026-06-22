@@ -2,12 +2,18 @@
 from __future__ import annotations
 
 import os
+import json
 import asyncio
+import logging
 from pydantic import BaseModel
+from google import genai
+from google.genai import types as genai_types
 
 from module2.normalization.schemas import NormalizedJob
 from module3.parser.resume_parser import ResumeData
 from module3.tailoring.pdf_generator import generate_cover_letter_pdf
+
+logger = logging.getLogger("cover_letter_generator")
 
 class CoverLetter(BaseModel):
     candidate_id: str
@@ -15,45 +21,89 @@ class CoverLetter(BaseModel):
     content: str
     pdf_url: str
 
+_COVER_LETTER_SYSTEM = """
+You are an expert career coach who writes sharp, impactful cover letters.
+Given a resume JSON and a job description, write a professional cover letter.
+
+Output ONLY a valid JSON object — no markdown, no preamble — in this schema:
+{
+  "hiring_manager": "<Hiring Manager or 'Hiring Team'>",
+  "paragraphs": [
+    "<One single, combined paragraph containing your entire message. DO NOT output multiple paragraphs.>"
+  ]
+}
+
+STRICT RULES:
+1. ONE PARAGRAPH ONLY: You MUST output exactly ONE string inside the "paragraphs" array. Combine your opening, achievements, and call to action into a single cohesive block of text.
+2. WORD COUNT (CRITICAL): The total word count of this single paragraph MUST be strictly between 100 and 120 words. Count carefully before outputting.
+3. Content: State your expertise, integrate 2-3 specific numeric achievements from the resume that map to the job, and end with a strong call to action.
+4. Tone: Confident, direct, zero filler phrases. Mirror keywords from the job description naturally.
+"""
+
 async def generate_cover_letter(
     resume: ResumeData,
     job: NormalizedJob,
     candidate_profile: dict,
     output_pdf_dir: str = "backend/data/cover_letters"
 ) -> CoverLetter:
-    """Generate a highly tailored cover letter PDF for a candidate and job description."""
+    """Generate a highly tailored, concise cover letter PDF using JSON structured output."""
+    
     experience_text = "\n".join([
         f"- {exp.title} at {exp.company} ({exp.start_date} - {exp.end_date or 'Present'}): {exp.description} (Tech: {', '.join(exp.technologies)})"
         for exp in resume.sections.experience
     ])
     
-    prompt = (
-        "You are an expert recruiter. Write a formal, concise, and professional cover letter (maximum 300 words, 3-4 paragraphs) "
-        "for the candidate applying for the position detailed below. Follow these strict rules:\n\n"
-        
-        "1. DO NOT fabricate any experiences, projects, dates, or certifications. Ground the letter strictly in the candidate's work history.\n"
-        "2. Address the letter to 'Hiring Manager'.\n"
-        "3. Highlight technical alignments and key achievements from the candidate's resume that match the Job Description.\n"
-        "4. Keep a confident, professional, and enthusiastic tone.\n"
-        "5. Do NOT include placeholders (like [Date], [Company Name], [My Name]). Just write the body text of the cover letter directly.\n\n"
-        
+    user_prompt = (
         f"--- JOB DETAILS ---\n"
         f"Role Title: {job.title}\n"
         f"Company Name: {job.company}\n"
         f"Description:\n{job.description}\n\n"
-        
         f"--- CANDIDATE DETAILS ---\n"
         f"Candidate Name: {candidate_profile.get('name', 'Candidate')}\n"
         f"Work Experience History:\n{experience_text}\n"
     )
 
-    from module3.utils.gemini import generate_content_with_retry
-    response = await generate_content_with_retry(
-        contents=prompt,
-        temperature=0.5
-    )
-    
-    letter_content = response.text.strip()
+    api_key = os.getenv("GEMINI_API_KEY")
+    client = genai.Client(api_key=api_key)
+    loop = asyncio.get_event_loop()
+
+    try:
+        response = await loop.run_in_executor(
+            None,
+            lambda: client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=user_prompt,
+                config=genai_types.GenerateContentConfig(
+                    system_instruction=_COVER_LETTER_SYSTEM,
+                    temperature=0.2, # Lowered temperature strictly enforces word count and schema limits
+                ),
+            )
+        )
+        
+        raw_text = response.text.strip()
+        
+        # Strip markdown fences if the LLM accidentally includes them
+        if raw_text.startswith("```"):
+            lines = raw_text.splitlines()
+            start = 1
+            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+            raw_text = "\n".join(lines[start:end]).strip()
+            
+        cl_json = json.loads(raw_text)
+        
+    except Exception as e:
+        logger.error(f"Failed to generate cover letter JSON: {e}")
+        # Safe fallback in case of rate limit or JSON schema failure
+        cl_json = {
+            "hiring_manager": f"Hiring Manager at {job.company}",
+            "paragraphs": [
+                "I am writing to express my strong interest in the open position. My technical background aligns well with the core requirements outlined in the job description, and I would welcome the opportunity to discuss how I can leverage my experience to contribute to your engineering team. Thank you for your time and consideration."
+            ]
+        }
+
+    # Extract the strict single paragraph for the PDF generator
+    letter_paragraphs = cl_json.get("paragraphs", [])
+    letter_content = "\n\n".join(letter_paragraphs)
     
     pdf_filename = f"cover_letter_{resume.candidate_id or 'unknown'}_{job.job_id or 'unknown'}.pdf"
     output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
@@ -69,7 +119,7 @@ async def generate_cover_letter(
         
     print(f"Compiling cover letter PDF to: {output_pdf_path}...")
     
-    # Non-blocking generation using to_thread
+    # Asynchronous non-blocking generation using xhtml2pdf
     await asyncio.to_thread(
         generate_cover_letter_pdf,
         output_path=output_pdf_path,
