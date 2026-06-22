@@ -3,32 +3,145 @@
 <head>
   <meta charset="UTF-8" />
   <style>
-    @page { size: A4; margin: 15mm 15mm 15mm 15mm; }
-    body { font-family: "Helvetica Neue", Helvetica, Arial, sans-serif; font-size: 10pt; color: #000000; line-height: 1.4; }
-    .header { text-align: center; border-bottom: 1.5pt solid #000; padding-bottom: 8pt; margin-bottom: 12pt; }
-    .header h1 { font-size: 22pt; font-weight: bold; color: #000; margin: 0 0 4pt 0; }
-    .contact { font-size: 9pt; color: #333; }
-    .contact a { color: #333; text-decoration: none; }
+    @page {
+      size: A4;
+      margin: 15mm 15mm 15mm 15mm;
+    }
+
+    body {
+      font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+      font-size: 10pt;
+      color: #000000;
+      line-height: 1.4;
+    }
+
+    /* ── Header ── */
+    .header {
+      text-align: center;
+      border-bottom: 1.5pt solid #000;
+      padding-bottom: 8pt;
+      margin-bottom: 12pt;
+    }
+
+    .header h1 {
+      font-size: 22pt;
+      font-weight: bold;
+      color: #000;
+      margin: 0 0 4pt 0;
+    }
+
+    .contact {
+      font-size: 9pt;
+      color: #333;
+    }
+
+    .contact a {
+      color: #333;
+      text-decoration: none;
+    }
+
+    /* ── Section Headings ── */
     .section { margin-bottom: 14pt; }
-    .section-title { font-size: 11pt; font-weight: bold; text-transform: uppercase; color: #000; border-bottom: 1pt solid #000; padding-bottom: 2pt; margin-bottom: 8pt; }
-    .summary { font-size: 9.5pt; text-align: justify; margin-top: 0; }
-    .skills-table { width: 100%; font-size: 9.5pt; border-collapse: collapse; }
-    .skills-table td { padding: 2pt 0; vertical-align: top; }
-    .skill-category { font-weight: bold; width: 25%; padding-right: 10pt; }
+
+    .section-title {
+      font-size: 11pt;
+      font-weight: bold;
+      text-transform: uppercase;
+      color: #000;
+      border-bottom: 1pt solid #000;
+      padding-bottom: 2pt;
+      margin-bottom: 8pt;
+    }
+
+    /* ── Summary ── */
+    .summary { 
+      font-size: 9.5pt; 
+      text-align: justify;
+      margin-top: 0;
+    }
+
+    /* ── Skills (Categorized) ── */
+    .skills-table {
+      width: 100%;
+      font-size: 9.5pt;
+      border-collapse: collapse;
+    }
+    .skills-table td {
+      padding: 2pt 0;
+      vertical-align: top;
+    }
+    .skill-category {
+      font-weight: bold;
+      width: 25%;
+      padding-right: 10pt;
+    }
+
+    /* ── Shared Experience & Projects ── */
     .item-block { margin-bottom: 10pt; }
-    .item-header { display: table; width: 100%; font-size: 10pt; margin-bottom: 2pt; }
-    .item-header-left { display: table-cell; text-align: left; font-weight: bold; }
-    .item-header-right { display: table-cell; text-align: right; white-space: nowrap; }
-    .item-sub { font-style: italic; font-size: 9.5pt; margin-bottom: 3pt; color: #333; }
-    .tech-used { font-size: 9pt; color: #444; margin-bottom: 4pt; }
-    .item-block ul { margin: 0 0 0 16pt; padding: 0; }
-    .item-block ul li { font-size: 9.5pt; margin-bottom: 3pt; text-align: justify; }
-    .edu-block { display: table; width: 100%; margin-bottom: 6pt; }
-    .edu-left { display: table-cell; text-align: left; }
-    .edu-right { display: table-cell; text-align: right; white-space: nowrap; }
+    
+    .item-header {
+      display: table;
+      width: 100%;
+      font-size: 10pt;
+      margin-bottom: 2pt;
+    }
+    
+    .item-header-left {
+      display: table-cell;
+      text-align: left;
+      font-weight: bold;
+    }
+    
+    .item-header-right {
+      display: table-cell;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    .item-sub {
+      font-style: italic;
+      font-size: 9.5pt;
+      margin-bottom: 3pt;
+      color: #333;
+    }
+
+    .tech-used {
+      font-size: 9pt;
+      color: #444;
+      margin-bottom: 4pt;
+    }
+
+    .item-block ul {
+      margin: 0 0 0 16pt;
+      padding: 0;
+    }
+
+    .item-block ul li {
+      font-size: 9.5pt;
+      margin-bottom: 3pt;
+      text-align: justify;
+    }
+
+    /* ── Education & Certifications ── */
+    .edu-block {
+      display: table;
+      width: 100%;
+      margin-bottom: 6pt;
+    }
+    .edu-left {
+      display: table-cell;
+      text-align: left;
+    }
+    .edu-right {
+      display: table-cell;
+      text-align: right;
+      white-space: nowrap;
+    }
   </style>
 </head>
 <body>
+
+  <!-- HEADER -->
   <div class="header">
     <h1>{{ resume.basics.name }}</h1>
     <div class="contact">
@@ -40,6 +153,7 @@
     </div>
   </div>
 
+  <!-- SUMMARY -->
   {% if resume.summary %}
   <div class="section">
     <div class="section-title">Professional Summary</div>
@@ -47,6 +161,7 @@
   </div>
   {% endif %}
 
+  <!-- SKILLS -->
   {% if resume.skills and resume.skills|length > 0 %}
   <div class="section">
     <div class="section-title">Skills</div>
@@ -61,6 +176,7 @@
   </div>
   {% endif %}
 
+  <!-- EXPERIENCE -->
   {% if resume.experience and resume.experience|length > 0 %}
   <div class="section">
     <div class="section-title">Professional Experience</div>
@@ -86,6 +202,7 @@
   </div>
   {% endif %}
 
+  <!-- PROJECTS -->
   {% if resume.projects and resume.projects|length > 0 %}
   <div class="section">
     <div class="section-title">Key Projects</div>
@@ -109,6 +226,7 @@
   </div>
   {% endif %}
 
+  <!-- CERTIFICATIONS -->
   {% if resume.certifications and resume.certifications|length > 0 %}
   <div class="section">
     <div class="section-title">Certifications</div>
@@ -120,6 +238,7 @@
   </div>
   {% endif %}
 
+  <!-- EDUCATION -->
   {% if resume.education and resume.education|length > 0 %}
   <div class="section">
     <div class="section-title">Education</div>

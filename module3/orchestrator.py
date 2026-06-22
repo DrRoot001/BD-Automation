@@ -15,7 +15,6 @@ from module3.tailoring.resume_tailor import tailor_resume, TailoredResume
 from module3.cover_letter.generator import generate_cover_letter, CoverLetter
 from module3.qa.question_answerer import answer_screening_questions
 from module3.utils.storage import upload_file_to_supabase
-import uuid
 
 # Event publishing
 try:
@@ -29,19 +28,14 @@ async def orchestrate_application_package(
     job_id: str,
     base_resume_pdf_path: Optional[str] = None,
     screening_questions: Optional[List[str]] = None,
-    api_base_url: str = "http://127.0.0.1:8000",
-    skip_gate: bool = False
+    api_base_url: str = "http://127.0.0.1:8000"
 ) -> Dict[str, any]:
     """
     Orchestrate candidate application flow:
     Score -> Validate Gate -> Tailor Resume -> Generate Cover Letter -> QA -> Queue.
     """
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
-    if api_base_url.endswith("/api"):
-        api_base_url = api_base_url[:-4]
-    elif api_base_url.endswith("/api/"):
-        api_base_url = api_base_url[:-5]
-        
+    
     async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
         # 1. Fetch Candidate details
         print("[ORCHESTRATOR] Fetching candidate details...")
@@ -83,34 +77,12 @@ async def orchestrate_application_package(
             parsed_resume = await parse_resume(base_resume_pdf_path, candidate_id=candidate_id)
             
             # Save base resume to central database
-                        
-            # Find next version for new base resume
-            all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")
-            next_version = 1
-            if all_resumes_resp.status_code == 200 and all_resumes_resp.json():
-                existing_resumes = all_resumes_resp.json()
-                versions = [r.get("version", 0) for r in existing_resumes if r.get("version") is not None]
-                if versions:
-                    next_version = max(versions) + 1
-                    
-            if base_resume_pdf_path.startswith("http://") or base_resume_pdf_path.startswith("https://"):
-                remote_base_url = base_resume_pdf_path
-            else:
-                print("[ORCHESTRATOR] Uploading base resume to Supabase...")
-                remote_base_url = await upload_file_to_supabase(
-                    base_resume_pdf_path, 
-                    "resume", 
-                    f"{candidate_id}_base_v{next_version}.pdf"
-                )
-            
             print("[ORCHESTRATOR] Uploading parsed base resume to central database...")
-            parsed_json_data = parsed_resume.sections.model_dump()
-            parsed_json_data["file_hash"] = parsed_resume.file_hash
             upload_payload = {
                 "candidate_id": candidate_id,
-                "version": next_version,
-                "file_url": remote_base_url,
-                "parsed_json": parsed_json_data,
+                "version": 1,
+                "file_url": base_resume_pdf_path,
+                "parsed_json": parsed_resume.sections.model_dump(),
                 "is_base": True
             }
             resp = await client.post("/api/resumes", json=upload_payload)
@@ -121,7 +93,6 @@ async def orchestrate_application_package(
             base_resume_id = uploaded_resume["id"]
             parsed_resume.resume_id = base_resume_id
             resume_data = parsed_resume
-            base_resume_version = next_version
             print(f"[ORCHESTRATOR] Created base resume record in database (ID: {base_resume_id})")
 
         # 3. Fetch Job details
@@ -176,7 +147,7 @@ async def orchestrate_application_package(
         print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
         
         # Check Gate Threshold
-        if not skip_gate and not match_result.should_apply:
+        if not match_result.should_apply:
             print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
             
             # Transition to ANALYZED
@@ -248,23 +219,16 @@ async def orchestrate_application_package(
         cover_letter = results[1]
         screening_answers = results[2] if screening_questions else {}
         
-        # Upload to Supabase Storage
+        print(f"[ORCHESTRATOR] Resume tailored. ATS Score improved from {tailored_resume.ats_score_before} to {tailored_resume.ats_score_after}")
+        
+        # Upload Tailored Resume to the CORRECT Bucket
         remote_resume_url = await upload_file_to_supabase(
             tailored_resume.pdf_url, 
-            "resume", 
+            "updated_resume",  # CHANGED from "resume"
             f"{candidate_id}_{job_id}_v{next_version}.pdf"
         )
+        resume_pdf_url = remote_resume_url
         tailored_resume.pdf_url = remote_resume_url
-        
-        remote_cl_url = await upload_file_to_supabase(
-            cover_letter.pdf_url,
-            "cover_letter",
-            f"{candidate_id}_{job_id}_cl.pdf"
-        )
-        cover_letter.pdf_url = remote_cl_url
-
-        
-        print(f"[ORCHESTRATOR] Resume tailored. ATS Score improved from {tailored_resume.ats_score_before} to {tailored_resume.ats_score_after}")
         
         # Upload Tailored Resume version to central DB
         print("[ORCHESTRATOR] Uploading tailored resume version to database...")
@@ -303,6 +267,14 @@ async def orchestrate_application_package(
         
         cover_letter_url = cover_letter.pdf_url
         print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
+        
+        # Upload Cover letter to the CORRECT Bucket
+        remote_cl_url = await upload_file_to_supabase(
+            cover_letter_url, 
+            "cover_letter", # CHANGED from "cover_letter"
+            f"{candidate_id}_{job_id}_cl.pdf"
+        )
+        cover_letter_url = remote_cl_url
         
         # Update status to COVER_LETTER_CREATED
         print("[ORCHESTRATOR] Transitioning application status to 'COVER_LETTER_CREATED'...")
@@ -361,11 +333,7 @@ async def prepare_package_for_live_application(
     Runs synchronously and only executes required pipeline steps.
     """
     print(f"\n[ORCHESTRATOR] Synchronous package preparation for Candidate: {candidate_id} | Job: {job_id}")
-    if api_base_url.endswith("/api"):
-        api_base_url = api_base_url[:-4]
-    elif api_base_url.endswith("/api/"):
-        api_base_url = api_base_url[:-5]
-        
+    
     async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
         # 1. Fetch Candidate details
         print("[ORCHESTRATOR] Fetching candidate details...")
@@ -396,7 +364,6 @@ async def prepare_package_for_live_application(
                     raw_text="[Loaded from DB]"
                 )
                 print(f"[ORCHESTRATOR] Loaded existing base resume from DB (ID: {base_resume_id})")
-                base_resume_version = base_resume.get("version", 1)
             else:
                 # Base resume record exists but parsed_json is NULL — auto-parse from file_url
                 file_url = base_resume.get("file_url", "")
@@ -409,7 +376,6 @@ async def prepare_package_for_live_application(
                     if patch_resp.status_code not in (200, 204):
                         print(f"[ORCHESTRATOR] Warning: could not persist parsed_json ({patch_resp.status_code}): {patch_resp.text}")
                     resume_data = parsed_resume
-                    base_resume_version = base_resume.get("version", 1)
                     resume_data.resume_id = base_resume_id
                     print(f"[ORCHESTRATOR] Auto-parsed base resume and updated DB (ID: {base_resume_id})")
 
@@ -449,14 +415,12 @@ async def prepare_package_for_live_application(
 
         # 4. Locate or Create Application record
         app_id = None
-        current_status = "FOUND"
         resp = await client.get("/api/applications")
         if resp.status_code == 200:
             apps = resp.json()
             for app in apps:
                 if app["candidate_id"] == candidate_id and app["job_id"] == job_id:
                     app_id = app["id"]
-                    current_status = app.get("status", "FOUND")
                     break
         
         if not app_id:
@@ -472,70 +436,55 @@ async def prepare_package_for_live_application(
                 raise ValueError(f"Failed to create application record: {resp.text}")
             application = resp.json()
             app_id = application["id"]
-            current_status = "FOUND"
             print(f"[ORCHESTRATOR] Created application ID: {app_id}")
         else:
-            print(f"[ORCHESTRATOR] Found existing application ID: {app_id} (status: {current_status})")
+            print(f"[ORCHESTRATOR] Found existing application ID: {app_id}")
 
-        # ── EXECUTION-PHASE CHECK ────────────────────────────────────────────
-        # If the application is already in an active execution phase
-        # (M4 has already called APPLICATION_STARTED, or it is QUEUED/beyond),
-        # skip the scoring & status-rewind entirely — those transitions would
-        # be invalid and would undo M4's APPLICATION_STARTED transition.
-        EXECUTION_PHASE_STATUSES = {
-            "APPLICATION_STARTED", "FORM_COMPLETED", "SUBMITTED",
-            "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2", "OFFER", "REJECTED"
-        }
-        skip_scoring = current_status in EXECUTION_PHASE_STATUSES
-        if skip_scoring:
-            print(f"[ORCHESTRATOR] Application already in execution phase '{current_status}' — skipping scoring/transition steps.")
-
-        if not skip_scoring:
-            # 5. Run Fit Score & ATS match evaluation
-            print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
-            match_result = await score_job_fit(candidate, resume_data, job)
-            print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
+        # 5. Run Fit Score & ATS match evaluation
+        print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
+        match_result = await score_job_fit(candidate, resume_data, job)
+        print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
+        
+        # Check Gate Threshold
+        if not match_result.should_apply:
+            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
             
-            # Check Gate Threshold
-            if not match_result.should_apply:
-                print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
-                
-                # Transition to ANALYZED
-                update_payload = {
-                    "status": "ANALYZED",
-                    "fit_score": match_result.fit_score,
-                    "ats_score": match_result.ats_score,
-                    "combined_score": match_result.combined_score,
-                    "metadata": {"reason": "Combined score below threshold gate", "explanation": match_result.reasoning}
-                }
-                await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-                
-                return {
-                    "should_apply": False,
-                    "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 70: {match_result.reasoning}"
-                }
-
-            # Transition to ANALYZED since combined_score >= 70
-            print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'ANALYZED'...")
+            # Transition to ANALYZED
             update_payload = {
                 "status": "ANALYZED",
                 "fit_score": match_result.fit_score,
                 "ats_score": match_result.ats_score,
                 "combined_score": match_result.combined_score,
-                "metadata": {"explanation": match_result.reasoning}
+                "metadata": {"reason": "Combined score below threshold gate", "explanation": match_result.reasoning}
             }
             await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+            
+            return {
+                "should_apply": False,
+                "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 70: {match_result.reasoning}"
+            }
 
-            # Transition to MATCHED
-            print("[ORCHESTRATOR] Transitioning status to 'MATCHED'...")
-            update_payload = {
-                "status": "MATCHED",
-                "fit_score": match_result.fit_score,
-                "ats_score": match_result.ats_score,
-                "combined_score": match_result.combined_score,
-                "metadata": {"explanation": match_result.reasoning}
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        # Transition to ANALYZED since combined_score >= 70
+        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'ANALYZED'...")
+        update_payload = {
+            "status": "ANALYZED",
+            "fit_score": match_result.fit_score,
+            "ats_score": match_result.ats_score,
+            "combined_score": match_result.combined_score,
+            "metadata": {"explanation": match_result.reasoning}
+        }
+        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+
+        # Transition to MATCHED
+        print("[ORCHESTRATOR] Transitioning status to 'MATCHED'...")
+        update_payload = {
+            "status": "MATCHED",
+            "fit_score": match_result.fit_score,
+            "ats_score": match_result.ats_score,
+            "combined_score": match_result.combined_score,
+            "metadata": {"explanation": match_result.reasoning}
+        }
+        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         # 6. Check if tailored resume already exists for this job
         tailored_resume_id = None
@@ -546,9 +495,6 @@ async def prepare_package_for_live_application(
             existing_resumes = all_resumes_resp.json()
             for r in existing_resumes:
                 if r.get("tailored_for_job_id") == job_id:
-                    if r.get("version", 0) < base_resume_version:
-                        print(f"[ORCHESTRATOR] Found existing tailored resume but it is older than the current base resume. Ignoring it.")
-                        continue
                     tailored_resume_id = r["id"]
                     resume_pdf_url = r["file_url"]
                     print(f"[ORCHESTRATOR] Found existing tailored resume for job {job_id} (ID: {tailored_resume_id})")
@@ -567,12 +513,11 @@ async def prepare_package_for_live_application(
             
             # Tailor the resume
             tailored_resume = await tailor_resume(resume_data, job, candidate, version=next_version)
-            resume_pdf_url = tailored_resume.pdf_url
             
-            # Upload to Supabase Storage
+            # Upload Tailored Resume to the CORRECT Bucket
             remote_resume_url = await upload_file_to_supabase(
                 tailored_resume.pdf_url, 
-                "resume", 
+                "updated_resume",  # CHANGED from "resume"
                 f"{candidate_id}_{job_id}_v{next_version}.pdf"
             )
             resume_pdf_url = remote_resume_url
@@ -600,17 +545,16 @@ async def prepare_package_for_live_application(
             tailored_db_resume = resp.json()
             tailored_resume_id = tailored_db_resume["id"]
             
-            # Update application status to RESUME_UPDATED (only if not already in execution phase)
-            if not skip_scoring:
-                update_payload = {
-                    "status": "RESUME_UPDATED",
-                    "resume_id": tailored_resume_id,
-                    "metadata": {
-                        "ats_score_before": tailored_resume.ats_score_before,
-                        "ats_score_after": tailored_resume.ats_score_after
-                    }
+            # Update application status to RESUME_UPDATED
+            update_payload = {
+                "status": "RESUME_UPDATED",
+                "resume_id": tailored_resume_id,
+                "metadata": {
+                    "ats_score_before": tailored_resume.ats_score_before,
+                    "ats_score_after": tailored_resume.ats_score_after
                 }
-                await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+            }
+            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         # 7. Generate Cover Letter only if needs_cover_letter is True
         cover_letter_url = None
@@ -619,10 +563,10 @@ async def prepare_package_for_live_application(
             cover_letter = await generate_cover_letter(resume_data, job, candidate)
             cover_letter_url = cover_letter.pdf_url
             
-            # Upload to Supabase Storage
+            # Upload Cover letter to the CORRECT Bucket
             remote_cl_url = await upload_file_to_supabase(
-                cover_letter_url,
-                "cover_letter",
+                cover_letter_url, 
+                "cover_letter", # CHANGED from "cover_letter"
                 f"{candidate_id}_{job_id}_cl.pdf"
             )
             cover_letter_url = remote_cl_url
@@ -642,15 +586,14 @@ async def prepare_package_for_live_application(
             print(f"[ORCHESTRATOR] Answering {len(screening_questions)} screening questions...")
             screening_answers = await answer_screening_questions(screening_questions, resume_data, job, candidate)
             
-        # Update application status to QUEUED (only if not in an active execution phase)
-        if not skip_scoring:
-            update_payload = {
-                "status": "QUEUED",
-                "metadata": {
-                    "screening_answers": screening_answers
-                }
+        # Update application status to QUEUED
+        update_payload = {
+            "status": "QUEUED",
+            "metadata": {
+                "screening_answers": screening_answers
             }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        }
+        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         return {
             "should_apply": True,
