@@ -50,9 +50,13 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 # Gemini's free tier gives generous quota — raising the cap is safe.
 _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
 # Lever 4 (cost optimization): AgentLoop vision turns return a single-action
-# JSON object — observed max ~70 tokens. Cap at 200 with ample headroom; the
-# capacity is what gets billed if not used, so this is purely upside.
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "200"))
+# JSON object. Bare JSON is ~70 tokens, BUT reasoning-capable models (Gemini
+# 2.5 Flash, Opus 4.x) spend hidden "thinking" tokens that COUNT against
+# max_output_tokens. The old cap of 200 was being burned entirely on
+# reasoning, leaving the JSON truncated mid-string (`{"kind":"fill_field"`).
+# 800 gives reasoning headroom without meaningful cost — only generated
+# tokens are billed, not the cap.
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.

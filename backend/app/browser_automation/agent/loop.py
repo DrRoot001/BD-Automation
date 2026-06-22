@@ -32,6 +32,7 @@ import json
 import logging
 import random
 import re
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Literal, Optional
 
@@ -266,9 +267,19 @@ DECISION POLICY — read in order:
         US work-authorization question — that is a critical error.
       * "Will you require sponsorship to work in the United States?" → **No**
         (they are already authorized; no sponsorship needed).
-      * For OTHER countries only (UK / Canada / EU / Australia / India / etc.):
-        "Are you authorized to work in <that country>?" → "No", and
-        "Will you require sponsorship to work in <that country>?" → "Yes".
+      * For OTHER countries (UK / Canada / EU / Australia / India / etc.):
+        "Are you authorized to work in <that country>?" → use the LONG-FORM
+        answer **"I am not authorized to work in <that country>"** (substitute
+        the actual country name from the question — "I am not authorized to
+        work in UK", "I am not authorized to work in Canada", etc.). If the
+        field is a dropdown with shorter options, fall back through this
+        priority list to find the closest match:
+            1. "I am not authorized to work in <country>"
+            2. "I am not authorized to work in the country"
+            3. "I am not authorized to work in the country and need visa support"
+            4. "No, I am not authorized"
+            5. "No"
+        For "Will you require sponsorship to work in <that country>?" → "Yes".
     Treat each country question independently; do NOT generalize. The DEFAULT
     job country here is the United States — when a work-auth question does not
     name a specific foreign country, assume it means the US and answer YES.
@@ -1644,10 +1655,28 @@ class AgentLoop:
             candidate_card=candidate_card,
             job_card=job_card,
         )
+        # Resume content block — the candidate's actual resume text. When
+        # present, this is the AUTHORITATIVE source: name, email, phone,
+        # education, work history, skills come from HERE, not the identity
+        # card. "AI is the master — analyze the resume FIRST, then fill."
+        resume_text = (p.get("_resume_text") or "").strip()
+        resume_block = ""
+        if resume_text:
+            sep = "-" * 60
+            resume_block = (
+                "\n\nRESUME CONTENT (source of truth — when a form field asks "
+                "for name, email, phone, education, employer, title, or "
+                "skills, use values from THIS resume verbatim. If the "
+                "identity card above disagrees with the resume, the RESUME "
+                "WINS):\n"
+                + sep + "\n"
+                + resume_text[:5500]
+                + "\n" + sep + "\n"
+            )
         # Append the action-schema/rules block (unchanged from the original
         # system prompt, just relocated so the identity card comes first).
         # Then the screening-answers block, if M3 provided any.
-        return base + screening_block + _ACTION_SCHEMA_BLOCK
+        return base + resume_block + screening_block + _ACTION_SCHEMA_BLOCK
 
     # ──────────────────────────────────────────────────────────────────────
     # Lever 2: memory pre-fill — recall + apply known answers before the LLM
@@ -2115,6 +2144,84 @@ class AgentLoop:
                 continue
 
         return filled
+
+    async def _handle_email_verification(
+        self,
+        page: Page,
+        frame: Optional[Any],
+        after_epoch: int,
+        actions: List[AgentAction],
+    ) -> bool:
+        """Post-submit handler: if the ATS rendered a verification-code input,
+        fetch the code from the candidate's Gmail inbox and fill it.
+
+        Returns True when a code was successfully filled (the AI's next turn
+        will see the post-fill page and submit again). Returns False on every
+        no-op path so the loop continues as before.
+
+        No-fatal-errors policy: anything that can fail (no Gmail token, OAuth
+        failure, timeout) just logs and returns False — the existing abort
+        path takes over from there.
+        """
+        # Give the page a moment to render the verification UI.
+        try:
+            await asyncio.sleep(2.0)
+        except Exception:
+            pass
+        try:
+            from ..verification import (
+                detect_code_input, fetch_verification_code, fill_code,
+            )
+        except Exception as exc:
+            logger.debug(f"[verify] module import failed: {exc}")
+            return False
+
+        # Live frame may have detached during navigation — re-resolve.
+        ctx_frame = frame
+        try:
+            from ..frame_utils import get_live_frame
+            ctx_frame = get_live_frame(page, frame) or frame
+        except Exception:
+            pass
+
+        shape = await detect_code_input(page, ctx_frame)
+        if not shape:
+            return False
+        logger.info(
+            f"[verify] code-input detected (kind={shape.kind}, "
+            f"digits={shape.digits}); fetching from Gmail…"
+        )
+        if not self.candidate_id:
+            logger.warning("[verify] no candidate_id on AgentLoop — cannot fetch code")
+            return False
+        code = await fetch_verification_code(
+            self.candidate_id, after_epoch=after_epoch, timeout_s=90.0
+        )
+        if not code:
+            logger.warning(
+                "[verify] no verification code fetched — Gmail not connected, "
+                "no matching email arrived, or OAuth refused. Falling back."
+            )
+            return False
+        ok = await fill_code(page, ctx_frame, shape, code)
+        if not ok:
+            logger.warning(f"[verify] failed to fill code {code!r} into shape={shape}")
+            return False
+        logger.info(
+            f"[verify] filled verification code {code!r} into {shape.kind} input "
+            f"({len(shape.selectors)} field(s)); next turn will submit"
+        )
+        # Synthesize an action record so the next-turn history shows the fill.
+        actions.append(AgentAction(
+            kind="fill_field",
+            selector=shape.selectors[0],
+            value="*" * len(code),  # never log the code itself
+            field_label="Email verification code",
+            step=-1,
+            ok=True,
+            raw={"source": "email_verification", "digits": len(code)},
+        ))
+        return True
 
     async def run(
         self,
@@ -2894,10 +3001,39 @@ class AgentLoop:
                     )
 
                 # ── Execute action ───────────────────────────────────────────────
+                # Stamp the pre-execute wall-clock so the verification-code
+                # fetcher knows which inbox emails are "after submit".
+                _pre_exec_epoch = int(time.time())
                 ok = await _execute_action(
                     action, page, frame, self.resume_path, self.cover_letter_path
                 )
                 action.ok = ok
+
+                # ── Email verification code wall (Greenhouse, etc.) ──────────
+                # When the user submits a Greenhouse/Vercel-style hosted form,
+                # the ATS sometimes emails an N-digit code to the candidate
+                # and renders a code-entry page. Detect that shape and, if
+                # the candidate has a `google_refresh_token` in the DB, fetch
+                # the code from Gmail and fill it automatically.
+                # No-ops cleanly when:
+                #   - Gmail not connected on the candidate row
+                #   - GOOGLE_CLIENT_ID / SECRET not in env
+                #   - No matching email arrives within timeout
+                # so this never causes a regression for non-Gmail candidates.
+                _click_text = ((action.selector or "") + " " + (action.click_text or "")).lower()
+                _is_submit = action.kind == "click" and bool(re.search(
+                    r"submit|apply|send application", _click_text
+                ))
+                if ok and _is_submit:
+                    try:
+                        await self._handle_email_verification(
+                            page, frame, after_epoch=_pre_exec_epoch, actions=actions
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            f"[AgentLoop] email-verification handler error "
+                            f"(non-fatal): {exc}"
+                        )
 
                 # Lever 2: persist every successful fill into field_memory so
                 # the NEXT application this candidate submits skips the LLM

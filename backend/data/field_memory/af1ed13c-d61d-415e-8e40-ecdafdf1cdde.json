@@ -1,12 +1,4 @@
 {
-  "": {
-    "count": 1,
-    "field_type": "email",
-    "label": "*",
-    "last_seen": 1782039070,
-    "source": "llm:0.90",
-    "value": "sabih0364@gmail.com"
-  },
   "ai policy for application": {
     "count": 1,
     "field_type": "select",
@@ -55,22 +47,6 @@
     "source": "llm:0.95",
     "value": "Yes"
   },
-  "email": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Email",
-    "last_seen": 1782028295,
-    "source": "rules",
-    "value": "sabih0364@gmail.com"
-  },
-  "first name": {
-    "count": 1,
-    "field_type": "text",
-    "label": "First Name",
-    "last_seen": 1782028294,
-    "source": "rules",
-    "value": "Sabih"
-  },
   "have you ever interviewed at anthropic before": {
     "count": 1,
     "field_type": "select",
@@ -87,30 +63,6 @@
     "source": "llm:0.40",
     "value": "No"
   },
-  "last name": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Last Name",
-    "last_seen": 1782028294,
-    "source": "rules",
-    "value": "Haider"
-  },
-  "location (city)": {
-    "count": 1,
-    "field_type": "select",
-    "label": "Location (City)*",
-    "last_seen": 1782051432,
-    "source": "profile_direct",
-    "value": "US"
-  },
-  "phone": {
-    "count": 1,
-    "field_type": "phone",
-    "label": "Phone",
-    "last_seen": 1782028296,
-    "source": "rules",
-    "value": "+923410084746"
-  },
   "please confirm you live in the nyc metro area": {
     "count": 1,
     "field_type": "select",
@@ -118,14 +70,6 @@
     "last_seen": 1782051435,
     "source": "llm:0.30",
     "value": "No"
-  },
-  "preferred first name": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Preferred First Name",
-    "last_seen": 1782048804,
-    "source": "profile_direct",
-    "value": "Sabih"
   },
   "what are your salary expectations": {
     "count": 1,

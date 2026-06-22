@@ -22,6 +22,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import time
@@ -63,20 +64,31 @@ DEFAULT_JOB_URL = (
 )
 
 
-CANDIDATE = {
-    "name": "Harmain Ali Butt",
-    "first_name": "Harmain",
-    "last_name": "Ali Butt",
-    "email": "harmain.alibutt+test@example.com",
-    "phone": "+1-415-555-0142",
-    "location": "San Francisco, CA, USA",
-    "linkedin_url": "https://www.linkedin.com/in/harmain-ali-butt",
-    "website": "https://github.com/harmainalibutt",
-    "experience_years": "5",
-    "tech_stack": "Python, TypeScript, React, Next.js, AWS, PostgreSQL, Docker",
-    "current_company": "Independent",
-    "current_title": "Senior Software Engineer",
-    "education": "BS Computer Science",
+# Candidate selection is now DATABASE-DRIVEN. Set TEST_CANDIDATE to any
+# substring of the candidate's name or email (e.g. "sabih", "harmain",
+# "haider@gmail") and we look them up in the `candidates` table, then pull
+# their resume + cover letter URLs from `resumes` / `applications`. The
+# resume PDF is parsed for the source-of-truth identity values (name, email,
+# phone, LinkedIn) so the form fills match what the candidate uploaded.
+#
+# Universal policy answers (LinkedIn=N/A, demographics=fixed values) are
+# enforced inside the AgentLoop regardless of which candidate is loaded.
+
+# Default profile shape — DB-driven values overwrite these on resolve.
+_DEFAULT_CANDIDATE = {
+    "name": "",
+    "first_name": "",
+    "last_name": "",
+    "email": "",
+    "phone": "",
+    "location": "",
+    "linkedin_url": "",
+    "website": "",
+    "experience_years": "",
+    "tech_stack": "",
+    "current_company": "",
+    "current_title": "",
+    "education": "",
     "salary_expectation": "Negotiable",
     "work_authorization": "Yes",
     "sponsorship": "No",
@@ -87,6 +99,152 @@ CANDIDATE = {
     "referral_source": "LinkedIn",
     "start_date": "Immediately",
 }
+CANDIDATE: dict = dict(_DEFAULT_CANDIDATE)
+RESOLVED_CANDIDATE_ID: str = ""  # set by resolve_candidate_from_db()
+
+
+async def resolve_candidate_from_db(query: str) -> str:
+    """Look up a candidate in the DB by name or email substring and populate
+    the global CANDIDATE dict + RESOLVED_CANDIDATE_ID. Returns the resolved
+    candidate UUID.
+
+    Match strategy (first hit wins):
+      1. name ILIKE %query%
+      2. email ILIKE %query%
+      3. id == query (when query is a full UUID)
+    """
+    global RESOLVED_CANDIDATE_ID, CANDIDATE
+    sys.path.insert(0, str(PROJECT_ROOT / "backend"))
+    from sqlalchemy import select, or_
+    from app.database import AsyncSessionLocal
+    from app.models.candidate import Candidate
+
+    q = (query or "").strip()
+    if not q:
+        raise RuntimeError("TEST_CANDIDATE not set — pass a name/email substring or UUID.")
+
+    # Only enable the UUID predicate when the input actually looks like one;
+    # postgres errors on `WHERE id = 'sabih'` because asyncpg validates the
+    # parameter type up-front. Hyphenated 36-char check is enough.
+    _is_uuid = bool(re.match(r"^[0-9a-fA-F-]{32,36}$", q))
+    async with AsyncSessionLocal() as session:
+        conds = [
+            Candidate.name.ilike(f"%{q}%"),
+            Candidate.email.ilike(f"%{q}%"),
+        ]
+        if _is_uuid:
+            conds.append(Candidate.id == q)
+        stmt = select(Candidate).where(or_(*conds)).limit(1)
+        cand = (await session.execute(stmt)).scalar_one_or_none()
+
+    if not cand:
+        raise RuntimeError(
+            f"No candidate in DB matching {q!r}. Run a candidates SELECT to "
+            f"see what's available."
+        )
+
+    RESOLVED_CANDIDATE_ID = str(cand.id)
+    # Build the CANDIDATE dict from whatever the DB row carries. Empty cells
+    # stay empty — the resume parser will fill them.
+    full_name = (cand.name or "").strip()
+    parts = full_name.split()
+    CANDIDATE.update({
+        "name": full_name,
+        "first_name": parts[0] if parts else "",
+        "last_name": " ".join(parts[1:]) if len(parts) > 1 else "",
+        "email": cand.email or "",
+        "phone": cand.phone or "",
+        "location": cand.location or "",
+        "linkedin_url": cand.linkedin_url or "",
+        "tech_stack": (cand.tech_stack or "") if hasattr(cand, "tech_stack") else "",
+        "work_authorization": (cand.work_auth or "Yes") if hasattr(cand, "work_auth") else "Yes",
+        "experience_years": str(cand.years_exp or "") if hasattr(cand, "years_exp") else "",
+    })
+    os.environ["TEST_CANDIDATE_ID"] = RESOLVED_CANDIDATE_ID
+    print(
+        f"[m4-ai-first-real] DB resolved candidate {full_name!r} "
+        f"id={RESOLVED_CANDIDATE_ID} email={cand.email!r}"
+    )
+    return RESOLVED_CANDIDATE_ID
+
+
+def _extract_pdf_text(path: str) -> str:
+    """Read raw text from a resume PDF. Returns "" if extraction fails.
+
+    Tries pypdf first (lightweight, pure-Python) then pdfminer for layouts
+    pypdf chokes on. Resume PDFs are usually <5 pages so we don't bother
+    with caching.
+    """
+    if not path:
+        return ""
+    try:
+        from pypdf import PdfReader
+        reader = PdfReader(path)
+        out = []
+        for page in reader.pages:
+            try:
+                out.append(page.extract_text() or "")
+            except Exception:
+                pass
+        text = "\n".join(out).strip()
+        if text:
+            return text
+    except Exception as exc:
+        print(f"[resume-parse] pypdf failed: {exc}")
+    try:
+        from pdfminer.high_level import extract_text as _pdfminer_extract
+        return (_pdfminer_extract(path) or "").strip()
+    except Exception as exc:
+        print(f"[resume-parse] pdfminer failed: {exc}")
+        return ""
+
+
+def _derive_profile_from_resume(text: str) -> dict:
+    """Best-effort regex extraction of name/email/phone/linkedin/github from
+    a resume's raw text. Lets the test pick up the candidate's real values
+    instead of using whatever was hardcoded in CANDIDATE.
+    """
+    if not text:
+        return {}
+    out: dict = {}
+    # Email — first match wins
+    m = re.search(r"\b([A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b", text)
+    if m:
+        out["email"] = m.group(1)
+    # Phone — accept +CC or local formats, 10+ digits when stripped
+    for cand in re.findall(r"(?:\+?\d[\d\-\s().]{8,}\d)", text):
+        digits = re.sub(r"\D", "", cand)
+        if 10 <= len(digits) <= 15:
+            out["phone"] = cand.strip()
+            break
+    # LinkedIn — full URL preferred
+    m = re.search(r"(https?://[^\s)]*linkedin\.com/[^\s)]+)", text, re.I)
+    if m:
+        out["linkedin_url"] = m.group(1).rstrip(".,;")
+    else:
+        m = re.search(r"\blinkedin\.com/in/[A-Za-z0-9\-_/]+", text, re.I)
+        if m:
+            out["linkedin_url"] = "https://" + m.group(0).rstrip(".,;")
+    # GitHub / website
+    m = re.search(r"(https?://[^\s)]*github\.com/[^\s)]+)", text, re.I)
+    if m:
+        out["website"] = m.group(1).rstrip(".,;")
+    # Name — first non-empty line that looks like a person's name
+    # (two-to-four capitalized words, no digits, no @, < 60 chars)
+    for line in text.splitlines()[:8]:
+        s = line.strip()
+        if not s or "@" in s or any(c.isdigit() for c in s):
+            continue
+        if len(s) > 60:
+            continue
+        words = s.split()
+        if 2 <= len(words) <= 4 and all(w[:1].isupper() for w in words if w):
+            out["name"] = s
+            parts = s.split()
+            out["first_name"] = parts[0]
+            out["last_name"] = " ".join(parts[1:])
+            break
+    return out
 
 
 async def pick_first_greenhouse_job(page, board_url: str) -> str:
@@ -141,10 +299,17 @@ async def main():
     from app.models.resume import Resume
     from app.models.application import Application
 
-    TEST_CANDIDATE_ID = os.getenv(
-        "TEST_CANDIDATE_ID",
-        "28052ebd-5e0c-41cb-a803-23e315ff56fb",  # Harmain Ali in your DB
-    )
+    # DB-driven candidate resolution. TEST_CANDIDATE can be a name/email
+    # substring (e.g. "sabih") or a full UUID. We look the row up in the
+    # `candidates` table and populate the CANDIDATE dict from it. Falls back
+    # to TEST_CANDIDATE_ID for backward compatibility if TEST_CANDIDATE
+    # isn't set.
+    _query = os.getenv("TEST_CANDIDATE") or os.getenv("TEST_CANDIDATE_ID") or "harmain"
+    try:
+        TEST_CANDIDATE_ID = await resolve_candidate_from_db(_query)
+    except Exception as exc:
+        logger.error(f"[m4-ai-first-real] candidate lookup failed: {exc}")
+        raise
     logger.info(f"Fetching files from Supabase for candidate_id={TEST_CANDIDATE_ID}")
 
     resume_supabase_url = None
@@ -286,6 +451,68 @@ async def main():
             raise RuntimeError(f"Failed to download resume from {resume_supabase_url}")
         logger.info(f"Resume downloaded to temp: {resume_path}")
 
+    # ── Extract resume content + override profile from it ──────────────────
+    # "AI is the master" — instead of trusting the hardcoded CANDIDATE dict,
+    # parse the actual resume PDF and let the agent see its real contents.
+    # We also auto-populate name / email / phone / linkedin from the parsed
+    # text so the form fills match the resume the candidate actually uploaded
+    # (mismatch between dict and resume = ATS-side rejection).
+    resume_text = _extract_pdf_text(resume_path)
+    if resume_text:
+        derived = _derive_profile_from_resume(resume_text)
+        if derived:
+            logger.info(
+                f"[resume-parse] derived from resume → "
+                + ", ".join(f"{k}={v!r}" for k, v in derived.items() if v)
+            )
+            # Overwrite CANDIDATE fields with resume-derived values.
+            # Resume wins over the hardcoded dict — that's the whole point.
+            for k, v in derived.items():
+                if v:
+                    CANDIDATE[k] = v
+            # ── Sync the per-candidate memory file ──────────────────────────
+            # The form-fill memory layer recalls these values via per-candidate
+            # JSON. If a previous session memorized a different name/email/
+            # phone for this candidate (e.g. an older resume), those stale
+            # values would pre-fill BEFORE the AI ever sees the resume —
+            # which is the "form still shows Harmain" bug we hit. Refresh
+            # the file from the resume so memory and resume agree.
+            try:
+                from app.browser_automation.forms import memory as _fm
+                _cand_id = RESOLVED_CANDIDATE_ID
+                _label_map = {
+                    "name": ("Name", derived.get("name")),
+                    "first_name": ("First Name", derived.get("first_name")),
+                    "last_name": ("Last Name", derived.get("last_name")),
+                    "email": ("Email", derived.get("email")),
+                    "phone": ("Phone", derived.get("phone")),
+                    "linkedin_url": ("LinkedIn Profile", derived.get("linkedin_url")),
+                    "website": ("Website", derived.get("website")),
+                }
+                for _, (lbl, val) in _label_map.items():
+                    if val:
+                        try:
+                            _fm.remember(
+                                label=lbl,
+                                field_type="text",
+                                value=val,
+                                source="resume_parse",
+                                candidate_id=_cand_id,
+                            )
+                        except Exception as exc:
+                            logger.debug(f"[resume-parse] memory sync {lbl} failed: {exc}")
+                logger.info(
+                    f"[resume-parse] synced per-candidate memory file for {_cand_id[:8]}"
+                )
+            except Exception as exc:
+                logger.warning(f"[resume-parse] memory sync skipped: {exc}")
+        CANDIDATE["_resume_text"] = resume_text[:6000]  # cap for prompt size
+    else:
+        logger.warning(
+            "[resume-parse] could NOT extract text from resume PDF — "
+            "falling back to hardcoded CANDIDATE dict values."
+        )
+
     cover_letter_path = None
     if cover_letter_supabase_url:
         cover_letter_path = await _resolve_file_to_local_path(cover_letter_supabase_url, ".pdf")
@@ -351,7 +578,11 @@ async def main():
                 # Lever 2: enable per-candidate memory recall across runs.
                 # Second invocation of this test reuses memorized field values
                 # and skips the LLM for identity fields.
-                candidate_id="m4-test-harmain-ali-butt",
+                # MUST track the selected profile — was hardcoded to Harmain
+                # which caused his memorized name/email/phone to be pre-filled
+                # into Sabih's session (the "form filled with Harmain even when
+                # TEST_CANDIDATE=sabih" bug).
+                candidate_id=RESOLVED_CANDIDATE_ID,
                 # Honor DRY_RUN_NO_SUBMIT — when true, the AI verifies the
                 # form is complete via the pre-submit gate, then exits before
                 # actually clicking submit. When false, it really files.

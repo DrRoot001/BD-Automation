@@ -48,8 +48,18 @@ _IDENTITY_PATTERNS = [
         r"\bcurrent\s+(job\s+title|company|employer)\b",
         r"\bwebsite\b|\bportfolio\b|\bgithub\b",
         r"\baddress\b",
-        r"\blocation\b|\bcity\b",
+        r"\blocation\b|\bcity\b|\bcountry\b",
         r"\bdate\s+of\s+birth\b|\bbirth\s*day\b",
+        # Candidate-specific demographic / gender / race / orientation answers
+        # are inferred from the candidate (e.g. gender from first name); they
+        # MUST stay per-candidate so candidate A's "Male" doesn't get recalled
+        # for candidate B who is female.
+        r"\bgender\b|\bracial\b|\brace\b|\bethnic\b|\bsexual\s+orient",
+        r"\btransgender\b|\bhispanic\b|\blatino\b",
+        # Work authorization / sponsorship answers depend on the candidate's
+        # country of residence — keep per-candidate too.
+        r"\b(authoriz|authoris).+\bwork\b",
+        r"\b(sponsor|visa)\b",
         # The canonical alias forms emitted by _normalize_label
         r"^current job title$",
         r"^current company / employer$",
@@ -142,15 +152,23 @@ def recall(
 
     Lookup order:
       1. The candidate's own memory file (always consulted first).
-      2. The shared __global__.json — ONLY for non-identity fields.
+      2. The shared __global__.json — ONLY for non-identity fields, AND only
+         when STRICT_MEMORY_ISOLATION is NOT enabled.
 
-    Identity-bearing labels (name/email/phone/etc.) skip the global namespace
-    so candidate A's name can never leak into candidate B's run.
+    Identity-bearing labels (name/email/phone/etc.) ALWAYS skip the global
+    namespace. In addition, setting env var `STRICT_MEMORY_ISOLATION=true`
+    disables ALL global recall — every answer must come from this
+    candidate's own file. Use this when you're testing multiple candidates
+    back-to-back and don't want ANY cross-candidate bleed (a referral
+    source, a country preference, an acknowledgment text from candidate A
+    being recalled into candidate B's run).
     """
     if not label:
         return None
     key = _normalize_label(label)
     is_identity = _is_identity_field(key)
+    strict = (os.getenv("STRICT_MEMORY_ISOLATION", "").lower()
+              in ("1", "true", "yes", "on"))
 
     with _lock:
         # Per-candidate first
@@ -164,8 +182,10 @@ def recall(
                         f"[Memory] Recalled '{ans}' for '{label}' (cand={_safe_cid(candidate_id)[:8]}, seen {entry.get('count',1)}x)"
                     )
                     return ans
-        # Fall back to global ONLY for non-identity fields
-        if not is_identity:
+        # Fall back to global ONLY for non-identity fields AND only when
+        # strict isolation is off. The strict mode is a hard guarantee that
+        # nothing from another candidate's session can re-surface here.
+        if not is_identity and not strict:
             mem = _load(_memory_path(None))
             entry = mem.get(key)
             if entry:

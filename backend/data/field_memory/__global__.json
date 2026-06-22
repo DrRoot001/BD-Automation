@@ -16,10 +16,10 @@
     "value": "Yes"
   },
   "are you a veteran or active member of the united states armed forces": {
-    "count": 16,
+    "count": 1,
     "field_type": "text",
     "label": "Are you a veteran or active member of the United States Armed Forces?",
-    "last_seen": 1782156595,
+    "last_seen": 1782159416,
     "source": "agent_loop",
     "value": "No"
   },
@@ -32,18 +32,18 @@
     "value": "No"
   },
   "are you currently based in any of these countries": {
-    "count": 26,
+    "count": 28,
     "field_type": "text",
     "label": "Are you currently based in any of these countries?",
-    "last_seen": 1782156566,
+    "last_seen": 1782159323,
     "source": "agent_loop",
     "value": "United States"
   },
   "are you currently based in any of these countries please note these are the onl": {
-    "count": 3,
+    "count": 4,
     "field_type": "text",
     "label": "Are you currently based in any of these countries? Please note these are the onl",
-    "last_seen": 1782153411,
+    "last_seen": 1782163725,
     "source": "agent_loop",
     "value": "United States"
   },
@@ -62,30 +62,6 @@
     "last_seen": 1781982795,
     "source": "manual",
     "value": "No"
-  },
-  "are you hispanic/latino": {
-    "count": 1,
-    "field_type": "select",
-    "label": "Are you Hispanic/Latino?",
-    "last_seen": 1782028454,
-    "source": "llm:0.70",
-    "value": "Prefer not to answer"
-  },
-  "are you hispanic/latino?": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Are you Hispanic/Latino?",
-    "last_seen": 1781982798,
-    "source": "llm:0.90",
-    "value": "Prefer not to answer"
-  },
-  "are you legally authorized to work in the country where the job is located?": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Are you legally authorized to work in the country where the job is located?*",
-    "last_seen": 1781982796,
-    "source": "llm:0.95",
-    "value": "Yes"
   },
   "are you legally authorized to work in the united states?": {
     "count": 1,
@@ -136,10 +112,10 @@
     "value": "Yes"
   },
   "by submitting my application, i acknowledge that i have read and understand verc": {
-    "count": 4,
+    "count": 5,
     "field_type": "text",
     "label": "By submitting my application, I acknowledge that I have read and understand Verc",
-    "last_seen": 1782156569,
+    "last_seen": 1782158604,
     "source": "agent_loop",
     "value": "Yes"
   },
@@ -152,12 +128,12 @@
     "value": "Yes"
   },
   "by submitting my application, i acknowledge that i have read and understand vercel's job applicant privacy notice": {
-    "count": 26,
+    "count": 27,
     "field_type": "text",
     "label": "By submitting my application, I acknowledge that I have read and understand Vercel's Job Applicant Privacy Notice",
-    "last_seen": 1782155349,
+    "last_seen": 1782159339,
     "source": "agent_loop",
-    "value": "Yes"
+    "value": "I acknowledge"
   },
   "by submitting my application, i acknowledge that i have read and understand vercel's privacy policy": {
     "count": 3,
@@ -174,14 +150,6 @@
     "last_seen": 1782119829,
     "source": "agent_loop",
     "value": "on"
-  },
-  "country": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Country",
-    "last_seen": 1781982792,
-    "source": "llm:0.95",
-    "value": "United States"
   },
   "degree": {
     "count": 1,
@@ -200,10 +168,10 @@
     "value": "Prefer not to answer"
   },
   "do you have a disability or chronic condition": {
-    "count": 15,
+    "count": 17,
     "field_type": "text",
     "label": "Do you have a disability or chronic condition",
-    "last_seen": 1782156599,
+    "last_seen": 1782159425,
     "source": "agent_loop",
     "value": "No"
   },
@@ -239,14 +207,6 @@
     "source": "llm:0.95",
     "value": "Yes"
   },
-  "do you identify as transgender": {
-    "count": 18,
-    "field_type": "text",
-    "label": "Do you identify as transgender?",
-    "last_seen": 1782156591,
-    "source": "agent_loop",
-    "value": "No"
-  },
   "do you live in santiago?": {
     "count": 1,
     "field_type": "radio",
@@ -270,14 +230,6 @@
     "last_seen": 1782075699,
     "source": "screening",
     "value": "2024"
-  },
-  "gender": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Gender",
-    "last_seen": 1781982797,
-    "source": "llm:0.90",
-    "value": "Prefer not to answer"
   },
   "have you been employed by cockroach labs in the past": {
     "count": 1,
@@ -351,54 +303,6 @@
     "source": "screening",
     "value": "Not provided in candidate profile - work history reflects individual contributor and technical leadership roles, not people management experience"
   },
-  "how would you describe your gender identity": {
-    "count": 2,
-    "field_type": "text",
-    "label": "How would you describe your gender identity?",
-    "last_seen": 1782151647,
-    "source": "agent_loop",
-    "value": "Male"
-  },
-  "how would you describe your gender identity (mark all that apply)": {
-    "count": 19,
-    "field_type": "text",
-    "label": "How would you describe your gender identity? (mark all that apply)",
-    "last_seen": 1782156576,
-    "source": "agent_loop",
-    "value": "Man"
-  },
-  "how would you describe your racial/ethnic background": {
-    "count": 2,
-    "field_type": "text",
-    "label": "How would you describe your racial/ethnic background?",
-    "last_seen": 1782151656,
-    "source": "agent_loop",
-    "value": "South Asian"
-  },
-  "how would you describe your racial/ethnic background (mark all that apply)": {
-    "count": 16,
-    "field_type": "text",
-    "label": "How would you describe your racial/ethnic background? (mark all that apply)",
-    "last_seen": 1782156580,
-    "source": "agent_loop",
-    "value": "South Asian"
-  },
-  "how would you describe your sexual orientation": {
-    "count": 2,
-    "field_type": "text",
-    "label": "How would you describe your sexual orientation?",
-    "last_seen": 1782151660,
-    "source": "agent_loop",
-    "value": "Heterosexual"
-  },
-  "how would you describe your sexual orientation (mark all that apply)": {
-    "count": 16,
-    "field_type": "text",
-    "label": "How would you describe your sexual orientation? (mark all that apply)",
-    "last_seen": 1782156588,
-    "source": "agent_loop",
-    "value": "Heterosexual"
-  },
   "i confirm and agree": {
     "count": 1,
     "field_type": "checkbox",
@@ -416,12 +320,12 @@
     "value": "No"
   },
   "please double-check all the information provided above": {
-    "count": 4,
+    "count": 5,
     "field_type": "text",
     "label": "Please double-check all the information provided above",
-    "last_seen": 1782155866,
+    "last_seen": 1782159346,
     "source": "agent_loop",
-    "value": "Yes"
+    "value": "I confirm"
   },
   "please double-check all the information provided above. ensuring accuracy is cru": {
     "count": 1,
@@ -432,10 +336,10 @@
     "value": "I have reviewed all information and confirm accuracy"
   },
   "please double-check all the information provided above. ensuring accuracy is crucial": {
-    "count": 10,
+    "count": 11,
     "field_type": "text",
     "label": "Please double-check all the information provided above. Ensuring accuracy is crucial",
-    "last_seen": 1782156573,
+    "last_seen": 1782158608,
     "source": "agent_loop",
     "value": "Yes"
   },
@@ -470,22 +374,6 @@
     "last_seen": 1782138587,
     "source": "agent_loop",
     "value": "Yes, I have 5 years of experience as a Senior Software Engineer working on backend systems with Python, TypeScript, AWS, PostgreSQL, and Docker in production environments."
-  },
-  "veteran status": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Veteran Status",
-    "last_seen": 1781982798,
-    "source": "llm:0.90",
-    "value": "Prefer not to answer"
-  },
-  "visa sponsorship": {
-    "count": 5,
-    "field_type": "text",
-    "label": "Will you require Visa Sponsorship now, or in the future?*",
-    "last_seen": 1782152936,
-    "source": "agent_loop",
-    "value": "No"
   },
   "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
     "count": 1,
@@ -550,30 +438,6 @@
     "last_seen": 1782028431,
     "source": "llm:0.40",
     "value": "I am highly interested in contributing to cutting-edge AI research and development at Anthropic. My experience as a Frontend Engineer aligns well with the innovative work being done here, and I am eager to apply my skills to impactful projects."
-  },
-  "will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?": {
-    "count": 1,
-    "field_type": "text",
-    "label": "Will you now or in the future require company sponsorship to retain or extend your work authorization in the country where the job is located?*",
-    "last_seen": 1781982797,
-    "source": "llm:0.95",
-    "value": "No"
-  },
-  "will you now or in the future require sponsorship for a visa?": {
-    "count": 1,
-    "field_type": "radio",
-    "label": "Will you now or in the future require sponsorship for a visa? *",
-    "last_seen": 1781982235,
-    "source": "llm:0.95",
-    "value": "No"
-  },
-  "will you require visa sponsorship now, or in the future": {
-    "count": 5,
-    "field_type": "text",
-    "label": "Will you require Visa Sponsorship now, or in the future?*",
-    "last_seen": 1782156612,
-    "source": "agent_loop",
-    "value": "No"
   },
   "years of experience": {
     "count": 1,
