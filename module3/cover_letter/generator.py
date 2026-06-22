@@ -35,7 +35,7 @@ Output ONLY a valid JSON object — no markdown, no preamble — in this schema:
 
 STRICT RULES:
 1. ONE PARAGRAPH ONLY: You MUST output exactly ONE string inside the "paragraphs" array. Combine your opening, achievements, and call to action into a single cohesive block of text.
-2. WORD COUNT (CRITICAL): The total word count of this single paragraph MUST be strictly between 100 and 120 words. Count carefully before outputting.
+2. WORD COUNT (CRITICAL): The total word count of this single paragraph MUST be strictly between 120+ words. Count carefully before outputting.
 3. Content: State your expertise, integrate 2-3 specific numeric achievements from the resume that map to the job, and end with a strong call to action.
 4. Tone: Confident, direct, zero filler phrases. Mirror keywords from the job description naturally.
 """
@@ -63,21 +63,15 @@ async def generate_cover_letter(
         f"Work Experience History:\n{experience_text}\n"
     )
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key)
-    loop = asyncio.get_event_loop()
+    from module3.utils.gemini import generate_content_with_retry
+    
+    full_prompt = f"SYSTEM INSTRUCTION:\n{_COVER_LETTER_SYSTEM}\n\n{user_prompt}"
 
     try:
-        response = await loop.run_in_executor(
-            None,
-            lambda: client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=user_prompt,
-                config=genai_types.GenerateContentConfig(
-                    system_instruction=_COVER_LETTER_SYSTEM,
-                    temperature=0.2, # Lowered temperature strictly enforces word count and schema limits
-                ),
-            )
+        response = await generate_content_with_retry(
+            contents=full_prompt,
+            temperature=0.2,
+            response_mime_type="application/json"
         )
         
         raw_text = response.text.strip()

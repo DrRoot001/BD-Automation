@@ -385,13 +385,14 @@ async def execute_tailoring_pipeline(candidate_id: str, job_id: str) -> Dict[str
         candidate_id=candidate_id,
         job_id=job_id,
         base_resume_pdf_path=RESUME_PDF,
-        api_base_url=API_BASE,
+        api_base_url=API_BASE.replace("/api", ""),
         skip_gate=True
     )
     
     log_success("Tailoring pipeline finished.")
     logger.info(f"Application Package ID: {result.get('application_id')}")
     logger.info(f"Tailored Resume ID    : {result.get('tailored_resume_id')}")
+    logger.info(f"Tailored Resume URL   : {result.get('resume_pdf_url')}")
     logger.info(f"Cover Letter URL     : {result.get('cover_letter_url')}")
     logger.info(f"Screening Answers    : {result.get('screening_answers')}")
     return result

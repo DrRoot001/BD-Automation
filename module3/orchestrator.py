@@ -28,7 +28,8 @@ async def orchestrate_application_package(
     job_id: str,
     base_resume_pdf_path: Optional[str] = None,
     screening_questions: Optional[List[str]] = None,
-    api_base_url: str = "http://127.0.0.1:8000"
+    api_base_url: str = "http://127.0.0.1:8000",
+    skip_gate: bool = False
 ) -> Dict[str, any]:
     """
     Orchestrate candidate application flow:
@@ -147,7 +148,7 @@ async def orchestrate_application_package(
         print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
         
         # Check Gate Threshold
-        if not match_result.should_apply:
+        if not match_result.should_apply and not skip_gate:
             print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
             
             # Transition to ANALYZED
@@ -316,6 +317,7 @@ async def orchestrate_application_package(
             "application_id": app_id,
             "match_result": match_result.model_dump(mode="json"),
             "tailored_resume_id": tailored_resume_id,
+            "resume_pdf_url": resume_pdf_url,
             "cover_letter_url": cover_letter_url,
             "screening_answers": screening_answers
         }

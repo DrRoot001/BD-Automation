@@ -31,6 +31,22 @@
     "source": "llm:0.90",
     "value": "Online"
   },
+  "how did you hear about this opportunity": {
+    "count": 1,
+    "field_type": "select",
+    "label": "How did you hear about this opportunity?*",
+    "last_seen": 1782144117,
+    "source": "rules",
+    "value": "Online"
+  },
+  "i understand my application will be processed in accordance with datadog’s candidate privacy policy": {
+    "count": 1,
+    "field_type": "select",
+    "label": "I understand my application will be processed in accordance with Datadog’s Candidate Privacy Policy.*",
+    "last_seen": 1782144110,
+    "source": "rules",
+    "value": "Yes"
+  },
   "last name": {
     "count": 1,
     "field_type": "text",
@@ -78,5 +94,13 @@
     "last_seen": 1782053490,
     "source": "profile_direct",
     "value": "Harmain"
+  },
+  "search careers by role, location, or keyword": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Search careers by role, location, or keyword",
+    "last_seen": 1782142370,
+    "source": "profile_direct",
+    "value": "US"
   }
 }
