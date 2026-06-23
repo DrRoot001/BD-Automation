@@ -202,6 +202,8 @@ async def _ask_llm_for_values(
     """Returns {field_id: {value, confidence, reason}}. Raises LLMUnavailable."""
     prompt = _build_llm_prompt(fields, profile, screening_answers, job_context)
     client = get_gemini()
+    from ..llm import telemetry as _tele
+    _tele.set_label("llm_filler.batch")
     data = await client.generate_json(prompt, temperature=0.1, timeout_s=30.0)
     answers = (data or {}).get("answers") or []
     out: Dict[int, Dict[str, Any]] = {}

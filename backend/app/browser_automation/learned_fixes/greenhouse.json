@@ -1,11 +1,11 @@
 {
   "_meta": {
     "ats": "greenhouse",
-    "last_updated": 1782056146
+    "last_updated": 1782075604
   },
   "apply_button": [
-    "button:has-text('Apply Here!')",
     "button:has-text('Apply Here')",
+    "button:has-text('Apply Here!')",
     "button:has-text('Submit')"
   ]
 }

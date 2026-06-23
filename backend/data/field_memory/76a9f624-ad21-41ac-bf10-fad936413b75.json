@@ -1,0 +1,266 @@
+{
+  "a verification code was sent to sabih0364@gmail.com. to submit your application,": {
+    "count": 2,
+    "field_type": "text",
+    "label": "A verification code was sent to sabih0364@gmail.com. To submit your application,",
+    "last_seen": 1782186242,
+    "source": "agent_loop",
+    "value": " "
+  },
+  "are you a veteran or active member of the united states armed forces": {
+    "count": 10,
+    "field_type": "text",
+    "label": "Are you a veteran or active member of the United States Armed Forces?",
+    "last_seen": 1782218166,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you authorized to work in the uk": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Are you authorized to work in the UK?*",
+    "last_seen": 1782218157,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you currently based in any of these countries please note these are the onl": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the onl",
+    "last_seen": 1782188118,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the only": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the only",
+    "last_seen": 1782187466,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the only countries where we are able to offer employment": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the only countries where we are able to offer employment",
+    "last_seen": 1782184346,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "are you currently based in any of these countries please note these are the only countries where we are accepting applications": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you currently based in any of these countries? Please note these are the only countries where we are accepting applications",
+    "last_seen": 1782183711,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "by submitting my application, i acknowledge that i have read and understand verc": {
+    "count": 7,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Verc",
+    "last_seen": 1782188230,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel’s job applicant privacy notice": {
+    "count": 2,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel’s Job Applicant Privacy Notice.",
+    "last_seen": 1782218146,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "by submitting my application, i acknowledge that i have read and understand vercel’s job applicant privacy policy and that my personal data may be transferred to vercel or our service providers located in the united states or other countries, and that i understand my rights regarding my personal data, as stated in the policy, in any way": {
+    "count": 1,
+    "field_type": "text",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel’s Job Applicant Privacy Policy and that my personal data may be transferred to Vercel or our service providers located in the United States or other countries, and that I understand my rights regarding my personal data, as stated in the policy, in any way.",
+    "last_seen": 1782217692,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "country": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Country*",
+    "last_seen": 1782163317,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning?",
+    "last_seen": 1782183739,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, cognitive, or mental health conditions)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, or mental health conditions)?",
+    "last_seen": 1782188197,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, cognitive, or mental health)": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, or mental health)?",
+    "last_seen": 1782187742,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, cognitive, or other)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, cognitive, or other)?",
+    "last_seen": 1782184442,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you have a disability or chronic condition (physical, visual, auditory, mental, emotional, or other) that substantially limits one or more of your activities, including mobility, communication (seeing, hearing, speaking, learning)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have a disability or chronic condition (physical, visual, auditory, mental, emotional, or other) that substantially limits one or more of your activities, including mobility, communication (seeing, hearing, speaking, learning)?",
+    "last_seen": 1782186200,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you identify as transgender": {
+    "count": 7,
+    "field_type": "text",
+    "label": "Do you identify as transgender?",
+    "last_seen": 1782188161,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "email": {
+    "count": 13,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1782220085,
+    "source": "resume_parse",
+    "value": "sabih0364@gmail.com"
+  },
+  "first name": {
+    "count": 13,
+    "field_type": "text",
+    "label": "First Name",
+    "last_seen": 1782220085,
+    "source": "resume_parse",
+    "value": "Sabih"
+  },
+  "how would you describe your gender identity (mark all that apply)": {
+    "count": 8,
+    "field_type": "text",
+    "label": "How would you describe your gender identity? (mark all that apply)",
+    "last_seen": 1782188193,
+    "source": "agent_loop",
+    "value": "Male"
+  },
+  "how would you describe your racial/ethnic background (mark all that apply)": {
+    "count": 7,
+    "field_type": "text",
+    "label": "How would you describe your racial/ethnic background? (mark all that apply)",
+    "last_seen": 1782188141,
+    "source": "agent_loop",
+    "value": "South Asian"
+  },
+  "how would you describe your sexual orientation (mark all that apply)": {
+    "count": 7,
+    "field_type": "text",
+    "label": "How would you describe your sexual orientation? (mark all that apply)",
+    "last_seen": 1782188145,
+    "source": "agent_loop",
+    "value": "Heterosexual"
+  },
+  "last name": {
+    "count": 13,
+    "field_type": "text",
+    "label": "Last Name",
+    "last_seen": 1782220085,
+    "source": "resume_parse",
+    "value": "Haider"
+  },
+  "linkedin profile": {
+    "count": 12,
+    "field_type": "text",
+    "label": "LinkedIn Profile",
+    "last_seen": 1782220085,
+    "source": "policy_override",
+    "value": "N/A"
+  },
+  "name": {
+    "count": 12,
+    "field_type": "text",
+    "label": "Name",
+    "last_seen": 1782220085,
+    "source": "resume_parse",
+    "value": "Sabih Haider"
+  },
+  "phone": {
+    "count": 12,
+    "field_type": "text",
+    "label": "Phone",
+    "last_seen": 1782220085,
+    "source": "resume_parse",
+    "value": "+13410084746"
+  },
+  "please double-check all the information provided above. ensuring accuracy is cru": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is cru",
+    "last_seen": 1782188263,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial.",
+    "last_seen": 1782187533,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial, as any errors": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial, as any errors",
+    "last_seen": 1782218152,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "please double-check all the information provided above. ensuring accuracy is crucial, as any errors or omissions may impact the review of your application": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Please double-check all the information provided above. Ensuring accuracy is crucial, as any errors or omissions may impact the review of your application.",
+    "last_seen": 1782185297,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "security code": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Security code",
+    "last_seen": 1782186240,
+    "source": "agent_loop",
+    "value": "123456"
+  },
+  "where did you first hear about this role": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Where did you first hear about this role?*",
+    "last_seen": 1782218798,
+    "source": "agent_loop",
+    "value": "LinkedIn"
+  },
+  "will you require visa sponsorship now, or in the future": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Will you require Visa Sponsorship now, or in the future?*",
+    "last_seen": 1782188243,
+    "source": "agent_loop",
+    "value": "No"
+  }
+}

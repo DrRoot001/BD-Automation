@@ -10,6 +10,9 @@ class ApplicationPackage(BaseModel):
     job_url: str
     platform: str
     ats_type: Optional[str] = None
+    # Hiring-company name. Used by the AgentLoop to anchor the AI on the actual
+    # employer when answering screening questions like "Why this company?".
+    company: Optional[str] = None
     resume_url: str
     cover_letter_url: Optional[str] = None
     # All keys the form filler may need: name, first_name, last_name, email, phone,

@@ -168,8 +168,19 @@ class BrowserContextManager:
             # that bypasses CloudFront/Akamai WAF bot detection which blocks bundled Chromium.
             # headless=False avoids the HeadlessChrome user-agent token and related signals.
             headless = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
+            # PLAYWRIGHT_SLOW_MO=250 inserts a 250ms pause between every Playwright
+            # action (click, fill, etc.) so a human can actually watch the run.
+            # Default 0 = full speed. Set when demoing or debugging visually.
+            slow_mo_ms = int(os.getenv("PLAYWRIGHT_SLOW_MO", "0") or "0")
+            logger.info(
+                f"[Browser] Launching Chrome — headless={headless} "
+                f"slow_mo={slow_mo_ms}ms "
+                f"(set PLAYWRIGHT_HEADLESS=true to hide, "
+                f"PLAYWRIGHT_SLOW_MO=300 to slow down for watching)"
+            )
             launch_kwargs = dict(
                 headless=headless,
+                slow_mo=slow_mo_ms,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
@@ -177,6 +188,9 @@ class BrowserContextManager:
                     "--no-default-browser-check",
                     "--disable-extensions-except=",
                     "--start-maximized",
+                    # Force the window to the top-left of your primary monitor
+                    # so it doesn't end up off-screen on multi-monitor setups
+                    "--window-position=0,0",
                 ],
             )
             # Prefer the real installed Chrome; fall back to bundled Chromium if unavailable
