@@ -397,9 +397,41 @@ class CaptchaService:
                     # exposed to scripts; the DOM widget commits on its own.)
                     await self._inject_recaptcha_token(page, ai_sol.token)
                 return ai_sol
-            logger.info(f"[CAPTCHA] AI solver did not succeed; falling through to provider={self.provider}")
+            logger.info(f"[CAPTCHA] AI solver did not succeed; trying audio-challenge (Whisper)…")
         except Exception as exc:
             logger.warning(f"[CAPTCHA] AI solver raised (non-fatal): {exc}")
+
+        # ── Phase 0.5: Whisper-based audio-challenge solver ─────────────────
+        # Technique vendored from https://github.com/ibedevesh/capsolver (MIT).
+        # Runs entirely offline once the Whisper model is downloaded; no
+        # API key required. Only applies to reCAPTCHA v2.
+        if captcha_type == "recaptcha_v2":
+            try:
+                from .audio_solver import (
+                    detect_recaptcha_v2, solve_recaptcha_v2_via_audio,
+                )
+                if await detect_recaptcha_v2(page):
+                    audio_res = await solve_recaptcha_v2_via_audio(page, max_retries=2)
+                    if audio_res.success:
+                        logger.info(
+                            f"[CAPTCHA] Whisper audio solver SUCCEEDED — "
+                            f"token_len={len(audio_res.token or '')}"
+                        )
+                        return CaptchaSolution(
+                            captcha_type=captcha_type,
+                            token=audio_res.token or "audio_solved",
+                            success=True,
+                            solve_time_seconds=0,
+                            cost_usd=0,
+                        )
+                    logger.info(
+                        f"[CAPTCHA] Whisper audio solver did not succeed: "
+                        f"{audio_res.error!r}; falling through to provider={self.provider}"
+                    )
+                else:
+                    logger.debug("[CAPTCHA] no reCAPTCHA v2 widget on page; skipping Whisper")
+            except Exception as exc:
+                logger.warning(f"[CAPTCHA] Whisper audio solver raised (non-fatal): {exc}")
 
         last: Optional[CaptchaSolution] = None
 

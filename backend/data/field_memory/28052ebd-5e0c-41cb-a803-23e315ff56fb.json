@@ -1,9 +1,9 @@
 {
   "email": {
-    "count": 3,
+    "count": 5,
     "field_type": "text",
     "label": "Email",
-    "last_seen": 1782136802,
+    "last_seen": 1782215867,
     "source": "agent_loop",
     "value": "harmain.dev@gmail.com"
   },
@@ -16,11 +16,11 @@
     "value": "2024"
   },
   "first name": {
-    "count": 1,
+    "count": 3,
     "field_type": "text",
     "label": "First Name",
-    "last_seen": 1782053487,
-    "source": "profile_direct",
+    "last_seen": 1782215859,
+    "source": "agent_loop",
     "value": "Harmain"
   },
   "have you been employed by cockroach labs in the past": {
@@ -56,20 +56,20 @@
     "value": "Not provided in candidate profile - work history reflects individual contributor and technical leadership roles, not people management experience"
   },
   "last name": {
-    "count": 1,
+    "count": 3,
     "field_type": "text",
     "label": "Last Name",
-    "last_seen": 1782053489,
-    "source": "profile_direct",
+    "last_seen": 1782215862,
+    "source": "agent_loop",
     "value": "Ali"
   },
   "linkedin profile": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
-    "label": "LinkedIn Profile:",
-    "last_seen": 1782075700,
-    "source": "screening",
-    "value": "Not provided in candidate profile"
+    "label": "LinkedIn Profile",
+    "last_seen": 1782215827,
+    "source": "policy_override",
+    "value": "N/A"
   },
   "location (city)": {
     "count": 1,
@@ -79,13 +79,29 @@
     "source": "profile_direct",
     "value": "US"
   },
-  "phone": {
+  "name": {
     "count": 1,
-    "field_type": "phone",
+    "field_type": "text",
+    "label": "Name",
+    "last_seen": 1782215827,
+    "source": "resume_parse",
+    "value": "Harmain Ali"
+  },
+  "phone": {
+    "count": 2,
+    "field_type": "text",
     "label": "Phone",
-    "last_seen": 1782053492,
-    "source": "profile_direct",
+    "last_seen": 1782215827,
+    "source": "resume_parse",
     "value": "+1 (650) 555-1234"
+  },
+  "pick your favorite color": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Pick your favorite color",
+    "last_seen": 1782215872,
+    "source": "agent_loop",
+    "value": "Red"
   },
   "please confirm you live near our new york city office location and understand the in-office expectation of mondays, tuesdays and thursdays": {
     "count": 1,

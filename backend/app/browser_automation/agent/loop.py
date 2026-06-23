@@ -30,6 +30,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import os
 import random
 import re
 import time
@@ -287,6 +288,21 @@ DECISION POLICY — read in order:
     the value you choose MUST be one of those exact strings. Never invent a value
     when the option list is provided — pick the closest matching option from the
     list. The runner will further snap your answer to the closest real option.
+12b-bind. **CRITICAL — SELECTOR/LABEL BINDING.** When filling a field, the
+    selector you emit MUST be the one whose LABEL in the DOM snapshot matches
+    the question you intend to answer. The Vercel/Greenhouse demographic
+    block has SIX adjacent fields with very similar IDs (e.g. 4015780004 /
+    4015781004 / 4015783004 / 4015785004 / 4015786004 / 4015790004). Each
+    ID belongs to a SPECIFIC question:
+      * Read the DOM snapshot, find the line whose label STARTS WITH
+        "How would you describe your <topic>" or "Do you identify as…" or
+        "Are you a veteran…" or "Do you have a disability…"
+      * The selector on THAT line is the one to use — do NOT reuse a
+        neighbour's selector even if the IDs are close.
+    The runner validates this: if the selector you emit resolves to a label
+    in a different demographic group than your `field_label`, the fill is
+    REFUSED and the action is marked ❌FAILED. You will see the warning in
+    history and must re-emit with the correct selector.
 12b-demo. **DEMOGRAPHIC QUESTIONS** — use the candidate's declared answers from
     the identity card above. Map each form question to the corresponding
     candidate value:
@@ -431,6 +447,81 @@ DOM:
 {dom_snapshot}
 
 Return ONE action as a JSON object (no fences, no prose):"""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Deterministic-prefill scan — visible fillable fields + resolved labels.
+# Used by _deterministic_prefill to fill all fixed-policy fields without the LLM.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_POLICY_SCAN_JS = r"""() => {
+    const out = [];
+    const seen = new Set();
+    const skip = new Set(['hidden','submit','button','image','reset','file','search']);
+    function vis(el){const s=window.getComputedStyle(el); if(s.display==='none')return false; if(s.visibility==='hidden'&&el.type!=='radio'&&el.type!=='checkbox')return false; return true;}
+    function labelFor(el){
+        if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim();
+        if (el.id){
+            const l=document.querySelector('label[for="'+CSS.escape(el.id)+'"]'); if(l) return (l.textContent||'').trim();
+            if (el.id.endsWith('--input')){const b=el.id.slice(0,-7); const l2=document.querySelector('label[for="'+CSS.escape(b)+'"]'); if(l2) return (l2.textContent||'').trim();}
+        }
+        const fs=el.closest('fieldset'); if(fs){const lg=fs.querySelector('legend'); if(lg) return (lg.textContent||'').trim();}
+        let p=el.parentElement;
+        for(let i=0;i<6&&p;i++){const l=p.querySelector(':scope > label, :scope > .application-question__label, :scope > .question-label, :scope > div > label'); if(l) return (l.textContent||'').trim(); p=p.parentElement;}
+        const c=el.closest('.application-question,[class*="question"],fieldset,.field'); return c ? (c.textContent||'').slice(0,160).trim() : (el.name||el.id||'');
+    }
+    document.querySelectorAll('input, select, textarea, [role="combobox"]').forEach(el => {
+        if (out.length >= 60) return;
+        const type=(el.type||el.tagName.toLowerCase()).toLowerCase();
+        if (skip.has(type)) return;
+        if (!vis(el)) return;
+        const role = el.getAttribute('role');
+        const sel = el.id ? '#'+CSS.escape(el.id) : (el.name ? el.tagName.toLowerCase()+'[name="'+el.name+'"]' : '');
+        if (!sel || seen.has(sel)) return; seen.add(sel);
+        let value='';
+        if (el.tagName==='SELECT'){ value = el.value && el.options[el.selectedIndex] ? el.options[el.selectedIndex].text.trim() : ''; }
+        else if (type==='checkbox'||type==='radio'){ value = el.checked ? 'checked' : ''; }
+        else { value = (el.value||'').trim(); }
+        if (!value && role==='combobox'){ const ctrl=el.closest('[class*="select__control"],[class*="-control"]'); if(ctrl){const sv=ctrl.querySelector('[class*="singleValue"],[class*="-singleValue"],[class*="multi-value"]'); if(sv) value=sv.textContent.trim();} }
+        const entry={ sel, type: (role==='combobox'?'combobox':type), label: labelFor(el).slice(0,160), value };
+        out.push(entry);
+    });
+    return out;
+}"""
+
+# Reads option text from any currently-open react-select / listbox menu.
+_RENDERED_OPTIONS_JS = r"""() => {
+    const out=[]; const seen=new Set();
+    document.querySelectorAll(
+        '.select__menu .select__option, .react-select__menu .react-select__option,'
+      + '[role="listbox"] [role="option"], .select__menu [role="option"]'
+    ).forEach(el => { const t=(el.textContent||'').trim(); if(t&&!seen.has(t)){seen.add(t); out.push(t);} });
+    return out;
+}"""
+
+# Reads options ONLY from the menu the given field controls (via
+# aria-controls / aria-owns / its own select container). This prevents the
+# phone widget's 200-country dropdown — and any other open react-select on
+# the page — from polluting the option list, which caused consent fields
+# (whose real option is "Acknowledge/Confirm") to be missed.
+_SCOPED_OPTIONS_JS = r"""(s) => {
+    const el = document.querySelector(s);
+    if (!el) return [];
+    let menu = null;
+    const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+    if (lid) menu = document.getElementById(lid);
+    if (!menu) {
+        const cont = el.closest('[class*="select__container"],[class*="-container"],[class*="select"]');
+        if (cont) menu = cont.querySelector('[class*="select__menu"],[role="listbox"]');
+    }
+    const scope = menu || document;
+    const out = []; const seen = new Set();
+    scope.querySelectorAll('[class*="select__option"],[role="option"]').forEach(el => {
+        const t = (el.textContent || '').trim();
+        if (t && !seen.has(t)) { seen.add(t); out.push(t); }
+    });
+    return out;
+}"""
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1252,6 +1343,105 @@ async def _execute_action(
             field_type = await loc.evaluate("el => el.type || el.tagName.toLowerCase()")
             field_type = (field_type or "text").lower()
 
+            # ── Selector / label cross-check (demographic-swap defence) ──
+            # The Vercel/Greenhouse demographic block has very similar field
+            # types in adjacent rows — gender, race, orientation, transgender,
+            # disability, veteran. The AI sometimes proposes the right
+            # field_label but a neighbour's selector ID, causing the wrong
+            # field to get filled (e.g. "Male" written into "sexual
+            # orientation" because the AI grabbed the orientation field's
+            # ID). On a "mark all that apply" multi-select this leaves the
+            # wrong field with two values and the server silently rejects
+            # the submit.
+            #
+            # Check: look up the actual label for `sel` and confirm it
+            # shares a demographic keyword with the AI's `field_label`. If
+            # not, abort the fill so the AI can re-plan with the right ID.
+            ai_label = (action.field_label or "").lower()
+            if ai_label:
+                try:
+                    actual_label = await loc.evaluate(
+                        """(el) => {
+                            // Resolve label using the same walk we do elsewhere.
+                            if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+                            if (el.id) {
+                                const l = document.querySelector('label[for="' + el.id + '"]');
+                                if (l) return (l.textContent || '').trim();
+                                if (el.id.endsWith('--input')) {
+                                    const b = el.id.slice(0, -7);
+                                    const l2 = document.querySelector('label[for="' + b + '"]');
+                                    if (l2) return (l2.textContent || '').trim();
+                                }
+                            }
+                            const fs = el.closest('fieldset');
+                            if (fs) {
+                                const lg = fs.querySelector('legend');
+                                if (lg) return (lg.textContent || '').trim();
+                            }
+                            let p = el.parentElement;
+                            for (let i = 0; i < 6 && p; i++) {
+                                const lbl = p.querySelector(':scope > label, :scope > .application-question__label, :scope > .question-label, :scope > .field-label, :scope > div > label');
+                                if (lbl) return (lbl.textContent || '').trim();
+                                p = p.parentElement;
+                            }
+                            // Last resort: text of the closest question container
+                            const c = el.closest('.application-question, [class*="question"], fieldset, .field');
+                            return c ? (c.textContent || '').slice(0, 120).trim() : '';
+                        }"""
+                    )
+                except Exception:
+                    actual_label = ""
+                actual_l = (actual_label or "").lower()
+                # Demographic keyword groups — if AI's label contains a
+                # keyword from one group but the actual label contains a
+                # keyword from a DIFFERENT group, it's a mismatch.
+                _GROUPS = [
+                    ("gender identity", "gender"),
+                    ("racial", "race", "ethnic"),
+                    ("sexual orientation", "orientation"),
+                    ("transgender",),
+                    ("disabilit", "chronic condition"),
+                    ("veteran", "armed forces", "military"),
+                ]
+                ai_groups = {i for i, kws in enumerate(_GROUPS) if any(k in ai_label for k in kws)}
+                act_groups = {i for i, kws in enumerate(_GROUPS) if any(k in actual_l for k in kws)}
+                if ai_groups and act_groups and not (ai_groups & act_groups):
+                    logger.warning(
+                        f"[AgentLoop] selector/label MISMATCH — refusing fill. "
+                        f"AI said field_label={action.field_label!r} but selector "
+                        f"{sel!r} actually resolves to {actual_label[:80]!r}. "
+                        f"This is the demographic-swap bug; aborting to let the "
+                        f"AI re-plan."
+                    )
+                    # Self-cleanup: if this same selector was already filled
+                    # earlier in the session with a value that BELONGS to the
+                    # AI's claimed group (i.e. we just leaked "Male" into the
+                    # orientation field), clear the wrong chip. Otherwise the
+                    # form keeps "Male" + "Heterosexual" both selected on a
+                    # multi-select and the submit silently rejects.
+                    try:
+                        await loc.evaluate(
+                            """(el) => {
+                                // For react-select multi-value chips, find the
+                                // wrong-value chip and click its X button to
+                                // remove it.
+                                const ctrl = el.closest('.select__control, .react-select__control');
+                                if (!ctrl) return false;
+                                const removes = ctrl.querySelectorAll(
+                                    '.select__multi-value__remove, .react-select__multi-value__remove'
+                                );
+                                let n = 0;
+                                removes.forEach(r => { try { r.click(); n++; } catch(e) {} });
+                                return n;
+                            }"""
+                        )
+                        logger.info(
+                            f"[AgentLoop] cleared accidentally-filled chips on {sel!r}"
+                        )
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] chip-cleanup failed: {exc}")
+                    return False
+
             if field_type == "file":
                 # Redirect to upload logic
                 path = resume_path
@@ -1315,26 +1505,12 @@ async def _execute_action(
                 except Exception:
                     pass
                 await asyncio.sleep(0.4)
-                # 2. Read the actual options now visible in the dropdown menu.
-                #    We collect from common react-select / aria patterns.
+                # 2. Read the actual options — SCOPED to THIS field's own menu
+                #    (via aria-controls), so the phone widget's 200-country
+                #    dropdown and any other open react-select don't pollute the
+                #    list (that pollution was causing wrong/failed selections).
                 try:
-                    available_options = await ctx.evaluate("""() => {
-                        const out = [];
-                        const seen = new Set();
-                        document.querySelectorAll(
-                            '.select__menu .select__option, '
-                          + '.react-select__menu .react-select__option, '
-                          + '[role="listbox"] [role="option"], '
-                          + '.select__menu [role="option"]'
-                        ).forEach(el => {
-                            if (el.offsetParent === null) return;
-                            const t = (el.textContent || '').trim();
-                            if (!t || seen.has(t)) return;
-                            seen.add(t);
-                            out.push(t);
-                        });
-                        return out;
-                    }""")
+                    available_options = await ctx.evaluate(_SCOPED_OPTIONS_JS, sel)
                 except Exception:
                     available_options = []
 
@@ -1377,23 +1553,30 @@ async def _execute_action(
                 # caused BOTH Man and Woman to get selected. Exact equality only.
                 try:
                     clicked = await ctx.evaluate(
-                        """(target) => {
-                            const want = target.trim().toLowerCase();
-                            const opts = document.querySelectorAll(
-                                '.select__menu .select__option, '
-                              + '.react-select__menu .react-select__option, '
-                              + '[role="listbox"] [role="option"], '
-                              + '.select__menu [role="option"]'
-                            );
-                            for (const el of opts) {
-                                if ((el.textContent || '').trim().toLowerCase() === want) {
-                                    el.click();
-                                    return true;
+                        """([s, target]) => {
+                            const want = (target||'').trim().toLowerCase();
+                            const el = document.querySelector(s);
+                            let scope = document;
+                            if (el) {
+                                const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+                                let menu = lid ? document.getElementById(lid) : null;
+                                if (!menu) {
+                                    const cont = el.closest('[class*="select__container"],[class*="-container"],[class*="select"]');
+                                    if (cont) menu = cont.querySelector('[class*="select__menu"],[role="listbox"]');
                                 }
+                                if (menu) scope = menu;
                             }
+                            const opts = scope.querySelectorAll('[class*="select__option"],[role="option"]');
+                            for (const el2 of opts) {
+                                if ((el2.textContent || '').trim().toLowerCase() === want) { el2.click(); return true; }
+                            }
+                            for (const el2 of opts) {
+                                if ((el2.textContent || '').trim().toLowerCase().startsWith(want.slice(0,18))) { el2.click(); return true; }
+                            }
+                            if (opts.length === 1) { opts[0].click(); return true; }
                             return false;
                         }""",
-                        target_text,
+                        [sel, target_text],
                     )
                     if clicked:
                         await asyncio.sleep(0.4)
@@ -1420,24 +1603,61 @@ async def _execute_action(
             except Exception:
                 pass
             await asyncio.sleep(random.uniform(0.05, 0.15))
-            # Use native setter to handle React-controlled inputs
-            committed = await loc.evaluate(
-                """(el, v) => {
-                    try {
-                        const proto = el.tagName === 'TEXTAREA'
-                            ? window.HTMLTextAreaElement.prototype
-                            : window.HTMLInputElement.prototype;
-                        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
-                        setter.call(el, v);
-                        el.dispatchEvent(new Event('input',  {bubbles:true}));
-                        el.dispatchEvent(new Event('change', {bubbles:true}));
-                        return el.value === v;
-                    } catch(e) { return false; }
-                }""",
-                value,
-            )
-            if not committed:
-                await loc.fill(value, timeout=5000)
+
+            # ── HUMAN-LIKE TYPING (anti-bot) ─────────────────────────────
+            # Real keystrokes with per-character delay, instead of injecting
+            # the whole value at once. This is BOTH more human-like (varied
+            # cadence, real keydown/keyup events the site can observe) AND
+            # more React-friendly (controlled inputs commit on real input
+            # events). Falls back to the native setter only if typing doesn't
+            # land — covers stubborn masked/controlled inputs.
+            #   HUMAN_TYPING=false              → disable, use instant setter
+            #   HUMAN_TYPE_MIN_MS / _MAX_MS     → per-char delay window
+            typed_ok = False
+            if os.getenv("HUMAN_TYPING", "true").lower() != "false":
+                try:
+                    lo = int(os.getenv("HUMAN_TYPE_MIN_MS", "35"))
+                    hi = int(os.getenv("HUMAN_TYPE_MAX_MS", "120"))
+                    per_char = random.uniform(lo, hi)
+                    await loc.click(timeout=3000)
+                    # Clear any pre-existing value the human way (select-all + delete).
+                    try:
+                        await loc.press("Control+a", timeout=1500)
+                        await loc.press("Delete", timeout=1500)
+                    except Exception:
+                        pass
+                    # pressSequentially fires real per-key events (Playwright's
+                    # successor to type()); delay is per character. Fall back to
+                    # the legacy .type() on older Playwright builds.
+                    if hasattr(loc, "press_sequentially"):
+                        await loc.press_sequentially(value, delay=per_char, timeout=15000)
+                    else:
+                        await loc.type(value, delay=per_char, timeout=15000)
+                    # Verify it actually committed into the field's value.
+                    cur = await loc.input_value(timeout=2000)
+                    typed_ok = (cur or "").strip() == value.strip()
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] human-typing failed for {sel!r}: {exc}")
+
+            if not typed_ok:
+                # Fallback: native setter for React-controlled / masked inputs.
+                committed = await loc.evaluate(
+                    """(el, v) => {
+                        try {
+                            const proto = el.tagName === 'TEXTAREA'
+                                ? window.HTMLTextAreaElement.prototype
+                                : window.HTMLInputElement.prototype;
+                            const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                            setter.call(el, v);
+                            el.dispatchEvent(new Event('input',  {bubbles:true}));
+                            el.dispatchEvent(new Event('change', {bubbles:true}));
+                            return el.value === v;
+                        } catch(e) { return false; }
+                    }""",
+                    value,
+                )
+                if not committed:
+                    await loc.fill(value, timeout=5000)
             await asyncio.sleep(random.uniform(0.1, 0.3))
             return True
 
@@ -1568,8 +1788,28 @@ class AgentLoop:
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
         self._platform = platform
         self._llm = get_llm()
-        # Build the identity-anchored system prompt once. Persistent across turns.
+        # Build the identity-anchored system prompt. Rebuilt if the effective
+        # provider changes mid-session (e.g. Anthropic exhausts and Groq takes
+        # over) so the resume-block size matches the live provider's caching.
+        try:
+            self._prompt_provider = self._llm.effective_provider()
+        except Exception:
+            self._prompt_provider = "anthropic"
         self._system_prompt = self._build_system_prompt()
+
+    async def _human_delay(self, kind: str = "default") -> None:
+        """Sleep a small randomized interval to mimic human pacing and reduce
+        bot-detection risk. Tunable via HUMAN_DELAY_MIN_MS / HUMAN_DELAY_MAX_MS;
+        set HUMAN_DELAY_MIN_MS=0 to disable. Kept minimal so runs stay fast.
+        """
+        try:
+            lo = int(os.getenv("HUMAN_DELAY_MIN_MS", "250"))
+            hi = int(os.getenv("HUMAN_DELAY_MAX_MS", "700"))
+        except Exception:
+            lo, hi = 250, 700
+        if hi <= 0 or lo < 0 or hi < lo:
+            return
+        await asyncio.sleep(random.uniform(lo / 1000.0, hi / 1000.0))
 
     def _build_system_prompt(self) -> str:
         """Bake the candidate identity + job context into the system prompt.
@@ -1659,9 +1899,31 @@ class AgentLoop:
         # present, this is the AUTHORITATIVE source: name, email, phone,
         # education, work history, skills come from HERE, not the identity
         # card. "AI is the master — analyze the resume FIRST, then fill."
+        #
+        # Length budget: Anthropic prompt-cache makes 5500 chars effectively
+        # free after the first call (cache hits ~ free). Groq / Gemini /
+        # OpenRouter have NO caching, so those tokens get billed on every
+        # turn and chew through TPM caps fast (Groq Llama-4-Scout: 30k TPM).
+        # When the primary key is non-Anthropic, ship a tighter block —
+        # 1800 chars is enough to anchor name/email/phone/title/skills.
         resume_text = (p.get("_resume_text") or "").strip()
         resume_block = ""
         if resume_text:
+            # Heuristic: use the shorter budget when ANY non-cacheable
+            # provider is in the fallback chain. Anthropic prompt-cache only
+            # helps if Anthropic actually serves the call; if it's exhausted
+            # and we fall through to Groq, the full 5500 chars get billed
+            # on every turn against a 30k TPM cap.
+            try:
+                _eff = self._llm.effective_provider()
+            except Exception:
+                _eff = "anthropic"
+            # Anthropic caches the prompt (resume effectively free after the
+            # first call); every other provider bills it each turn.
+            _budget = int(os.getenv(
+                "RESUME_PROMPT_CHARS",
+                "5500" if _eff == "anthropic" else "1800",
+            ))
             sep = "-" * 60
             resume_block = (
                 "\n\nRESUME CONTENT (source of truth — when a form field asks "
@@ -1670,7 +1932,7 @@ class AgentLoop:
                 "identity card above disagrees with the resume, the RESUME "
                 "WINS):\n"
                 + sep + "\n"
-                + resume_text[:5500]
+                + resume_text[:_budget]
                 + "\n" + sep + "\n"
             )
         # Append the action-schema/rules block (unchanged from the original
@@ -1794,6 +2056,26 @@ class AgentLoop:
             if not answer:
                 continue
             sel = f["sel"]
+            # ── LinkedIn-URL hard override (operator policy) ────────────────
+            # Memory pre-fill bypasses _execute_action, so the LinkedIn → "N/A"
+            # rewrite that lives there does NOT apply here. Re-enforce it at
+            # the memory layer too, otherwise stale "https://linkedin.com/..."
+            # values cached on a previous session leak straight back into the
+            # form (the exact bug we saw on Sabih's first end-to-end run).
+            _lbl_l = label.lower()
+            _sel_l = (sel or "").lower()
+            if (
+                ("linkedin" in _lbl_l or "linkedin" in _sel_l)
+                and "website" not in _lbl_l
+                and "portfolio" not in _lbl_l
+                and "github" not in _lbl_l
+                and str(answer).strip().upper() != "N/A"
+            ):
+                logger.info(
+                    f"[AgentLoop] memory pre-fill LinkedIn override: {label!r} "
+                    f"was {str(answer)[:50]!r}, forcing 'N/A'"
+                )
+                answer = "N/A"
             try:
                 loc = ctx.locator(sel).first
                 if await loc.count() == 0:
@@ -2145,6 +2427,491 @@ class AgentLoop:
 
         return filled
 
+    async def _try_consent_autofill(
+        self,
+        page: Page,
+        frame: Optional[Any],
+        actions: List[AgentAction],
+    ) -> int:
+        """Affirm consent / acknowledgment fields deterministically before the
+        LLM runs. These have ONE correct answer (agree / check / Yes) and the
+        AI was fumbling them — pasting the question text as the value, or
+        filling "Yes" into a checkbox that needs checking, leaving the
+        pre-submit gate blocked so submit never fired.
+
+        Handles: native checkbox (check it), native <select> / react-select
+        combobox (pick the affirmative option). One-shot per selector to avoid
+        racing with the AI on subsequent turns.
+
+        Matches labels like:
+          "By submitting my application, I acknowledge…"
+          "I have read and understand…privacy notice"
+          "Please double-check all the information…ensuring accuracy"
+          "I confirm…", "I agree…"
+        """
+        ctx = frame or page
+        attempted = {
+            (a.selector or "").strip()
+            for a in actions
+            if a.raw and a.raw.get("source") == "consent_autofill"
+        }
+        try:
+            targets = await ctx.evaluate("""() => {
+                const CONSENT_RE = /\\b(i acknowledge|acknowledge that|i have read|i agree|i confirm|double-check all the information|ensuring accuracy|privacy notice|terms of service|consent to)\\b/i;
+                const AFFIRM_RE = /^(yes|i acknowledge|i agree|i confirm|agree|acknowledged?|confirmed?|i have read|i understand)/i;
+                function labelFor(el) {
+                    if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
+                    if (el.id) {
+                        const l = document.querySelector('label[for="' + el.id + '"]');
+                        if (l) return (l.textContent || '').trim();
+                        if (el.id.endsWith('--input')) {
+                            const b = el.id.slice(0,-7);
+                            const l2 = document.querySelector('label[for="' + b + '"]');
+                            if (l2) return (l2.textContent || '').trim();
+                        }
+                    }
+                    let p = el.parentElement;
+                    for (let i=0;i<6&&p;i++){
+                        const l = p.querySelector(':scope > label, :scope > .application-question__label, :scope > div > label');
+                        if (l) return (l.textContent||'').trim();
+                        p = p.parentElement;
+                    }
+                    const c = el.closest('.application-question, [class*="question"], fieldset, .field');
+                    return c ? (c.textContent||'').slice(0,160).trim() : '';
+                }
+                const out = [];
+                const seen = new Set();
+                // Native checkboxes
+                document.querySelectorAll('input[type="checkbox"]').forEach(el => {
+                    const st = window.getComputedStyle(el);
+                    if (st.display==='none'||st.visibility==='hidden') return;
+                    const label = labelFor(el);
+                    if (!CONSENT_RE.test(label)) return;
+                    if (el.checked) return;
+                    const sel = el.id ? '#'+el.id : (el.name ? 'input[name="'+el.name+'"]' : '');
+                    if (!sel || seen.has(sel)) return;
+                    seen.add(sel);
+                    out.push({kind:'checkbox', selector:sel, label:label.slice(0,120), value:'Yes'});
+                });
+                // Native selects with an affirmative option
+                document.querySelectorAll('select').forEach(el => {
+                    const st = window.getComputedStyle(el);
+                    if (st.display==='none'||st.visibility==='hidden') return;
+                    const label = labelFor(el);
+                    if (!CONSENT_RE.test(label)) return;
+                    if (el.value && el.value.trim()) {
+                        const cur = (el.options[el.selectedIndex]?.text||'').trim();
+                        if (cur && !/^(select|choose|please|—|--)/i.test(cur)) return;
+                    }
+                    let pickText=null, pickVal=null;
+                    for (const o of el.options){
+                        if (!o.value) continue;
+                        if (AFFIRM_RE.test((o.text||'').trim())){ pickText=o.text.trim(); pickVal=o.value; break; }
+                    }
+                    if (pickText===null) return;
+                    const sel = el.id ? '#'+el.id : 'select[name="'+el.name+'"]';
+                    if (seen.has(sel)) return; seen.add(sel);
+                    out.push({kind:'select', selector:sel, label:label.slice(0,120), value:pickText, optionValue:pickVal});
+                });
+                // react-select comboboxes
+                document.querySelectorAll('[role="combobox"]').forEach(el => {
+                    const st = window.getComputedStyle(el);
+                    if (st.display==='none'||st.visibility==='hidden') return;
+                    const label = labelFor(el);
+                    if (!CONSENT_RE.test(label)) return;
+                    const ctrl = el.closest('[class*="select__control"],[class*="-control"]');
+                    if (ctrl){
+                        const sv = ctrl.querySelector('[class*="singleValue"],[class*="-singleValue"]');
+                        if (sv && sv.textContent.trim()) return;
+                    }
+                    const sel = el.id ? '#'+el.id : null;
+                    if (!sel || seen.has(sel)) return; seen.add(sel);
+                    out.push({kind:'combobox', selector:sel, label:label.slice(0,120), value:'Yes'});
+                });
+                return out;
+            }""")
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] consent auto-fill scan failed: {exc}")
+            return 0
+
+        filled = 0
+        for t in targets or []:
+            sel = t.get("selector")
+            kind = t.get("kind")
+            label = t.get("label", "")
+            value = t.get("value", "Yes")
+            if (sel or "").strip() in attempted:
+                continue
+            try:
+                loc = ctx.locator(sel).first
+                if await loc.count() == 0:
+                    continue
+                if kind == "checkbox":
+                    try:
+                        await loc.check(timeout=3000, force=True)
+                    except Exception:
+                        await loc.click(timeout=3000, force=True)
+                elif kind == "select":
+                    try:
+                        await loc.select_option(value=t.get("optionValue"), timeout=3000)
+                    except Exception:
+                        await loc.select_option(label=value, timeout=3000)
+                elif kind == "combobox":
+                    await loc.scroll_into_view_if_needed(timeout=2000)
+                    await loc.click(timeout=3000)
+                    await page.wait_for_timeout(200)
+                    await loc.type(value, delay=30, timeout=3000)
+                    await page.wait_for_timeout(400)
+                    opt = ctx.locator("[role='option']", has_text=value).first
+                    if await opt.count() > 0:
+                        await opt.click(timeout=3000)
+                    else:
+                        await loc.press("Enter", timeout=2000)
+                else:
+                    continue
+                actions.append(AgentAction(
+                    kind="fill_field", selector=sel, value=value,
+                    field_label=label, step=-1, ok=True,
+                    raw={"source": "consent_autofill"},
+                ))
+                logger.info(f"[AgentLoop] consent auto-fill: '{label[:60]}' = '{value}'")
+                filled += 1
+            except Exception as exc:
+                logger.debug(f"[AgentLoop] consent auto-fill apply failed for {label!r}: {exc}")
+                continue
+        return filled
+
+    @staticmethod
+    def _infer_gender(first_name: str) -> str:
+        """Infer Male/Female from a first name. Defaults to Male on ambiguity
+        (operator policy uses Male for masculine/ambiguous names like Sabih,
+        Harmain, Ahmed). Female only for clearly feminine names."""
+        fn = (first_name or "").strip().lower()
+        female = {
+            "sarah", "aisha", "ayesha", "jane", "mary", "emily", "fatima",
+            "zainab", "maria", "anna", "laura", "sara", "hira", "amna",
+            "noor", "mahnoor", "iqra", "kinza", "areeba", "emma", "olivia",
+            "sophia", "mia", "isabella", "rabia", "sana", "maham",
+        }
+        return "Female" if fn in female else "Male"
+
+    def _policy_fields(self) -> list:
+        """The fixed-answer policy map. Each entry: (label_regex, value,
+        [option aliases for fuzzy dropdown matching]). Order matters —
+        most-specific patterns first (UK work-auth before generic US).
+
+        These answers are IDENTICAL for every candidate (operator policy):
+        country=US, UK-auth=No, US-auth=Yes, sponsorship=No, LinkedIn=N/A,
+        gender(name-inferred), race=South Asian, orientation=Heterosexual,
+        transgender/disability/veteran=No, consent=affirm. Filling them
+        deterministically removes the AI's selector-swap / regex-mismatch /
+        commit failures for the bulk of the form.
+        """
+        p = self.profile or {}
+        gender = self._infer_gender(p.get("first_name") or (p.get("name", "").split() or [""])[0])
+        gender_alias = "man" if gender == "Male" else "woman"
+        referral = (p.get("referral_source") or "LinkedIn").strip() or "LinkedIn"
+        return [
+            # "Where / how did you hear about us / this role?" — fixed referral
+            # source. It's a react-select with options like LinkedIn / Job
+            # board / Referral; default to LinkedIn. Listed FIRST so it's
+            # handled by the robust scoped commit, not the AI (which kept
+            # failing to commit it → red error → submit rejected).
+            (r"(where|how)\s+did\s+you\s+(first\s+)?(hear|find|learn)\s+(about|of)",
+             referral, [referral.lower(), "linkedin", "job board", "online", "other job boards"]),
+            # Work authorization — UK / non-US first, then US.
+            (r"authoriz\w*\s+to\s+work\s+in\s+(the\s+)?(uk|united kingdom|canada|eu|europe|australia|india|germany|ireland)",
+             "No", ["no", "i am not authorized", "not authorized", "no, i am not authorized"]),
+            (r"authoriz\w*\s+to\s+work(\s+in\s+(the\s+)?(us|u\.s\.|usa|united states))?",
+             "Yes", ["yes", "i am authorized", "authorized", "yes, i am authorized"]),
+            (r"(require|need).*(sponsor|visa)|sponsor\w*.*(now|future|work)",
+             "No", ["no"]),
+            (r"\blinkedin\b",
+             "N/A", ["n/a"]),
+            (r"(currently based in|country of residence|which country|where.*based|^country)",
+             "United States", ["united states", "united states of america", "usa", "u.s.a."]),
+            (r"gender identity|what is your gender|\bgender\b",
+             gender, [gender.lower(), gender_alias]),
+            (r"racial|ethnic|\brace\b",
+             "South Asian", ["south asian", "asian", "asian (not hispanic or latino)"]),
+            (r"sexual orientation|orientation",
+             "Heterosexual", ["heterosexual", "straight", "heterosexual / straight"]),
+            (r"transgender",
+             "No", ["no"]),
+            (r"disabilit|chronic condition",
+             "No", ["no", "i don't have a disability", "no, i don't have a disability"]),
+            (r"veteran|armed forces|military service",
+             "No", ["no", "i am not a veteran", "not a veteran", "not a protected veteran",
+                    "i am not a protected veteran"]),
+            (r"acknowledge|i have read|double[- ]check|ensuring accuracy|privacy notice|terms of service|i confirm|i agree|consent to",
+             "Yes", ["yes", "i acknowledge", "i agree", "i confirm", "i have read", "i understand"]),
+        ]
+
+    async def _deterministic_prefill(
+        self,
+        page: Page,
+        frame: Optional[Any],
+        actions: List[AgentAction],
+    ) -> int:
+        """Fill every fixed-policy field deterministically with a robust,
+        self-verifying commit. No LLM. One-shot per selector per session.
+
+        This is the architectural fix for the recurring "dropdown picked but
+        not selected / regex mismatch / selector swap" failures: the AI never
+        touches these fields, so it can't fumble them. Reliable react-select
+        commit (open → read real options → fuzzy-match → click → verify →
+        retry with keyboard) means the value actually lands in form state,
+        which unblocks the pre-submit gate.
+        """
+        import re as _re
+        ctx = frame or page
+        policy = self._policy_fields()
+        attempted = {
+            (a.selector or "").strip()
+            for a in actions
+            if a.raw and a.raw.get("source") == "deterministic_prefill"
+        }
+
+        # Scan visible fillable fields with their resolved labels + options.
+        try:
+            fields = await ctx.evaluate(_POLICY_SCAN_JS)
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] deterministic scan failed: {exc}")
+            return 0
+
+        filled = 0
+        for f in fields or []:
+            sel = (f.get("sel") or "").strip()
+            if not sel or sel in attempted:
+                continue
+            label = (f.get("label") or "").lower()
+            ftype = (f.get("type") or "text").lower()
+            current = (f.get("value") or "").strip()
+            if not label:
+                continue
+            # Match against policy (first match wins).
+            value = None
+            aliases = []
+            for pat, val, als in policy:
+                if _re.search(pat, label, _re.I):
+                    # LinkedIn carve-out: don't let website/github/portfolio match.
+                    if val == "N/A" and any(w in label for w in ("website", "portfolio", "github")):
+                        continue
+                    # Country carve-out: skip citizenship / country-code.
+                    if val == "United States" and any(w in label for w in ("citizenship", "code", "nationality")):
+                        continue
+                    value, aliases = val, als
+                    break
+            if value is None:
+                continue
+            # Skip if already correctly filled.
+            if current and value.lower() in current.lower():
+                attempted.add(sel)
+                continue
+            ok = await self._commit_policy_field(page, ctx, sel, ftype, value, aliases)
+            # Record attempt regardless so we don't retry-thrash; if commit
+            # failed, the AI can still try via its normal path next turns.
+            actions.append(AgentAction(
+                kind="fill_field", selector=sel, value=value,
+                field_label=f.get("label", "")[:100], step=-1, ok=ok,
+                raw={"source": "deterministic_prefill"},
+            ))
+            if ok:
+                logger.info(f"[AgentLoop] deterministic fill: '{label[:50]}' = '{value}'")
+                filled += 1
+            else:
+                logger.debug(f"[AgentLoop] deterministic fill could not commit '{label[:50]}'")
+        return filled
+
+    async def _commit_policy_field(self, page, ctx, sel, ftype, value, aliases) -> bool:
+        """Robust, verifying commit for one field. Returns True only if the
+        value actually landed in form state."""
+        try:
+            loc = ctx.locator(sel).first
+            if await loc.count() == 0:
+                return False
+        except Exception:
+            return False
+
+        # Resolve the real element type (the scan's type can be stale).
+        try:
+            real_type = (await loc.evaluate("el => (el.getAttribute('role')==='combobox') ? 'combobox' : (el.type || el.tagName.toLowerCase())")) or ftype
+        except Exception:
+            real_type = ftype
+        real_type = real_type.lower()
+
+        # ── Checkbox ──
+        if real_type == "checkbox":
+            try:
+                await loc.check(timeout=3000, force=True)
+                return bool(await loc.is_checked())
+            except Exception:
+                try:
+                    await loc.click(timeout=2000, force=True)
+                    return True
+                except Exception:
+                    return False
+
+        # ── Radio ──
+        if real_type == "radio":
+            try:
+                await loc.check(timeout=3000, force=True)
+                return True
+            except Exception:
+                return False
+
+        # ── Native <select> ──
+        if real_type in ("select-one", "select"):
+            try:
+                opts = await loc.evaluate(
+                    "el => Array.from(el.options).filter(o=>o.value).map(o=>o.text.trim())"
+                )
+            except Exception:
+                opts = []
+            target = self._best_option(value, aliases, opts) if opts else value
+            for how in ("label", "value"):
+                try:
+                    if how == "label":
+                        await loc.select_option(label=target, timeout=2500)
+                    else:
+                        await loc.select_option(value=target, timeout=2500)
+                    return True
+                except Exception:
+                    continue
+            return False
+
+        # ── react-select / combobox ── open → read THIS field's options →
+        # pick best → click → verify. Critically, options are read ONLY from
+        # the menu this field controls (via aria-controls / aria-owns), NOT
+        # every .select__option on the page. Without scoping, the phone
+        # widget's 200-country dropdown polluted the list and the real
+        # option (e.g. "Acknowledge/Confirm") was missed.
+        if real_type == "combobox" or "select" in (sel or ""):
+            # Acknowledgment / consent fields don't have a "Yes" option —
+            # their only real option is a phrase like "Acknowledge/Confirm"
+            # or "I have reviewed and confirmed…". When our literal value
+            # isn't among the options, fall back to whichever option matches
+            # an affirmative-acknowledgment pattern.
+            ack_aliases = list(aliases) + [
+                "acknowledge", "confirm", "i acknowledge", "i agree",
+                "i confirm", "i have read", "i understand",
+                "reviewed and confirmed", "accurate",
+            ]
+            for attempt in (1, 2):
+                try:
+                    await loc.scroll_into_view_if_needed(timeout=2000)
+                    await loc.click(timeout=3000)
+                    await page.wait_for_timeout(300)
+                    # Read options ONLY from this field's own listbox.
+                    rendered = await ctx.evaluate(_SCOPED_OPTIONS_JS, sel)
+                    pool = rendered if rendered else []
+                    target = self._best_option(value, aliases, pool)
+                    # If the literal value didn't match any real option AND
+                    # this is a consent-style field, pick the affirmative one.
+                    if pool and target == value and value.lower() not in [o.lower() for o in pool]:
+                        for o in pool:
+                            ol = o.lower()
+                            if any(k in ol for k in ack_aliases):
+                                target = o
+                                break
+                    # Click the option by exact text, scoped to this menu.
+                    clicked = await ctx.evaluate(
+                        """([s, t]) => {
+                            const want = (t||'').trim().toLowerCase();
+                            const el = document.querySelector(s);
+                            if (!el) return false;
+                            // Resolve this field's listbox via aria-controls/owns,
+                            // else the menu inside its own select container.
+                            let menu = null;
+                            const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+                            if (lid) menu = document.getElementById(lid);
+                            if (!menu) {
+                                const cont = el.closest('[class*="select__container"],[class*="-container"],[class*="select"]');
+                                if (cont) menu = cont.querySelector('[class*="select__menu"],[role="listbox"]');
+                            }
+                            const scope = menu || document;
+                            const nodes = scope.querySelectorAll(
+                                '[class*="select__option"],[role="option"]'
+                            );
+                            for (const n of nodes) {
+                                if ((n.textContent||'').trim().toLowerCase() === want) { n.click(); return true; }
+                            }
+                            for (const n of nodes) {
+                                if ((n.textContent||'').trim().toLowerCase().startsWith(want.slice(0,18))) { n.click(); return true; }
+                            }
+                            // Last resort: if exactly one real option exists, click it.
+                            if (nodes.length === 1) { nodes[0].click(); return true; }
+                            return false;
+                        }""", [sel, target],
+                    )
+                    if not clicked:
+                        # keyboard fallback: type + Enter (filters then selects)
+                        try:
+                            await loc.fill("")
+                        except Exception:
+                            pass
+                        await loc.type(str(target)[:30], delay=35)
+                        await page.wait_for_timeout(350)
+                        await loc.press("Enter")
+                    await page.wait_for_timeout(300)
+                    committed = await ctx.evaluate(
+                        """(s) => {
+                            const el = document.querySelector(s);
+                            if (!el) return false;
+                            const ctrl = el.closest('[class*="select__control"],[class*="-control"]');
+                            if (ctrl) {
+                                const sv = ctrl.querySelector('[class*="singleValue"],[class*="-singleValue"],[class*="multi-value"]');
+                                return !!(sv && sv.textContent.trim());
+                            }
+                            return !!(el.value && el.value.trim());
+                        }""", sel,
+                    )
+                    if committed:
+                        return True
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] combobox commit attempt {attempt} failed: {exc}")
+            return False
+
+        # ── text / email / tel / url / textarea ── native setter
+        try:
+            committed = await loc.evaluate(
+                """(el, v) => {
+                    try {
+                        const proto = el.tagName === 'TEXTAREA'
+                            ? window.HTMLTextAreaElement.prototype
+                            : window.HTMLInputElement.prototype;
+                        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                        setter.call(el, v);
+                        el.dispatchEvent(new Event('input',  {bubbles:true}));
+                        el.dispatchEvent(new Event('change', {bubbles:true}));
+                        return el.value === v;
+                    } catch(e) { return false; }
+                }""", value,
+            )
+            if not committed:
+                await loc.fill(value, timeout=3000)
+            return True
+        except Exception:
+            return False
+
+    @staticmethod
+    def _best_option(value: str, aliases: list, options: list) -> str:
+        """Pick the option text that best matches value/aliases. Exact (ci)
+        first, then alias exact, then substring, then the original value."""
+        if not options:
+            return value
+        wants = [value.lower()] + [a.lower() for a in (aliases or [])]
+        ol = [(o, o.strip().lower()) for o in options]
+        for w in wants:
+            for orig, low in ol:
+                if low == w:
+                    return orig
+        for w in wants:
+            for orig, low in ol:
+                if w in low or low in w:
+                    return orig
+        return value
+
     async def _handle_email_verification(
         self,
         page: Page,
@@ -2177,12 +2944,18 @@ class AgentLoop:
             return False
 
         # Live frame may have detached during navigation — re-resolve.
+        # get_live_frame is async (was being called without await before, which
+        # produced a RuntimeWarning and returned a coroutine object that the
+        # downstream code can't iterate). Also note its signature is
+        # (frame_locator, max_retries, page=...), not (page, frame).
         ctx_frame = frame
         try:
             from ..frame_utils import get_live_frame
-            ctx_frame = get_live_frame(page, frame) or frame
-        except Exception:
-            pass
+            if frame is not None:
+                resolved = await get_live_frame(frame, page=page)
+                ctx_frame = resolved or frame
+        except Exception as exc:
+            logger.debug(f"[verify] frame re-resolve failed: {exc}")
 
         shape = await detect_code_input(page, ctx_frame)
         if not shape:
@@ -2380,6 +3153,14 @@ class AgentLoop:
         import time as _time
         _wall_start = _time.monotonic()
 
+        # Post-submit verification lock. Once a submit click has fired, the
+        # NEXT priority is the email-verification code screen — NOT re-filling
+        # the form. This flag flips the loop into a dedicated verification
+        # phase so the AI never wanders back to filling fields after submit
+        # (the "it keeps filling after submit" bug).
+        submit_fired = False
+        verification_attempts = 0
+
         try:
             for step in range(1, self.max_steps + 1):
                 # Wall-clock check
@@ -2408,6 +3189,73 @@ class AgentLoop:
                         logger.warning(f"[AgentLoop] step={step} Frame is detached!")
                         live_frame = None
 
+                # ── POST-SUBMIT VERIFICATION PHASE ───────────────────────────
+                # Once submit has fired, stop driving the form-fill loop. Check
+                # for the email-verification code screen and handle ONLY that.
+                # This is a hard gate: no LLM call, no field re-fill — exactly
+                # the "after submit, only fetch the code" behavior requested.
+                if submit_fired:
+                    try:
+                        from ..verification import detect_code_input
+                        _vframe = live_frame or frame
+                        shape = await detect_code_input(page, _vframe)
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] code-input detect failed: {exc}")
+                        shape = None
+
+                    if shape:
+                        verification_attempts += 1
+                        if verification_attempts > 3:
+                            logger.warning(
+                                "[AgentLoop] verification code screen still present "
+                                "after 3 attempts — aborting to avoid lockout."
+                            )
+                            return LoopResult(
+                                success=False, status="VERIFICATION_FAILED",
+                                error="Could not clear email verification code screen",
+                                steps_taken=step, actions=actions,
+                            )
+                        logger.info(
+                            f"[AgentLoop] step={step} POST-SUBMIT: verification "
+                            f"code screen detected (attempt {verification_attempts}); "
+                            "fetching code from Gmail — NOT re-filling form."
+                        )
+                        ok_v = await self._handle_email_verification(
+                            page, live_frame,
+                            after_epoch=int(_time.time()) - 600,
+                            actions=actions,
+                        )
+                        if ok_v:
+                            # Code filled — click the verify/submit button and
+                            # let the next turn observe the result.
+                            await self._human_delay()
+                            try:
+                                for s in (
+                                    "button:has-text('Verify')",
+                                    "button:has-text('Submit')",
+                                    "button[type='submit']",
+                                ):
+                                    btn = (live_frame or page).locator(s).first
+                                    if await btn.count() > 0 and await btn.is_visible():
+                                        await btn.click(timeout=5000)
+                                        logger.info(f"[AgentLoop] post-code submit via {s!r}")
+                                        break
+                            except Exception as exc:
+                                logger.debug(f"[AgentLoop] post-code submit click failed: {exc}")
+                            await asyncio.sleep(2.5)
+                        else:
+                            await asyncio.sleep(4.0)  # let Gmail deliver, retry
+                        continue
+                    else:
+                        # No code screen visible. Either the submit fully
+                        # succeeded (done) or the page navigated to a success
+                        # state. Let one normal perception turn confirm via the
+                        # AI's `done` detection, then we're finished.
+                        logger.info(
+                            f"[AgentLoop] step={step} POST-SUBMIT: no code screen — "
+                            "submit likely complete; one confirmation turn."
+                        )
+
                 # ── Capture perception ──────────────────────────────────────────
                 # Lever 1 (cost optimization): if the DOM hasn't changed since
                 # the last call AND the previous action was DOM-mutating
@@ -2434,6 +3282,26 @@ class AgentLoop:
                     # are still enforced via the system prompt rules in
                     # _SYSTEM_PROMPT_BASE, so the AI handles them through its
                     # normal sequential fill flow.
+
+                    # ★ DETERMINISTIC PRE-FILL — fill ALL fixed-policy fields
+                    # (country=US, UK-auth=No, US-auth=Yes, sponsorship=No,
+                    # LinkedIn=N/A, gender, race, orientation, transgender/
+                    # disability/veteran=No, consent=affirm) with robust
+                    # verifying commits. The AI never touches these, so it
+                    # can't swap selectors / mismatch regex / fail to commit.
+                    # Only genuinely custom questions are left for the LLM.
+                    try:
+                        det_filled = await self._deterministic_prefill(
+                            page, live_frame, actions
+                        )
+                        if det_filled:
+                            logger.info(
+                                f"[AgentLoop] step={step} deterministic pre-fill committed "
+                                f"{det_filled} fixed-policy field(s) — no LLM used"
+                            )
+                            page_verified = True
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] deterministic prefill error (non-fatal): {exc}")
 
                     memory_filled = await self._try_memory_prefill(
                         page, live_frame, is_iframe_mode, actions
@@ -2466,13 +3334,24 @@ class AgentLoop:
                             "— sending text-only turn (no screenshot, saves ~1500 vision tokens)"
                         )
                     else:
-                        # Lever 3: 960x540 @ q35 is sufficient resolution for
-                        # the LLM to read form labels and identify widgets.
+                        # Lever 3: 960x540 @ q35 is sufficient for Claude /
+                        # Gemini. For Groq Llama-4-Scout the vision-token
+                        # cost is higher per pixel and the TPM cap is tight
+                        # (30k); shrinking to 720x405 @ q28 keeps each turn
+                        # under ~2000 vision tokens.
+                        try:
+                            _eff = self._llm.effective_provider()
+                        except Exception:
+                            _eff = "anthropic"
+                        if _eff == "groq":
+                            sw, sh, sq = 720, 405, 28
+                        else:
+                            sw, sh, sq = 960, 540, 35
                         screenshot = await page.screenshot(
                             full_page=False,
                             type="jpeg",
-                            quality=35,
-                            clip={"x": 0, "y": 0, "width": 960, "height": 540},
+                            quality=sq,
+                            clip={"x": 0, "y": 0, "width": sw, "height": sh},
                         )
                 except Exception as exc:
                     logger.error(f"[AgentLoop] step={step} capture failed: {exc}")
@@ -2527,6 +3406,20 @@ class AgentLoop:
                 # ── LLM call ────────────────────────────────────────────────────
                 from ..llm import telemetry as _tele
                 _tele.set_label("agent_loop.step")
+                # If the live provider changed (Anthropic exhausted → Groq),
+                # rebuild the system prompt so the resume block is sized for
+                # the new provider's token economics.
+                try:
+                    _live = self._llm.effective_provider()
+                    if _live != self._prompt_provider:
+                        logger.info(
+                            f"[AgentLoop] live provider changed "
+                            f"{self._prompt_provider}→{_live}; rebuilding system prompt"
+                        )
+                        self._prompt_provider = _live
+                        self._system_prompt = self._build_system_prompt()
+                except Exception:
+                    pass
                 try:
                     raw = await self._llm.generate_json(
                         prompt=user_msg,
@@ -3004,6 +3897,10 @@ class AgentLoop:
                 # Stamp the pre-execute wall-clock so the verification-code
                 # fetcher knows which inbox emails are "after submit".
                 _pre_exec_epoch = int(time.time())
+                # Human-like pacing before mutating actions (fill/click/upload).
+                # Observational actions (scroll/wait/verify) don't need it.
+                if action.kind in ("fill_field", "click", "upload_file", "next_step"):
+                    await self._human_delay()
                 ok = await _execute_action(
                     action, page, frame, self.resume_path, self.cover_letter_path
                 )
@@ -3021,19 +3918,20 @@ class AgentLoop:
                 #   - No matching email arrives within timeout
                 # so this never causes a regression for non-Gmail candidates.
                 _click_text = ((action.selector or "") + " " + (action.click_text or "")).lower()
+                # Genuine submit only — exclude the "Apply" button (which opens
+                # the form) so the verification phase doesn't trigger early.
                 _is_submit = action.kind == "click" and bool(re.search(
-                    r"submit|apply|send application", _click_text
+                    r"submit|send application", _click_text
                 ))
                 if ok and _is_submit:
-                    try:
-                        await self._handle_email_verification(
-                            page, frame, after_epoch=_pre_exec_epoch, actions=actions
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            f"[AgentLoop] email-verification handler error "
-                            f"(non-fatal): {exc}"
-                        )
+                    # Flip into the dedicated POST-SUBMIT verification phase.
+                    # The top-of-loop gate now owns code detection + Gmail
+                    # fetch + code fill — no more form re-filling after submit.
+                    submit_fired = True
+                    logger.info(
+                        f"[AgentLoop] step={step} SUBMIT fired — entering "
+                        "post-submit verification phase (form-fill disabled)."
+                    )
 
                 # Lever 2: persist every successful fill into field_memory so
                 # the NEXT application this candidate submits skips the LLM

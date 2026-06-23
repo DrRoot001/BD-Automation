@@ -96,7 +96,7 @@ _DEFAULT_CANDIDATE = {
     "willing_to_relocate": "Yes",
     "background_check": "Yes",
     "drug_test": "Yes",
-    "referral_source": "LinkedIn",
+    "referral_source": "",
     "start_date": "Immediately",
 }
 CANDIDATE: dict = dict(_DEFAULT_CANDIDATE)
@@ -480,15 +480,30 @@ async def main():
             try:
                 from app.browser_automation.forms import memory as _fm
                 _cand_id = RESOLVED_CANDIDATE_ID
+                # NOTE: LinkedIn is intentionally NOT in this sync map —
+                # operator policy is to always answer LinkedIn fields with
+                # "N/A", not the real URL from the resume. Persisting the
+                # real URL would defeat the runtime override on next run.
                 _label_map = {
                     "name": ("Name", derived.get("name")),
                     "first_name": ("First Name", derived.get("first_name")),
                     "last_name": ("Last Name", derived.get("last_name")),
                     "email": ("Email", derived.get("email")),
                     "phone": ("Phone", derived.get("phone")),
-                    "linkedin_url": ("LinkedIn Profile", derived.get("linkedin_url")),
                     "website": ("Website", derived.get("website")),
                 }
+                # Pin LinkedIn → "N/A" in memory so even if a previous
+                # session cached a real URL it gets overwritten this run.
+                try:
+                    _fm.remember(
+                        label="LinkedIn Profile",
+                        field_type="text",
+                        value="N/A",
+                        source="policy_override",
+                        candidate_id=_cand_id,
+                    )
+                except Exception as exc:
+                    logger.debug(f"[resume-parse] LinkedIn N/A pin failed: {exc}")
                 for _, (lbl, val) in _label_map.items():
                     if val:
                         try:

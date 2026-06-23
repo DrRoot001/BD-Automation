@@ -48,8 +48,58 @@ _SUBJECT_HINTS_RE = re.compile(
     r"\b(verif|confirm|code|security|one[-\s]?time)\b",
     re.I,
 )
-# Most ATSes use 6 digits; Greenhouse Vercel-style uses 8. Accept 4–8.
-_CODE_RE = re.compile(r"\b(\d{4,8})\b")
+
+# Greenhouse / Vercel verification codes are ALPHANUMERIC and case-sensitive
+# (real example: "3T3PKP3f"), NOT plain digits. An earlier digits-only regex
+# (\d{4,8}) silently missed these and grabbed a year like "2026" from the
+# email body instead. Extraction strategy, in priority order:
+#   1. The token that immediately follows a "code … :" cue phrase.
+#   2. A standalone alphanumeric token 5–10 chars that MIXES letters+digits
+#      (strong signal it's a code, not a word or a year).
+#   3. A standalone 6–8 digit run (covers ATSes that DO use numeric codes).
+# Years (19xx / 20xx) are explicitly excluded.
+_CODE_CUE_RE = re.compile(
+    r"(?:security\s+code|verification\s+code|your\s+code|this\s+code|"
+    r"code\s+(?:is|field[^:]*)|code)\s*[:\-]?\s*\*?\s*([A-Za-z0-9]{5,10})\b",
+    re.I,
+)
+_CODE_MIXED_RE = re.compile(r"\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)([A-Za-z0-9]{5,10})\b")
+_CODE_DIGITS_RE = re.compile(r"\b(\d{6,8})\b")
+_YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
+
+
+def _pick_code(text: str) -> Optional[str]:
+    """Extract the most likely verification code from a blob of text.
+
+    Case is PRESERVED — the Greenhouse code field is case-sensitive.
+
+    Priority:
+      1. A MIXED alphanumeric token (has BOTH a letter and a digit), 5–10
+         chars — this is the strongest possible code signal (real example
+         "3T3PKP3f"). English words ("field", "application", "security")
+         are all-alpha and never match; years are all-digit and never match.
+      2. Cue-anchored token that follows a "code …:" phrase (covers
+         all-letter or all-digit codes that lack the mixed signal).
+      3. A standalone 6–8 digit run, excluding years (numeric-code ATSes).
+    """
+    if not text:
+        return None
+    # 1. Mixed alphanumeric token — return the FIRST one that isn't a year.
+    for m in _CODE_MIXED_RE.finditer(text):
+        tok = m.group(1)
+        if not _YEAR_RE.match(tok):
+            return tok
+    # 2. Cue-anchored. Require a colon/space-delimited token after the cue;
+    #    prefer the LAST hit (the code usually follows the final phrase).
+    cue_hits = [m.group(1) for m in _CODE_CUE_RE.finditer(text)
+                if not _YEAR_RE.match(m.group(1))]
+    if cue_hits:
+        return cue_hits[-1]
+    # 3. Pure-digit fallback (6–8 digits, excluding years).
+    for m in _CODE_DIGITS_RE.finditer(text):
+        if not _YEAR_RE.match(m.group(1)):
+            return m.group(1)
+    return None
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -91,12 +141,9 @@ async def detect_code_input(page, frame=None) -> Optional[CodeInputShape]:
 
 
 _DETECT_JS = r"""() => {
-    // Strategy:
-    //  1. Look for N>=4 adjacent <input maxlength=1> boxes whose ids share a
-    //     common prefix (e.g. #security-input-0 ... #security-input-7) —
-    //     classic split-code shape.
-    //  2. Otherwise look for ONE visible input whose label / placeholder /
-    //     name / id mentions "code" / "verif" / "OTP".
+    // Robustly detect the post-submit verification-code screen. Greenhouse
+    // renders N separate single-char boxes with ids like security-input-0..7
+    // (NOT always maxlength=1), so detection must not rely on maxlength alone.
     function visible(el) {
         const s = window.getComputedStyle(el);
         if (s.display === 'none' || s.visibility === 'hidden') return false;
@@ -106,54 +153,75 @@ _DETECT_JS = r"""() => {
     function labelFor(el) {
         if (el.getAttribute('aria-label')) return el.getAttribute('aria-label');
         if (el.id) {
-            const l = document.querySelector('label[for="' + el.id + '"]');
+            const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
             if (l) return (l.textContent || '').trim();
         }
         return el.placeholder || el.name || el.id || '';
     }
+    function selFor(el){
+        return el.id ? '#' + CSS.escape(el.id)
+             : (el.name ? 'input[name="' + el.name + '"]' : '');
+    }
+    const CODE_KEY = /(verif|confirm|otp|one[-\s]?time|security|access[-\s]?code|\bcode\b|pin)/i;
 
-    // --- Split shape ---
-    const candidates = Array.from(document.querySelectorAll(
-        'input[maxlength="1"], input[type="tel"][maxlength="1"], '
-      + 'input[type="number"][maxlength="1"], '
-      + 'input[inputmode="numeric"][maxlength="1"]'
+    // ── 1. Greenhouse-style id-prefix cluster (security-input-0,1,2,…) ──
+    // Group all visible text/tel/number inputs by the non-digit prefix of
+    // their id/name. Any group of 4–10 sharing a prefix that looks code-ish
+    // is a split code input — regardless of maxlength.
+    const allInputs = Array.from(document.querySelectorAll(
+        'input[type="text"],input[type="tel"],input[type="number"],'
+      + 'input[inputmode="numeric"],input:not([type])'
     )).filter(visible);
-    if (candidates.length >= 4 && candidates.length <= 12) {
-        // Make sure they're broadly clustered — share a parent within 3 levels
-        const first = candidates[0];
-        const cluster = candidates.filter(el => {
-            let p = el, q = first;
-            for (let i = 0; i < 4; i++) {
-                if (p === q.parentElement || q === p.parentElement) return true;
-                if (p.parentElement === q.parentElement) return true;
-                p = p.parentElement; q = q.parentElement;
-                if (!p || !q) break;
-            }
-            return false;
+    const groups = {};
+    for (const el of allInputs) {
+        const key = (el.id || el.name || '');
+        const prefix = key.replace(/[-_]?\d+$/, '');   // strip trailing index
+        if (!prefix) continue;
+        (groups[prefix] = groups[prefix] || []).push(el);
+    }
+    for (const [prefix, els] of Object.entries(groups)) {
+        if (els.length < 4 || els.length > 10) continue;
+        const looksCode = CODE_KEY.test(prefix) || els.every(e => {
+            const ml = parseInt(e.getAttribute('maxlength')||'0',10); return ml===1;
         });
-        if (cluster.length >= 4) {
-            const sels = cluster.map(el => el.id ? '#' + CSS.escape(el.id)
-                                : (el.name ? 'input[name="' + el.name + '"]' : ''));
-            const allOk = sels.every(s => s);
-            if (allOk) return { kind: 'split', selectors: sels, digits: cluster.length };
-        }
+        if (!looksCode) continue;
+        const sels = els.map(selFor);
+        if (sels.every(s => s)) return { kind:'split', selectors: sels, digits: els.length };
     }
 
-    // --- Single-input fallback ---
-    const KEY = /(verif|confirm|otp|one[-\s]?time|security|access|code)/i;
-    const inputs = Array.from(document.querySelectorAll(
-        'input[type="text"], input[type="tel"], input[type="number"], '
-      + 'input[inputmode="numeric"], input:not([type])'
-    )).filter(visible);
-    for (const el of inputs) {
-        const lbl = labelFor(el);
-        if (!KEY.test(lbl)) continue;
-        const sel = el.id ? '#' + CSS.escape(el.id)
-                  : (el.name ? 'input[name="' + el.name + '"]' : '');
+    // ── 2. maxlength=1 cluster fallback (any ids) ──
+    const ones = allInputs.filter(e => parseInt(e.getAttribute('maxlength')||'0',10) === 1);
+    if (ones.length >= 4 && ones.length <= 10) {
+        const sels = ones.map(selFor);
+        if (sels.every(s => s)) return { kind:'split', selectors: sels, digits: ones.length };
+    }
+
+    // ── 3. Single code input — match by label OR id/name/placeholder ──
+    for (const el of allInputs) {
+        const hay = (labelFor(el) + ' ' + (el.id||'') + ' ' + (el.name||'') + ' ' + (el.placeholder||'')).toLowerCase();
+        if (!CODE_KEY.test(hay)) continue;
+        const sel = selFor(el);
         if (!sel) continue;
         let digits = parseInt(el.getAttribute('maxlength') || '0', 10);
-        if (!digits || digits > 12) digits = 6;
-        return { kind: 'single', selectors: [sel], digits };
+        if (!digits || digits > 12) digits = 8;
+        return { kind:'single', selectors:[sel], digits };
+    }
+
+    // ── 4. Page-text cue + ANY lone visible text input ──
+    // If the page clearly says a code was sent but the inputs are unusual,
+    // fall back to the first visible text input on the screen.
+    const bodyTxt = (document.body.innerText || '').toLowerCase();
+    const CUE = /(security code|verification code|enter the code|we (sent|emailed)|check your email|code (we|that) (sent|emailed)|sent (you )?a code)/;
+    if (CUE.test(bodyTxt)) {
+        // Prefer a small cluster if present, else the first lone text input.
+        const lone = allInputs.find(e => visible(e));
+        if (lone) {
+            const sel = selFor(lone);
+            if (sel) {
+                const ml = parseInt(lone.getAttribute('maxlength')||'0',10);
+                return { kind:'single', selectors:[sel], digits: (ml&&ml<=12)?ml:8 };
+            }
+        }
     }
     return null;
 }"""
@@ -167,32 +235,36 @@ async def fill_code(page, frame, shape: CodeInputShape, code: str) -> bool:
     """
     if not shape or not code:
         return False
-    digits = re.sub(r"\D", "", code)
-    if not digits:
+    # IMPORTANT: codes are ALPHANUMERIC and case-sensitive (e.g. "3T3PKP3f").
+    # Do NOT strip letters — only strip surrounding whitespace.
+    chars = code.strip()
+    if not chars:
         return False
     ctx = frame or page
 
     if shape.kind == "split":
-        # One digit per box. If we have more digits than boxes, take the
-        # first N. If fewer, fall back to typing in the first box (some
-        # widgets auto-advance on keystroke).
+        # One character per box (alphanumeric, NOT digits-only). If we have
+        # more chars than boxes, take the first N. If fewer, type into the
+        # first box (some widgets auto-advance on keystroke).
         boxes = shape.selectors
-        if len(digits) < len(boxes):
+        if len(chars) < len(boxes):
             try:
                 first = ctx.locator(boxes[0]).first
                 await first.click(timeout=2000)
-                await first.type(digits, delay=80)
+                await first.type(chars, delay=80)
                 await asyncio.sleep(0.4)
                 return True
             except Exception as exc:
                 logger.debug(f"[verify] split fallback type failed: {exc}")
                 return False
-        for sel, d in zip(boxes, digits):
+        for sel, ch in zip(boxes, chars):
             try:
                 loc = ctx.locator(sel).first
-                # focus + key press preserves React's auto-advance behavior.
                 await loc.click(timeout=2000)
-                await loc.press(d, timeout=2000)
+                # Use type (not press) so uppercase letters / mixed case
+                # commit correctly — press('T') is a key event, type('T')
+                # inserts the literal character the field expects.
+                await loc.type(ch, delay=40, timeout=2000)
                 await asyncio.sleep(0.05)
             except Exception as exc:
                 logger.debug(f"[verify] split fill {sel} failed: {exc}")
@@ -217,10 +289,10 @@ async def fill_code(page, frame, shape: CodeInputShape, code: str) -> bool:
                     return el.value === v;
                 } catch(e) { return false; }
             }""",
-            digits,
+            chars,
         )
         if not committed:
-            await loc.fill(digits, timeout=3000)
+            await loc.fill(chars, timeout=3000)
         await asyncio.sleep(0.3)
         return True
     except Exception as exc:
@@ -268,18 +340,21 @@ def _is_likely_verification(payload_headers: dict, snippet: str) -> bool:
 
 
 def _extract_code_from_message(msg: dict) -> Optional[str]:
-    """Pull the first 4–8 digit number out of a Gmail message payload."""
-    # Prefer the subject — Greenhouse / Lever often put the code there.
+    """Pull the verification code (alphanumeric, case-sensitive) out of a
+    Gmail message. Scans snippet → body → subject in that order, because the
+    snippet usually contains the cue phrase ("paste this code … : CODE")
+    while the subject often only says "Security code for your application".
+    """
     headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
     subj = headers.get("Subject") or ""
     snip = msg.get("snippet") or ""
 
-    for hay in (subj, snip):
-        m = _CODE_RE.search(hay)
-        if m:
-            return m.group(1)
+    # Snippet first — it carries the cue phrase with the actual code.
+    code = _pick_code(snip)
+    if code:
+        return code
 
-    # Fall back: decode the body parts and scan.
+    # Then the decoded body parts (full text, may include the code in HTML).
     parts = msg.get("payload", {}).get("parts") or [msg.get("payload", {})]
     for part in parts:
         body = (part or {}).get("body") or {}
@@ -290,10 +365,13 @@ def _extract_code_from_message(msg: dict) -> Optional[str]:
             decoded = base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
         except Exception:
             continue
-        m = _CODE_RE.search(decoded)
-        if m:
-            return m.group(1)
-    return None
+        code = _pick_code(decoded)
+        if code:
+            return code
+
+    # Subject last — least likely to contain the code, most likely to contain
+    # a misleading number (e.g. "Vercel" + year).
+    return _pick_code(subj)
 
 
 def _gmail_search_code_sync(
