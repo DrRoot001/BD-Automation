@@ -219,6 +219,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         "job_url":          job_data.get("source_url") or "",
         "platform":         job_data.get("source") or "",
         "ats_type":         job_data.get("ats_type") or "",
+        "company":          job_data.get("company") or "",
         "candidate_profile": candidate_profile,
         "resume_url":        resume_url,
         "cover_letter_url":  cover_letter_url,

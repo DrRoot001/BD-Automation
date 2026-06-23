@@ -14,6 +14,7 @@ from .claude_client import (
     get_gemini,
     get_llm,
 )
+from . import telemetry
 
 __all__ = [
     "ClaudeClient",
@@ -21,4 +22,5 @@ __all__ = [
     "LLMUnavailable",
     "get_llm",
     "get_gemini",
+    "telemetry",
 ]
