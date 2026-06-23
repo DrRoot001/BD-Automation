@@ -47,7 +47,7 @@
 <body>
 
   <div class="salutation">
-    Dear {{ letter.hiring_manager | default("Hiring Team") }},
+    Dear Hiring Team,
   </div>
 
   <div class="body">
@@ -56,7 +56,7 @@
     {% endfor %}
   </div>
 
-  <div class="sign-off">Sincerely,</div>
+  <div class="sign-off">Best regards,</div>
   <div class="signature">{{ resume.basics.name }}</div>
 
 </body>

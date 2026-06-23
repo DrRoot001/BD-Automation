@@ -1,192 +1,174 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from pydantic import BaseModel
-from datetime import datetime, timedelta
-from jose import JWTError, jwt
-from passlib.context import CryptContext
-
+from httpx import AsyncClient
 from app.database import get_db
 from app.config import get_settings
+from sqlalchemy import select
+
+from app.models.user import User
+from pydantic import EmailStr
+from fastapi import Body, Path
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 settings = get_settings()
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-class LoginRequest(BaseModel):
-    email: str
-    password: str
 
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str = "bearer"
 
-def create_access_token(data: dict, expires_delta: timedelta | None = None):
-    """Create JWT access token."""
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
+
+async def validate_supabase_token(authorization: str | None = Header(None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing auth token")
+    token = authorization.split(" ", 1)[1]
+
+    async with AsyncClient() as client:
+        resp = await client.get(
+            f"{settings.supabase_url}/auth/v1/user",
+            headers={
+                "apikey": settings.supabase_service_role_key or settings.supabase_anon_key,
+                "Authorization": f"Bearer {token}",
+            },
+            timeout=10.0,
+        )
+
+    if resp.status_code != 200:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Supabase token")
+
+    return resp.json()
+
+
+async def get_current_user(token_data: dict = Depends(validate_supabase_token), db: AsyncSession = Depends(get_db)) -> User:
+    supabase_user_id = token_data.get("id")
+    email = token_data.get("email")
+
+    if not supabase_user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token payload")
+
+    query = select(User).where(User.supabase_user_id == supabase_user_id)
+    result = await db.execute(query)
+    user = result.scalars().first()
+
+    # auto-promote a configured supabase user id to admin
+    admin_id = settings.supabase_admin_user_id or ""
+    is_admin = bool(admin_id and supabase_user_id == admin_id)
+
+    if not user:
+        role_value = "admin" if is_admin else "bd_user"
+        user = User(supabase_user_id=supabase_user_id, email=email or "", role=role_value)
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
     else:
-        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
-    
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
-    return encoded_jwt
+        # if env says this supabase id should be admin but DB record isn't, update it
+        if is_admin and getattr(user, "role", None) != "admin":
+            user.role = "admin"
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
 
-from fastapi import Request
-from sqlalchemy import select, update
-from app.models.user import User
-import uuid
+    return user
 
-class UserResponse(BaseModel):
-    id: str
-    email: str
-    role: str
-    full_name: str | None = None
-    created_at: datetime | None = None
 
-@router.get("/me", response_model=UserResponse)
-async def get_current_user(request: Request, db: AsyncSession = Depends(get_db)):
-    """
-    Return current user info based on Authorization header.
-    Decodes the JWT to find the email, then queries the DB.
-    """
-    auth_header = request.headers.get("Authorization")
-    
-    if not auth_header or not auth_header.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="Not authenticated")
-        
-    token = auth_header.split(" ")[1]
-    try:
-        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
-        email = payload.get("sub")
-        if not email:
-            raise HTTPException(status_code=401, detail="Invalid token")
-            
-        result = await db.execute(select(User).where(User.email == email))
-        user = result.scalar_one_or_none()
-        
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+    if current_user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return current_user
 
-        return {
-            "id": str(user.id),
-            "email": user.email,
-            "role": user.role,
-            "full_name": user.full_name,
-            "created_at": user.created_at
-        }
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
 
-@router.post("/login", response_model=TokenResponse)
-async def login(credentials: LoginRequest, db: AsyncSession = Depends(get_db)):
-    """
-    Authenticate user and return JWT token.
-    """
-    try:
-        if not credentials.email:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            
-        result = await db.execute(select(User).where(User.email == credentials.email))
-        user = result.scalar_one_or_none()
-        
-        if not user or not user.hashed_password:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid credentials",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-            
-        # if not pwd_context.verify(credentials.password, user.hashed_password):
-        #     raise HTTPException(
-        #         status_code=status.HTTP_401_UNAUTHORIZED,
-        #         detail="Invalid credentials",
-        #         headers={"WWW-Authenticate": "Bearer"},
-        #     )
-        
-        access_token = create_access_token(data={"sub": credentials.email})
-        return {"access_token": access_token, "token_type": "bearer"}
-    except Exception as e:
-        import traceback
-        import sys
-        print(f"LOGIN ERROR: {type(e)} {e}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        raise e
+@router.get("/me")
+async def me(current_user: User = Depends(get_current_user)):
+    return {
+        "id": str(current_user.id),
+        "email": current_user.email,
+        "role": current_user.role,
+        "full_name": current_user.full_name,
+    }
 
-# ── ADMIN ENDPOINTS ─────────────────────────────────────────────────────────
 
-class CreateUserRequest(BaseModel):
-    name: str
-    email: str
+class CreateBdUserRequest(BaseModel):
+    email: EmailStr
     password: str
-    role: str
+    full_name: str | None = None
+
 
 class UpdateRoleRequest(BaseModel):
     role: str
 
-@router.post("/admin/create_bd_user", response_model=UserResponse)
-async def create_bd_user(req: CreateUserRequest, db: AsyncSession = Depends(get_db)):
-    # Check if email exists
-    result = await db.execute(select(User).where(User.email == req.email))
-    if result.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="Email already registered")
-        
-    user = User(
-        email=req.email,
-        full_name=req.name,
-        role=req.role,
-        hashed_password=pwd_context.hash(req.password)
-    )
+
+@router.post("/admin/create_bd_user")
+async def create_bd_user(
+    payload: CreateBdUserRequest,
+    current_admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if not settings.supabase_service_role_key:
+        raise HTTPException(status_code=500, detail="Supabase service role key not configured")
+
+    # create user in Supabase via Admin API
+    async with AsyncClient() as client:
+        resp = await client.post(
+            f"{settings.supabase_url}/auth/v1/admin/users",
+            headers={
+                "apikey": settings.supabase_service_role_key,
+                "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "email": payload.email,
+                "password": payload.password,
+                "user_metadata": {"full_name": payload.full_name} if payload.full_name else {},
+            },
+            timeout=10.0,
+        )
+
+    if resp.status_code not in (200, 201):
+        raise HTTPException(status_code=resp.status_code, detail=f"Supabase error: {resp.text}")
+
+    supabase_user = resp.json()
+
+    # create local mapping
+    user = User(supabase_user_id=supabase_user.get("id"), email=supabase_user.get("email") or payload.email, full_name=payload.full_name or "", role="bd_user")
     db.add(user)
     await db.commit()
     await db.refresh(user)
-    
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "role": user.role,
-        "full_name": user.full_name,
-        "created_at": user.created_at
-    }
 
-@router.get("/admin/users", response_model=list[UserResponse])
-async def list_users(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).order_by(User.created_at.desc()))
+    return {"id": str(user.id), "supabase_user_id": user.supabase_user_id, "email": user.email, "role": user.role}
+
+
+@router.get("/admin/users")
+async def list_users(current_admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
+    query = select(User)
+    result = await db.execute(query)
     users = result.scalars().all()
     return [
-        {
-            "id": str(u.id),
-            "email": u.email,
-            "role": u.role,
-            "full_name": u.full_name,
-            "created_at": u.created_at
-        } for u in users
+        {"id": str(u.id), "supabase_user_id": u.supabase_user_id, "email": u.email, "role": u.role, "full_name": u.full_name}
+        for u in users
     ]
 
-@router.patch("/admin/users/{user_id}/role", response_model=UserResponse)
-async def update_user_role(user_id: str, req: UpdateRoleRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(User).where(User.id == uuid.UUID(user_id)))
-    user = result.scalar_one_or_none()
+
+@router.patch("/admin/users/{user_id}/role")
+async def update_user_role(
+    user_id: int = Path(..., description="Local user ID"),
+    payload: UpdateRoleRequest = Body(...),
+    current_admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    query = select(User).where(User.id == user_id)
+    result = await db.execute(query)
+    user = result.scalars().first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-        
-    user.role = req.role
+
+    if payload.role not in ("admin", "bd_user"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    user.role = payload.role
+    db.add(user)
     await db.commit()
     await db.refresh(user)
-    
-    return {
-        "id": str(user.id),
-        "email": user.email,
-        "role": user.role,
-        "full_name": user.full_name,
-        "created_at": user.created_at
-    }
 
-@router.post("/google")
-async def google_auth(code: str, db: AsyncSession = Depends(get_db)):
-    pass
+    return {"id": str(user.id), "role": user.role}
