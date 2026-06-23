@@ -25,8 +25,8 @@ export default function LoginPage() {
       return
     }
 
-    if (result.success) {
-      router.push('/')
+    if (result.redirect) {
+      router.push(result.redirect)
       router.refresh()
     }
   }

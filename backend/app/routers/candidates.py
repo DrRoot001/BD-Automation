@@ -11,15 +11,32 @@ from app.models.resume import Resume
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
 from app.schemas.resume import ResumeResponse
 
+from app.routers.auth import get_current_user
+from app.models.user import User, UserRole
+
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
 @router.get("", response_model=List[CandidateResponse])
-async def list_candidates(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Candidate))
+async def list_candidates(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role == UserRole.admin:
+        result = await db.execute(select(Candidate).order_by(Candidate.created_at.desc()))
+    else:
+        result = await db.execute(
+            select(Candidate)
+            .where(Candidate.user_id == current_user.id)
+            .order_by(Candidate.created_at.desc())
+        )
     return result.scalars().all()
 
 @router.post("", response_model=CandidateResponse, status_code=201)
-async def create_candidate(candidate: CandidateCreate, db: AsyncSession = Depends(get_db)):
+async def create_candidate(
+    candidate: CandidateCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     # Check if candidate exists by email or name
     from sqlalchemy import or_
     conditions = []
@@ -32,9 +49,14 @@ async def create_candidate(candidate: CandidateCreate, db: AsyncSession = Depend
         result = await db.execute(select(Candidate).where(or_(*conditions)))
         existing_candidate = result.scalars().first()
         if existing_candidate:
+            if not existing_candidate.user_id:
+                existing_candidate.user_id = current_user.id
+                await db.commit()
+                await db.refresh(existing_candidate)
             return existing_candidate
 
     db_candidate = Candidate(**candidate.model_dump())
+    db_candidate.user_id = current_user.id
     db.add(db_candidate)
     try:
         await db.commit()
@@ -271,3 +293,28 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
             await db.rollback()
             raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
         return {"status": "success", "message": "Google OAuth connected successfully", "mock": False}
+
+
+@router.post("/{candidate_id}/google/disconnect")
+async def disconnect_google(candidate_id: str, db: AsyncSession = Depends(get_db)):
+    from uuid import UUID
+    from fastapi import HTTPException
+    from app.models.candidate import Candidate
+    
+    try:
+        cand_uuid = UUID(candidate_id) if isinstance(candidate_id, str) else candidate_id
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+        
+    db_candidate = await db.get(Candidate, cand_uuid)
+    if not db_candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    db_candidate.google_refresh_token = None
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+    return {"status": "success", "message": "Google OAuth disconnected successfully"}

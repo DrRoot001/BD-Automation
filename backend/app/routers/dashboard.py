@@ -11,6 +11,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.routers.auth import get_current_user
+from app.models.user import User, UserRole
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -40,7 +42,11 @@ class ApplicationSummary(BaseModel):
     created_at: datetime
     error_message: Optional[str] = None
     resume_url: Optional[str] = None
+    cover_letter_url: Optional[str] = None
     job_url: Optional[str] = None
+    candidate_name: Optional[str] = None
+    bd_user_name: Optional[str] = None
+    bd_user_email: Optional[str] = None
 
 
 class InterviewSummary(BaseModel):
@@ -98,16 +104,37 @@ def _rate(numerator: int, denominator: int) -> float:
     return round(numerator / denominator * 100, 1) if denominator else 0.0
 
 
+async def get_dashboard_candidate_filter(db: AsyncSession, current_user: User, candidate_id: Optional[UUID]) -> tuple[str, dict]:
+    """Generates the appropriate SQL filter segment and parameter mapping based on user permissions."""
+    if current_user.role == UserRole.admin:
+        if candidate_id:
+            return "AND a.candidate_id = :cid", {"cid": str(candidate_id)}
+        return "", {}
+    else:
+        res = await db.execute(text("SELECT id FROM candidates WHERE user_id = :uid"), {"uid": current_user.id})
+        owned_ids = [str(row[0]) for row in res.fetchall()]
+        if not owned_ids:
+            # Force empty results if user manages zero candidates
+            return "AND a.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid", {}
+        if candidate_id:
+            if str(candidate_id) in owned_ids:
+                return "AND a.candidate_id = :cid", {"cid": str(candidate_id)}
+            else:
+                return "AND a.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid", {}
+        else:
+            return "AND a.candidate_id = ANY(:cids)", {"cids": owned_ids}
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.get("/kpis", response_model=DashboardKPIs)
 async def get_kpis(
     candidate_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Summary KPI cards for the dashboard header."""
-    cid_filter = "AND a.candidate_id = :cid" if candidate_id else ""
-    params = {"cid": str(candidate_id)} if candidate_id else {}
+    cid_filter, params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
 
     rows = await db.execute(text(f"""
         SELECT
@@ -128,7 +155,7 @@ async def get_kpis(
         JOIN applications a ON i.application_id = a.id
         WHERE i.scheduled_at >= NOW()
           AND i.scheduled_at < NOW() + INTERVAL '7 days'
-          {cid_filter.replace('AND a.', 'AND a.')}
+          {cid_filter}
     """), params)
     interviews_this_week = iw_rows.scalar() or 0
 
@@ -154,26 +181,34 @@ async def get_applications(
     limit: int = Query(50, le=200),
     offset: int = Query(0),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Paginated list of applications with job metadata."""
-    filters = []
-    params: dict = {"limit": limit, "offset": offset}
-    if candidate_id:
-        filters.append("a.candidate_id = :cid")
-        params["cid"] = str(candidate_id)
+    cid_filter, cid_params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
+
+    filters = ["1=1"]
+    if cid_filter:
+        filters.append(cid_filter.lstrip("AND "))
     if status:
         filters.append("a.status = :status")
-        params["status"] = status
-    where = ("WHERE " + " AND ".join(filters)) if filters else ""
+
+    params = {"limit": limit, "offset": offset, "status": status, **cid_params}
+    where = "WHERE " + " AND ".join(filters)
 
     rows = await db.execute(text(f"""
         SELECT a.id, a.job_id, j.title, j.company, j.source AS platform,
                a.status, a.fit_score, a.ats_score,
                a.submitted_at, a.created_at, a.error_message,
                r.file_url AS resume_url,
-               COALESCE(j.canonical_url, j.source_url) AS job_url
+               a.cover_letter_url,
+               COALESCE(j.canonical_url, j.source_url) AS job_url,
+               c.name AS candidate_name,
+               u.full_name AS bd_user_name,
+               u.email AS bd_user_email
         FROM applications a
         JOIN jobs j ON a.job_id = j.id
+        JOIN candidates c ON a.candidate_id = c.id
+        LEFT JOIN users u ON c.user_id = u.id
         LEFT JOIN resumes r ON a.resume_id = r.id
         {where}
         ORDER BY a.created_at DESC
@@ -194,7 +229,11 @@ async def get_applications(
             created_at=r.created_at,
             error_message=r.error_message,
             resume_url=r.resume_url,
+            cover_letter_url=r.cover_letter_url,
             job_url=r.job_url,
+            candidate_name=r.candidate_name,
+            bd_user_name=r.bd_user_name or "System",
+            bd_user_email=r.bd_user_email or "",
         )
         for r in rows.fetchall()
     ]
@@ -205,15 +244,18 @@ async def get_interviews(
     candidate_id: Optional[UUID] = Query(None),
     upcoming_only: bool = Query(True),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """List of upcoming (or all) interview records."""
+    cid_filter, cid_params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
+
     filters = ["1=1"]
-    params: dict = {}
-    if candidate_id:
-        filters.append("a.candidate_id = :cid")
-        params["cid"] = str(candidate_id)
+    if cid_filter:
+        filters.append(cid_filter.lstrip("AND "))
     if upcoming_only:
         filters.append("(i.scheduled_at IS NULL OR i.scheduled_at >= NOW())")
+
+    params = {**cid_params}
 
     rows = await db.execute(text(f"""
         SELECT i.id, j.company, j.title AS position, i.round, i.type,
@@ -245,10 +287,10 @@ async def get_interviews(
 async def get_analytics(
     candidate_id: Optional[UUID] = Query(None),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Conversion funnel, per-platform stats, and daily application counts."""
-    cid_filter = "AND a.candidate_id = :cid" if candidate_id else ""
-    params = {"cid": str(candidate_id)} if candidate_id else {}
+    cid_filter, params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
 
     # Conversion funnel
     funnel_rows = await db.execute(text(f"""
@@ -319,7 +361,7 @@ async def get_analytics(
         WHERE e.classification != 'UNKNOWN'
           AND a.submitted_at IS NOT NULL
           AND e.received_at > a.submitted_at
-          {cid_filter.replace('AND a.', 'AND a.')}
+          {cid_filter}
     """), params)
     avg_hours = avg_row.scalar()
 
@@ -336,12 +378,11 @@ async def get_activity_feed(
     candidate_id: Optional[UUID] = Query(None),
     limit: int = Query(20, le=100),
     db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Recent events — status changes, emails classified, interviews detected."""
-    cid_filter = "AND a.candidate_id = :cid" if candidate_id else ""
-    params: dict = {"limit": limit}
-    if candidate_id:
-        params["cid"] = str(candidate_id)
+    cid_filter, cid_params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
+    params = {"limit": limit, **cid_params}
 
     rows = await db.execute(text(f"""
         SELECT 'application.status_changed' AS event_type,

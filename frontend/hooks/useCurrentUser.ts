@@ -7,6 +7,7 @@ export interface CurrentUser {
   id: string
   email: string
   name: string
+  full_name?: string
   role: string
 }
 

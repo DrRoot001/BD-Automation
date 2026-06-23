@@ -3,27 +3,34 @@
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
-import { LayoutDashboard, Users, FileText, Briefcase, Sparkles, Bot, ChevronLeft, ChevronRight, Menu } from 'lucide-react'
+import {
+  LayoutDashboard, Users, FileText, Briefcase,
+  ChevronLeft, ChevronRight, Menu,
+} from 'lucide-react'
 
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 
-const ADMIN_NAV_ITEMS = [
-  { id: 'admin-overview',    label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
-  { id: 'admin-users',       label: 'User Management',  path: '/admin/users',        icon: Users },
-  { id: 'admin-jobs',        label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
-  { id: 'admin-apps',        label: 'All Applications', path: '/admin/applications', icon: FileText },
-  { id: 'admin-import',      label: 'Job Import',       path: '/admin/import',       icon: Bot }, // using Bot icon for now if UploadCloud missing
-  { id: 'admin-health',      label: 'System Health',    path: '/admin/health',       icon: Sparkles }, // using Sparkles for Activity if missing
-  { id: 'admin-settings',    label: 'Settings',         path: '/admin/settings',     icon: Users }, // using Users for Settings if missing
+type NavItem = {
+  id: string
+  label: string
+  path: string
+  icon: React.ElementType
+}
+
+const ADMIN_NAV_ITEMS: NavItem[] = [
+  { id: 'admin-overview',   label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
+  { id: 'admin-users',      label: 'User Management',  path: '/admin/users',        icon: Users },
+  { id: 'admin-jobs',       label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
+  { id: 'admin-apps',       label: 'All Applications', path: '/admin/applications', icon: FileText },
+  { id: 'admin-candidates', label: 'Candidates',       path: '/candidates',         icon: Users },
 ]
 
-const BD_USER_NAV_ITEMS = [
-  { id: 'bd-dashboard',    label: 'Dashboard',       path: '/dashboard',             icon: LayoutDashboard },
-  { id: 'bd-jobs',         label: 'Jobs Feed',       path: '/dashboard/jobs',        icon: Briefcase },
-  { id: 'bd-apps',         label: 'My Applications', path: '/dashboard/applications',icon: FileText },
-  { id: 'bd-interviews',   label: 'Interviews',      path: '/dashboard/interviews',  icon: Users },
-  { id: 'bd-inbox',        label: 'Inbox',           path: '/dashboard/inbox',       icon: Bot }, // inbox
-  { id: 'bd-profile',      label: 'My Profile',      path: '/dashboard/profile',     icon: Sparkles }, // profile
+const BD_USER_NAV_ITEMS: NavItem[] = [
+  { id: 'bd-dashboard',  label: 'Dashboard',       path: '/dashboard',              icon: LayoutDashboard },
+  { id: 'bd-jobs',       label: 'Jobs Feed',       path: '/dashboard/jobs',         icon: Briefcase },
+  { id: 'bd-apps',       label: 'My Applications', path: '/dashboard/applications', icon: FileText },
+  { id: 'bd-interviews', label: 'Interviews',      path: '/dashboard/interviews',   icon: Users },
+  { id: 'bd-candidates', label: 'Candidates',      path: '/candidates',             icon: Users },
 ]
 
 interface SidebarProps {
@@ -34,7 +41,7 @@ interface SidebarProps {
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname()
   const { data: user } = useCurrentUser()
-  
+
   const navItems = user?.role === 'admin' ? ADMIN_NAV_ITEMS : BD_USER_NAV_ITEMS
 
   return (
@@ -47,7 +54,7 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Logo Area */}
       <div className="h-14 flex items-center border-b border-bg-border flex-shrink-0 relative">
         <Link
-          href={user?.role === 'admin' ? "/admin" : "/dashboard"}
+          href={user?.role === 'admin' ? '/admin' : '/dashboard'}
           className={clsx(
             'flex items-center gap-3 flex-1 min-w-0 px-3 hover:opacity-80 transition-opacity',
             collapsed && 'justify-center px-0',
@@ -79,11 +86,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       {/* Navigation Links */}
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         {navItems.map((mod) => {
-          // Exact match for base dashboard, startsWith for subroutes
-          const isActive = (mod.path === '/dashboard' || mod.path === '/admin') 
+          const isActive = (mod.path === '/dashboard' || mod.path === '/admin')
             ? pathname === mod.path
             : pathname.startsWith(mod.path)
-            
           const Icon = mod.icon
           return (
             <Link

@@ -2,14 +2,18 @@
 
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreVertical, Loader2, CheckCircle2, AlertCircle } from 'lucide-react'
+import { Plus, Search, MoreVertical, Loader2, CheckCircle2, AlertCircle, Edit2, Key, Trash2 } from 'lucide-react'
 import { api, BDUser } from '@/lib/api'
 import { formatDistanceToNow } from '@/lib/utils'
 
 export default function UserManagementPage() {
   const queryClient = useQueryClient()
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isMergeModalOpen, setIsMergeModalOpen] = useState(false)
   const [search, setSearch] = useState('')
+  const [activeMenuUserId, setActiveMenuUserId] = useState<string | null>(null)
+  const [editingUser, setEditingUser] = useState<BDUser | null>(null)
+  const [changingPasswordUser, setChangingPasswordUser] = useState<BDUser | null>(null)
 
   const { data: users, isLoading } = useQuery({
     queryKey: ['admin-users'],
@@ -27,10 +31,27 @@ export default function UserManagementPage() {
     }
   })
 
+  const deleteMutation = useMutation({
+    mutationFn: (id: string) => api.deleteUser(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      alert("User deleted successfully")
+    },
+    onError: (err: any) => {
+      alert(err.message || "Failed to delete user")
+    }
+  })
+
   const handleRoleChange = (userId: string, currentRole: string, newRole: string, userName: string) => {
     if (currentRole === newRole) return
     if (confirm(`Change ${userName || 'this user'}'s role to ${newRole}?`)) {
       updateRoleMutation.mutate({ id: userId, role: newRole })
+    }
+  }
+
+  const handleDeleteClick = (user: BDUser) => {
+    if (confirm(`Are you sure you want to permanently delete ${user.full_name || user.email}? This will delete the user from both Supabase Auth and the local database.`)) {
+      deleteMutation.mutate(user.id)
     }
   }
 
@@ -60,6 +81,12 @@ export default function UserManagementPage() {
               className="pl-9 pr-4 py-2 bg-bg-primary border border-bg-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors w-64"
             />
           </div>
+          <button 
+            onClick={() => setIsMergeModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-bg-primary border border-bg-border hover:bg-bg-hover text-text-primary rounded-lg text-sm font-medium transition-colors"
+          >
+            Merge Profiles
+          </button>
           <button 
             onClick={() => setIsModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors"
@@ -143,10 +170,55 @@ export default function UserManagementPage() {
                     <td className="px-6 py-4 text-text-muted whitespace-nowrap">
                       {user.created_at ? formatDistanceToNow(user.created_at) + ' ago' : 'Unknown'}
                     </td>
-                    <td className="px-6 py-4 text-right">
-                      <button className="p-1.5 text-text-muted hover:text-text-primary rounded-md hover:bg-bg-primary transition-colors">
+                    <td className="px-6 py-4 text-right relative">
+                      <button 
+                        onClick={() => setActiveMenuUserId(activeMenuUserId === user.id ? null : user.id)}
+                        className="p-1.5 text-text-muted hover:text-text-primary rounded-md hover:bg-bg-primary transition-colors"
+                      >
                         <MoreVertical className="w-4 h-4" />
                       </button>
+
+                      {activeMenuUserId === user.id && (
+                        <>
+                          <div 
+                            className="fixed inset-0 z-10" 
+                            onClick={() => setActiveMenuUserId(null)}
+                          />
+                          <div className="absolute right-6 mt-1 w-44 bg-bg-secondary border border-bg-border rounded-lg shadow-lg py-1 z-20 text-left animate-in fade-in slide-in-from-top-1 duration-100">
+                            <button
+                              onClick={() => {
+                                setEditingUser(user)
+                                setActiveMenuUserId(null)
+                              }}
+                              className="w-full px-4 py-2 text-xs text-text-primary hover:bg-bg-hover flex items-center gap-2 transition-colors"
+                            >
+                              <Edit2 className="w-3.5 h-3.5 text-text-muted" />
+                              Edit User
+                            </button>
+                            <button
+                              onClick={() => {
+                                setChangingPasswordUser(user)
+                                setActiveMenuUserId(null)
+                              }}
+                              className="w-full px-4 py-2 text-xs text-text-primary hover:bg-bg-hover flex items-center gap-2 transition-colors"
+                            >
+                              <Key className="w-3.5 h-3.5 text-text-muted" />
+                              Change Password
+                            </button>
+                            <div className="h-px bg-bg-border my-1" />
+                            <button
+                              onClick={() => {
+                                handleDeleteClick(user)
+                                setActiveMenuUserId(null)
+                              }}
+                              className="w-full px-4 py-2 text-xs text-danger hover:bg-danger/10 flex items-center gap-2 transition-colors text-left"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              Delete User
+                            </button>
+                          </div>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -158,6 +230,30 @@ export default function UserManagementPage() {
 
       {/* Create User Modal */}
       {isModalOpen && <CreateUserModal onClose={() => setIsModalOpen(false)} />}
+
+      {/* Edit User Modal */}
+      {editingUser && (
+        <EditUserModal 
+          user={editingUser} 
+          onClose={() => setEditingUser(null)} 
+        />
+      )}
+
+      {/* Change Password Modal */}
+      {changingPasswordUser && (
+        <ChangePasswordModal 
+          user={changingPasswordUser} 
+          onClose={() => setChangingPasswordUser(null)} 
+        />
+      )}
+
+      {/* Merge Profiles Modal */}
+      {isMergeModalOpen && (
+        <MergeUsersModal 
+          users={users || []}
+          onClose={() => setIsMergeModalOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -252,6 +348,296 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
                 className="flex-1 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg font-medium transition-colors flex justify-center items-center"
               >
                 {mutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Create User'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function EditUserModal({ user, onClose }: { user: BDUser, onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [name, setName] = useState(user.full_name || '')
+  const [email, setEmail] = useState(user.email || '')
+  const [role, setRole] = useState(user.role || 'bd_user')
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () => api.updateUser(user.id, { name, email, role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      alert("User updated successfully!")
+      onClose()
+    },
+    onError: (err: any) => {
+      setError(err.message || "Failed to update user")
+    }
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    mutation.mutate()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md bg-bg-secondary rounded-2xl shadow-2xl border border-bg-border overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="p-6 border-b border-bg-border flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-text-primary">Edit User Details</h2>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">✕</button>
+        </div>
+        
+        <div className="p-6">
+          {error && (
+            <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">Full Name</label>
+              <input 
+                type="text" required value={name} onChange={e => setName(e.target.value)}
+                className="w-full px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                placeholder="John Doe"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">Email Address</label>
+              <input 
+                type="email" required value={email} onChange={e => setEmail(e.target.value)}
+                className="w-full px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                placeholder="john@example.com"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">Role</label>
+              <select 
+                value={role} onChange={e => setRole(e.target.value)}
+                className="w-full px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-text-primary focus:outline-none focus:border-accent"
+              >
+                <option value="bd_user">BD User</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+
+            <div className="pt-4 flex gap-3">
+              <button 
+                type="button" onClick={onClose}
+                className="flex-1 px-4 py-2 bg-bg-primary border border-bg-border hover:bg-bg-hover text-text-primary rounded-lg font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" disabled={mutation.isPending}
+                className="flex-1 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg font-medium transition-colors flex justify-center items-center"
+              >
+                {mutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Save Changes'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ChangePasswordModal({ user, onClose }: { user: BDUser, onClose: () => void }) {
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () => api.updateUserPassword(user.id, password),
+    onSuccess: () => {
+      alert("Password updated successfully!")
+      onClose()
+    },
+    onError: (err: any) => {
+      setError(err.message || "Failed to change password")
+    }
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+    mutation.mutate()
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md bg-bg-secondary rounded-2xl shadow-2xl border border-bg-border overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="p-6 border-b border-bg-border flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-text-primary">Change Password</h2>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">✕</button>
+        </div>
+        
+        <div className="p-6">
+          <div className="mb-4 text-xs text-text-muted">
+            Changing password for <strong>{user.full_name || user.email}</strong>
+          </div>
+          
+          {error && (
+            <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">New Password</label>
+              <input 
+                type="password" required value={password} onChange={e => setPassword(e.target.value)}
+                className="w-full px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent"
+                placeholder="••••••••"
+              />
+            </div>
+
+            <div className="pt-4 flex gap-3">
+              <button 
+                type="button" onClick={onClose}
+                className="flex-1 px-4 py-2 bg-bg-primary border border-bg-border hover:bg-bg-hover text-text-primary rounded-lg font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" disabled={mutation.isPending}
+                className="flex-1 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg font-medium transition-colors flex justify-center items-center"
+              >
+                {mutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Update Password'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MergeUsersModal({ users, onClose }: { users: BDUser[], onClose: () => void }) {
+  const queryClient = useQueryClient()
+  const [sourceUserId, setSourceUserId] = useState('')
+  const [targetUserId, setTargetUserId] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const mutation = useMutation({
+    mutationFn: () => api.mergeUsers(sourceUserId, targetUserId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      alert("Users merged and candidates re-assigned successfully!")
+      onClose()
+    },
+    onError: (err: any) => {
+      setError(err.message || "Failed to merge user profiles")
+    }
+  })
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault()
+    setError(null)
+
+    if (!sourceUserId || !targetUserId) {
+      setError("Please select both source and target users")
+      return
+    }
+
+    if (sourceUserId === targetUserId) {
+      setError("Cannot merge a user profile into itself")
+      return
+    }
+
+    const sourceUser = users.find(u => u.id === sourceUserId)
+    const targetUser = users.find(u => u.id === targetUserId)
+
+    if (confirm(`Are you absolutely sure you want to merge ${sourceUser?.full_name || sourceUser?.email} into ${targetUser?.full_name || targetUser?.email}? All candidates under the source profile will be re-assigned, and the source user profile will be permanently deleted.`)) {
+      mutation.mutate()
+    }
+  }
+
+  // Filter target user options to exclude the selected source user
+  const availableTargetUsers = users.filter(u => u.id !== sourceUserId)
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="w-full max-w-md bg-bg-secondary rounded-2xl shadow-2xl border border-bg-border overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="p-6 border-b border-bg-border flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-text-primary">Merge BD User Profiles</h2>
+          <button onClick={onClose} className="text-text-muted hover:text-text-primary transition-colors">✕</button>
+        </div>
+        
+        <div className="p-6">
+          {error && (
+            <div className="mb-4 p-3 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="mb-5 p-3.5 bg-warning/10 border border-warning/20 text-xs text-warning rounded-lg flex items-start gap-2.5">
+            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold mb-0.5">Warning: Permanent Action</p>
+              <p className="leading-relaxed">This will transfer all candidate relationships from the source user to the target user, then delete the source user from the system.</p>
+            </div>
+          </div>
+
+          <form onSubmit={handleSubmit} className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">Source User (User leaving the company)</label>
+              <select 
+                value={sourceUserId} 
+                onChange={e => {
+                  setSourceUserId(e.target.value)
+                  if (e.target.value === targetUserId) setTargetUserId('')
+                }}
+                className="w-full px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-text-primary focus:outline-none focus:border-accent text-sm"
+                required
+              >
+                <option value="">-- Select Source User --</option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name ? `${u.full_name} (${u.email})` : u.email} [{u.role === 'admin' ? 'Admin' : 'BD User'}]
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-text-secondary mb-1.5">Target User (User receiving candidates)</label>
+              <select 
+                value={targetUserId} 
+                onChange={e => setTargetUserId(e.target.value)}
+                className="w-full px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-text-primary focus:outline-none focus:border-accent text-sm"
+                required
+                disabled={!sourceUserId}
+              >
+                <option value="">-- Select Target User --</option>
+                {availableTargetUsers.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name ? `${u.full_name} (${u.email})` : u.email} [{u.role === 'admin' ? 'Admin' : 'BD User'}]
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="pt-4 flex gap-3">
+              <button 
+                type="button" onClick={onClose}
+                className="flex-1 px-4 py-2 bg-bg-primary border border-bg-border hover:bg-bg-hover text-text-primary rounded-lg font-medium transition-colors"
+              >
+                Cancel
+              </button>
+              <button 
+                type="submit" 
+                disabled={mutation.isPending || !sourceUserId || !targetUserId}
+                className="flex-1 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg font-medium transition-colors flex justify-center items-center"
+              >
+                {mutation.isPending ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Merge & Re-assign'}
               </button>
             </div>
           </form>

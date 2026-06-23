@@ -17,38 +17,38 @@ interface StatusBadgeProps {
 }
 
 export function StatusBadge({ status, className }: StatusBadgeProps) {
-  let colorClass = 'bg-zinc-800 text-zinc-300' // default / FOUND
+  let colorClass = 'bg-bg-hover text-text-muted border border-bg-border' // default
 
   switch (status) {
     case 'FOUND':
-      colorClass = 'bg-zinc-800 text-zinc-300' // gray
-      break
     case 'ANALYZED':
-      colorClass = 'bg-blue-900/50 text-blue-400' // blue
+      colorClass = 'bg-bg-hover text-text-muted border border-bg-border'
       break
     case 'MATCHED':
-      colorClass = 'bg-green-900/50 text-green-400' // green
+      colorClass = 'bg-success/10 text-success border border-success/20'
       break
     case 'QUEUED':
-      colorClass = 'bg-yellow-900/50 text-yellow-500' // yellow
+      colorClass = 'bg-warning/10 text-warning border border-warning/20'
       break
     case 'SUBMITTED':
-      colorClass = 'bg-teal-900/50 text-teal-400' // teal
+      colorClass = 'bg-accent/10 text-accent border border-accent/20'
       break
     case 'REJECTED':
-      colorClass = 'bg-red-900/50 text-red-400' // red
+    case 'FAILED':
+    case 'BLOCKED':
+      colorClass = 'bg-danger/10 text-danger border border-danger/20'
       break
     case 'OFFER':
-      colorClass = 'bg-amber-700/50 text-amber-400' // gold
+      colorClass = 'bg-success/10 text-success border border-success/20'
       break
     case 'INTERVIEW_R1':
     case 'INTERVIEW_R2':
-      colorClass = 'bg-purple-900/50 text-purple-400' // purple
+      colorClass = 'bg-purple/10 text-purple border border-purple/20'
       break
   }
 
   return (
-    <span className={clsx('px-2.5 py-0.5 rounded-full text-xs font-medium uppercase tracking-wider', colorClass, className)}>
+    <span className={clsx('px-2.5 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider', colorClass, className)}>
       {status.replace('_', ' ')}
     </span>
   )

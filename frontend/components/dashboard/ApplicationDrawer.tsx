@@ -6,6 +6,22 @@ import { useJob } from '@/hooks/useJob'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
 
+const COMPLETED_STATUSES = [
+  'SUBMITTED',
+  'CONFIRMED',
+  'REJECTED',
+  'OFFER',
+  'INTERVIEW_R1',
+  'INTERVIEW_R2',
+  'INTERVIEW_R3',
+  'INTERVIEW_R4',
+  'ASSESSMENT'
+]
+
+function isCompleted(status: string) {
+  return COMPLETED_STATUSES.includes(status?.toUpperCase())
+}
+
 interface ApplicationDrawerProps {
   application: ApplicationSummary | null
   isOpen: boolean
@@ -51,12 +67,28 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
           <div className="flex items-start justify-between bg-bg-primary p-5 rounded-xl border border-bg-border">
             <div>
               <div className="text-xs text-text-muted uppercase tracking-wider font-semibold mb-2">Current Status</div>
-              <StatusBadge status={application.status} />
+              <StatusBadge status={isCompleted(application.status) ? application.status : 'FAILED'} />
               
-              {application.status === 'FAILED' && application.error_message && (
-                <div className="mt-3 text-sm text-danger flex items-start gap-2 bg-danger/10 p-3 rounded-lg border border-danger/20">
-                  <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>{application.error_message}</span>
+              {!isCompleted(application.status) && (
+                <div className="mt-3 text-sm text-danger flex flex-col gap-2 bg-danger/10 p-3 rounded-lg border border-danger/20">
+                  <div className="flex items-start gap-2">
+                    <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
+                    <span className="font-semibold">Application Incomplete / Failed</span>
+                  </div>
+                  <span className="text-xs text-danger/80">
+                    {application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity."}
+                  </span>
+                  {application.job_url && (
+                    <a
+                      href={application.job_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-danger hover:bg-danger/90 px-3 py-1.5 rounded-lg w-max transition-colors mt-1 shadow-sm"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      Apply Manually ↗
+                    </a>
+                  )}
                 </div>
               )}
             </div>
@@ -85,7 +117,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
           </div>
 
           {/* Documents */}
-          {(application.resume_url || application.job_url) && (
+          {(application.resume_url || application.cover_letter_url || application.job_url) && (
             <div>
               <h3 className="text-sm font-semibold text-text-primary uppercase tracking-wider mb-4">Documents & Links</h3>
               <div className="flex flex-col gap-3">
@@ -100,7 +132,18 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                     <ExternalLink className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors" />
                   </a>
                 )}
-                {/* Assume cover_letter_url is not in ApplicationSummary, but if it is we add it. The schema doesn't have it explicitly right now, so we skip it or use resume_url if backend merges it. */}
+                
+                {application.cover_letter_url && (
+                  <a href={application.cover_letter_url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2 bg-purple-500/10 text-purple-400 rounded-md">
+                        <FileText className="w-4 h-4" />
+                      </div>
+                      <span className="text-sm text-text-primary font-medium">Tailored Cover Letter</span>
+                    </div>
+                    <ExternalLink className="w-4 h-4 text-text-muted group-hover:text-accent transition-colors" />
+                  </a>
+                )}
                 
                 {application.job_url && (
                   <a href={application.job_url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">

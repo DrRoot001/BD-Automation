@@ -10,6 +10,22 @@ import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2 } from 'luci
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useQueryClient } from '@tanstack/react-query'
 
+const COMPLETED_STATUSES = [
+  'SUBMITTED',
+  'CONFIRMED',
+  'REJECTED',
+  'OFFER',
+  'INTERVIEW_R1',
+  'INTERVIEW_R2',
+  'INTERVIEW_R3',
+  'INTERVIEW_R4',
+  'ASSESSMENT'
+]
+
+function isCompleted(status: string) {
+  return COMPLETED_STATUSES.includes(status?.toUpperCase())
+}
+
 const PAGE_SIZE = 15
 
 function StatusBadge({ status }: { status: string }) {
@@ -160,7 +176,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                   </td>
 
                   <td className="px-3 py-3">
-                    <StatusBadge status={app.status} />
+                    <StatusBadge status={isCompleted(app.status) ? app.status : 'FAILED'} />
                   </td>
 
                   {/* Resume link */}
@@ -183,7 +199,18 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
 
                   {/* JD link */}
                   <td className="px-3 py-3 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
-                    {app.job_url ? (
+                    {!isCompleted(app.status) && app.job_url ? (
+                      <a
+                        href={app.job_url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-danger font-semibold hover:underline"
+                        title="Apply manually to this job"
+                      >
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        Apply Manually ↗
+                      </a>
+                    ) : app.job_url ? (
                       <a
                         href={app.job_url}
                         target="_blank"

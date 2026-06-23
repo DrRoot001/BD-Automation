@@ -1,6 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 
-const API_BASE = process.env.API_URL || 'http://localhost:8000'
+const API_BASE = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api$/, '')
 
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get('auth_token')?.value
@@ -15,28 +15,42 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // 2. Fetch current user from backend with 3s timeout
+  // 2. Fetch current user from backend with 8s timeout
   let user: { role?: string } | null = null
-  let authFailed = false
+  let isUnauthorized = false
+  let isTransientError = false
 
   try {
-    if (token === "mock_admin_token") {
-      user = { role: "admin" }
-    } else if (token === "mock_user_token") {
-      user = { role: "bd_user" }
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 8000)
+    const meRes = await fetch(`${API_BASE}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    if (meRes.ok) {
+      user = await meRes.json()
     } else {
-      authFailed = true
+      if (meRes.status === 401 || meRes.status === 403) {
+        isUnauthorized = true
+      } else {
+        isTransientError = true
+      }
     }
-  } catch (err) {
-    // Network error or timeout
-    authFailed = true
+  } catch {
+    isTransientError = true
   }
 
-  // 3. Invalid token, timeout, or unauthorized
-  if (!user || authFailed) {
-    const response = NextResponse.redirect(new URL('/login', request.url))
-    response.cookies.delete('auth_token')
-    return response
+  // 3. Action based on auth validation
+  if (!user) {
+    if (isUnauthorized || !isTransientError) {
+      const response = NextResponse.redirect(new URL('/login', request.url))
+      response.cookies.delete('auth_token')
+      return response
+    } else {
+      // Transient network timeout or server error. Redirect to login, but DO NOT delete token.
+      return NextResponse.redirect(new URL('/login', request.url))
+    }
   }
 
   // 4. Role-based routing

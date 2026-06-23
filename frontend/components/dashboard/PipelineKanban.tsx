@@ -16,12 +16,12 @@ const PIPELINE_STAGES = [
   { id: 'REJECTED', statuses: ['REJECTED', 'FAILED', 'BLOCKED'] },
 ]
 
-export function PipelineKanban() {
+export function PipelineKanban({ candidateId }: { candidateId?: string }) {
   const router = useRouter()
   
   const { data: applications, isLoading, isError } = useQuery({
-    queryKey: ['applications', 'pipeline'],
-    queryFn: () => api.getApplications({ limit: 100 }), // Fetch more for kanban
+    queryKey: ['applications', 'pipeline', candidateId],
+    queryFn: () => api.getApplications({ candidateId, limit: 100 }), // Fetch more for kanban
     refetchInterval: 30_000,
   })
 

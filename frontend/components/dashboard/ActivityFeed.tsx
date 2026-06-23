@@ -35,10 +35,10 @@ function EventItem({ event }: { event: ActivityEvent }) {
   )
 }
 
-export function ActivityFeed() {
+export function ActivityFeed({ candidateId }: { candidateId?: string }) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['activity-feed'],
-    queryFn: () => api.getActivityFeed(25),
+    queryKey: ['activity-feed', candidateId],
+    queryFn: () => api.getActivityFeed(25, candidateId),
     refetchInterval: 30_000,
   })
 
