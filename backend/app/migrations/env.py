@@ -9,7 +9,7 @@ from alembic import context
 
 # Import your models so Alembic knows about them
 from app.database import Base
-from app.models import candidate, company, job, resume, application, application_history, email, interview
+from app.models import candidate, company, job, resume, cover_letter, application, application_history, email, interview
 
 # this is the Alembic Config object
 config = context.config

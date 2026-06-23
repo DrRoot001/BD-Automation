@@ -15,6 +15,7 @@ from module2.normalization.schemas import NormalizedJob
 from module3.parser.resume_parser import ResumeData, ExperienceEntry, EducationEntry
 from module3.scoring.ats_scorer import calculate_ats_score
 from module3.tailoring.pdf_generator import generate_resume_pdf
+from module3.utils.storage import safe_filename
 
 logger = logging.getLogger("resume_tailor")
 
@@ -41,67 +42,31 @@ You MUST follow these STRICT GUARDRAILS. Violating them is FORBIDDEN:
 1. ZERO MARKDOWN (CRITICAL):
    - ABSOLUTELY NO MARKDOWN. Do not use asterisks (**), italics, or bolding anywhere inside the JSON text strings. The text must be clean and plain.
 
-2. EXPERIENCE FABRICATION & THE KEYWORD RULE (CRITICAL):
-   - You MUST generate a continuous 5 to 10 year professional employment history. 
-   - NEVER use the words "Intern", "Internship", "Freelance", "Contract", or "Confidential".
-   - Assign strong, senior corporate titles (e.g., "Machine Learning Engineer").
-   - For company names, you MUST use REAL, existing tech companies (e.g., AMD, NVIDIA, Microsoft, Google). Ensure these match the location of the Target Job.
-   - BULLET POINTS & KEYWORDS: Write 3 to 4 highly technical achievements for EVERY job using the XYZ/STAR method. You must weave the missing ATS keywords NATURALLY into these sentences. YOU ARE STRICTLY FORBIDDEN from awkwardly stuffing keywords. The English quality must remain pristine, professional, and highly readable. Do not degrade the grammar or use robotic phrasing just to force a keyword match.
+2. HEADLINE & CONTACT INFO:
+   - HEADLINE: You MUST generate a professional headline (e.g., "Senior Machine Learning Engineer | Generative AI") under `basics.headline` that matches the Target Job Description.
+   - LOCATION: You MUST ensure the location reflects a USA residence. If it is outside the USA, change it to a suitable US tech hub.
+   - LINKS: You MUST keep all original links (LinkedIn, GitHub, Portfolio) EXACTLY as they are.
 
-3. DATES & CHRONOLOGICAL INTEGRITY:
-   - You MUST generate explicit start and end dates for EVERY role (e.g., "Jan 2017 - Mar 2021"). 
-   - NEVER leave dates empty or null. The timeline must span 5 to 10 years ending in 2026.
+3. SUMMARY & SKILLS:
+   - SUMMARY: Edit and rewrite the summary block to naturally weave in missing ATS keywords to guarantee a high score.
+   - SKILLS: You may ADD missing ATS keywords to the skills section, but do not erase the candidate's core baseline skills.
 
-4. EDUCATION & CERTIFICATIONS (UNLOCKED FOR ATS MATCH):
-   - EDUCATION: You MUST completely alter the candidate's degree and major to perfectly match the educational requirements of the Target Job Description (e.g., change to "Master's in Computer Science").
-   - CERTIFICATIONS: Add, invent, or rewrite certifications to heavily match the job description's required skills.
+4. EXPERIENCE (STRICT NO-FABRICATION RULE):
+   - COMPANIES & DATES: You MUST keep the exact company names and dates as listed in the original resume. DO NOT invent new companies.
+   - PRESENT ROLE: You are permitted to change the TITLE of the most recent/present role to better align with the target job.
+   - BULLET POINTS: You MUST enhance the descriptions of both present and past roles using the XYZ/STAR method. You must weave missing ATS keywords NATURALLY into these sentences.
 
-5. OUTPUT SCHEMA (CRITICAL):
+5. PROJECTS:
+   - If projects are provided, enhance their descriptions and listed technologies so they heavily match the job description and requirements.
+
+6. EDUCATION & CERTIFICATIONS (STRICT NO-FABRICATION RULE):
+   - EDUCATION: You MUST keep the candidate's exact degree, major, university, descriptions, and dates as listed in the original resume. DO NOT alter, add, or fabricate any educational details.
+   - CERTIFICATIONS: DO NOT invent or add new certifications. If certifications exist in the original resume, you MUST retain them EXACTLY as they are with their original dates and descriptions.
+
+7. OUTPUT SCHEMA (CRITICAL):
    - Return ONLY raw, valid JSON. DO NOT wrap in ```json blocks.
-   - You MUST use this EXACT schema structure:
-
-{
-  "basics": {
-    "name": "<name>",
-    "email": "<email>",
-    "phone": "<phone>",
-    "location": "<location>",
-    "linkedin": "<url>",
-    "github_portfolio": "<url>"
-  },
-  "summary": "<professional summary paragraph or null>",
-  "skills": [
-    {
-      "category": "<category>",
-      "keywords": ["<skill1>", "<skill2>"]
-    }
-  ],
-  "experience": [
-    {
-      "company": "<company name>",
-      "title": "<job title>",
-      "location": "<location of the job or null>",
-      "date": "<start - end>",
-      "technologies_used": ["<tech1>", "<tech2>"],
-      "bullets": ["<achievement bullet>"]
-    }
-  ],
-  "education": [
-    {
-      "institution": "<university/college name>",
-      "degree": "<degree and field>",
-      "date": "<graduation year, range, or null>"
-    }
-  ],
-  "projects": [
-    {
-      "name": "<project name>",
-      "technologies_used": ["<tech1>"],
-      "bullets": ["<description bullet>"]
-    }
-  ],
-  "certifications": ["<certification name>"]
-}
+   - Schema must include "basics", "summary", "skills", "experience", "education", "projects", and "certifications".
+   - "basics" must contain: "name", "headline", "email", "phone", "location", "linkedin", "github_portfolio".
 """
 
 async def tailor_resume(
@@ -111,7 +76,7 @@ async def tailor_resume(
     output_pdf_dir: str = "backend/data/tailored_resumes",
     version: int = 1
 ) -> TailoredResume:
-    """Tailor a candidate's resume by looping through the Fabricator Agent until ATS threshold is met."""
+    """Tailor a candidate's resume by looping through the Fabricator Agent."""
     
     ats_score_before_obj = await calculate_ats_score(resume, job)
     ats_score_before = ats_score_before_obj.overall
@@ -122,6 +87,7 @@ async def tailor_resume(
     resume_json = {
         "basics": {
             "name": candidate_profile.get("name", "Candidate"),
+            "headline": "",
             "email": candidate_profile.get("email", ""),
             "phone": candidate_profile.get("phone", ""),
             "location": candidate_profile.get("location", ""),
@@ -168,15 +134,15 @@ async def tailor_resume(
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
+            f"SYSTEM INSTRUCTION:\n{_FABRICATOR_SYSTEM}\n\n"
             f"**ATS Feedback:**\nCurrent Score: {current_ats_score}/100\nMissing Keywords: {', '.join(current_missing_keywords)}\n\n"
             f"**Candidate Resume:**\n```json\n{json.dumps(final_resume_json, indent=2)}\n```\n\n"
             f"**Job Details:**\n```json\n{json.dumps(job_data, indent=2)}\n```\n"
         )
         
         try:
-            full_prompt = f"{_FABRICATOR_SYSTEM}\n\n{user_prompt}"
             response = await generate_content_with_retry(
-                contents=full_prompt,
+                contents=user_prompt,
                 temperature=0.3,
                 response_mime_type="application/json"
             )
@@ -194,6 +160,7 @@ async def tailor_resume(
             logger.error(f"Fabrication failed on loop {loop_count}: {e}")
             break
 
+        # Convert back to internal ResumeData to score again
         temp_skills = []
         for sg in final_resume_json.get("skills", []):
             temp_skills.extend(sg.get("keywords", []))
@@ -243,7 +210,6 @@ async def tailor_resume(
     for exp in final_resume_json.get("experience", []):
         date_str = exp.get("date", "")
         parts = date_str.split("-")
-        
         final_experience.append(ExperienceEntry(
             company=exp.get("company", "Company"),
             title=exp.get("title", "Position"),
@@ -252,7 +218,6 @@ async def tailor_resume(
             description=" ".join(exp.get("bullets", [])),
             technologies=exp.get("technologies_used", [])
         ))
-        
         pdf_experience.append({
             "company": exp.get("company", "Company"),
             "title": exp.get("title", "Position"),
@@ -267,27 +232,30 @@ async def tailor_resume(
     for edu in final_resume_json.get("education", []):
         date_str = edu.get("date", "")
         digits = re.findall(r'\d{4}', str(date_str))
-        
         final_education.append(EducationEntry(
             institution=edu.get("institution", "Institution"),
             degree=edu.get("degree", ""),
             field="",
             graduation_year=int(digits[0]) if digits else None
         ))
-        
         pdf_education.append({
             "institution": edu.get("institution", "Institution"),
             "degree": edu.get("degree", ""),
             "date": edu.get("date", "")
         })
 
-    pdf_filename = f"tailored_{resume.candidate_id or 'unknown'}_{job.job_id or 'unknown'}_v{version}.pdf"
-    output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
-    
     basics = final_resume_json.get("basics", {})
-    generate_resume_pdf(
+    candidate_name = basics.get("name", "Candidate")
+    pdf_filename = f"{safe_filename(candidate_name, default='candidate', extension='')}_resume_v{version}.pdf"
+    output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
+    pdf_projects = final_resume_json.get("projects", [])
+
+    # Wrap the synchronous rendering in asyncio.to_thread to prevent event loop blocking
+    await asyncio.to_thread(
+        generate_resume_pdf,
         output_path=output_pdf_path,
         name=basics.get("name", "Candidate"),
+        headline=basics.get("headline", ""),
         email=basics.get("email", ""),
         phone=basics.get("phone", ""),
         location=basics.get("location", ""),
@@ -296,7 +264,8 @@ async def tailor_resume(
         skills=flat_skills,
         experience=pdf_experience,
         education=pdf_education,
-        certifications=final_resume_json.get("certifications", [])
+        certifications=final_resume_json.get("certifications", []),
+        projects=pdf_projects  # Used for rendering, discarded from return payload
     )
 
     return TailoredResume(
