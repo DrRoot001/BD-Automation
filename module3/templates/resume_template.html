@@ -29,6 +29,14 @@
       color: #000;
       margin: 0 0 4pt 0;
     }
+    
+    .headline {
+      font-size: 12pt;
+      font-weight: bold;
+      color: #333;
+      margin: 4pt 0;
+      text-transform: capitalize;
+    }
 
     .contact {
       font-size: 9pt;
@@ -141,9 +149,13 @@
 </head>
 <body>
 
-  <!-- HEADER -->
   <div class="header">
     <h1>{{ resume.basics.name }}</h1>
+    
+    {% if resume.basics.headline %}
+      <div class="headline">{{ resume.basics.headline }}</div>
+    {% endif %}
+
     <div class="contact">
       {% if resume.basics.location %}{{ resume.basics.location }} | {% endif %}
       {{ resume.basics.email }}
@@ -153,7 +165,6 @@
     </div>
   </div>
 
-  <!-- SUMMARY -->
   {% if resume.summary %}
   <div class="section">
     <div class="section-title">Professional Summary</div>
@@ -161,7 +172,6 @@
   </div>
   {% endif %}
 
-  <!-- SKILLS -->
   {% if resume.skills and resume.skills|length > 0 %}
   <div class="section">
     <div class="section-title">Skills</div>
@@ -176,7 +186,6 @@
   </div>
   {% endif %}
 
-  <!-- EXPERIENCE -->
   {% if resume.experience and resume.experience|length > 0 %}
   <div class="section">
     <div class="section-title">Professional Experience</div>
@@ -202,7 +211,6 @@
   </div>
   {% endif %}
 
-  <!-- PROJECTS -->
   {% if resume.projects and resume.projects|length > 0 %}
   <div class="section">
     <div class="section-title">Key Projects</div>
@@ -226,7 +234,6 @@
   </div>
   {% endif %}
 
-  <!-- CERTIFICATIONS -->
   {% if resume.certifications and resume.certifications|length > 0 %}
   <div class="section">
     <div class="section-title">Certifications</div>
@@ -238,7 +245,6 @@
   </div>
   {% endif %}
 
-  <!-- EDUCATION -->
   {% if resume.education and resume.education|length > 0 %}
   <div class="section">
     <div class="section-title">Education</div>

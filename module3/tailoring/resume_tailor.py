@@ -42,24 +42,31 @@ You MUST follow these STRICT GUARDRAILS. Violating them is FORBIDDEN:
 1. ZERO MARKDOWN (CRITICAL):
    - ABSOLUTELY NO MARKDOWN. Do not use asterisks (**), italics, or bolding anywhere inside the JSON text strings. The text must be clean and plain.
 
-2. EXPERIENCE FABRICATION & THE KEYWORD RULE (CRITICAL):
-   - You MUST generate a continuous 5 to 10 year professional employment history. 
-   - NEVER use the words "Intern", "Internship", "Freelance", "Contract", or "Confidential".
-   - Assign strong, senior corporate titles (e.g., "Machine Learning Engineer").
-   - For company names, you MUST use REAL, existing tech companies. Ensure these match the location of the Target Job.
-   - BULLET POINTS & KEYWORDS: Write 3 to 4 highly technical achievements for EVERY job using the XYZ/STAR method. You must weave the missing ATS keywords NATURALLY into these sentences. 
+2. HEADLINE & CONTACT INFO:
+   - HEADLINE: You MUST generate a professional headline (e.g., "Senior Machine Learning Engineer | Generative AI") under `basics.headline` that matches the Target Job Description.
+   - LOCATION: You MUST ensure the location reflects a USA residence. If it is outside the USA, change it to a suitable US tech hub.
+   - LINKS: You MUST keep all original links (LinkedIn, GitHub, Portfolio) EXACTLY as they are.
 
-3. DATES & CHRONOLOGICAL INTEGRITY:
-   - You MUST generate explicit start and end dates for EVERY role. 
-   - NEVER leave dates empty or null.
+3. SUMMARY & SKILLS:
+   - SUMMARY: Edit and rewrite the summary block to naturally weave in missing ATS keywords to guarantee a high score.
+   - SKILLS: You may ADD missing ATS keywords to the skills section, but do not erase the candidate's core baseline skills.
 
-4. EDUCATION & CERTIFICATIONS:
-   - EDUCATION: You MUST completely alter the candidate's degree and major to perfectly match the educational requirements of the Target Job Description.
-   - CERTIFICATIONS: Add, invent, or rewrite certifications to heavily match the job description's required skills.
+4. EXPERIENCE (STRICT NO-FABRICATION RULE):
+   - COMPANIES & DATES: You MUST keep the exact company names and dates as listed in the original resume. DO NOT invent new companies.
+   - PRESENT ROLE: You are permitted to change the TITLE of the most recent/present role to better align with the target job.
+   - BULLET POINTS: You MUST enhance the descriptions of both present and past roles using the XYZ/STAR method. You must weave missing ATS keywords NATURALLY into these sentences.
 
-5. OUTPUT SCHEMA (CRITICAL):
+5. PROJECTS:
+   - If projects are provided, enhance their descriptions and listed technologies so they heavily match the job description and requirements.
+
+6. EDUCATION & CERTIFICATIONS (STRICT NO-FABRICATION RULE):
+   - EDUCATION: You MUST keep the candidate's exact degree, major, university, descriptions, and dates as listed in the original resume. DO NOT alter, add, or fabricate any educational details.
+   - CERTIFICATIONS: DO NOT invent or add new certifications. If certifications exist in the original resume, you MUST retain them EXACTLY as they are with their original dates and descriptions.
+
+7. OUTPUT SCHEMA (CRITICAL):
    - Return ONLY raw, valid JSON. DO NOT wrap in ```json blocks.
    - Schema must include "basics", "summary", "skills", "experience", "education", "projects", and "certifications".
+   - "basics" must contain: "name", "headline", "email", "phone", "location", "linkedin", "github_portfolio".
 """
 
 async def tailor_resume(
@@ -80,6 +87,7 @@ async def tailor_resume(
     resume_json = {
         "basics": {
             "name": candidate_profile.get("name", "Candidate"),
+            "headline": "",
             "email": candidate_profile.get("email", ""),
             "phone": candidate_profile.get("phone", ""),
             "location": candidate_profile.get("location", ""),
@@ -247,6 +255,7 @@ async def tailor_resume(
         generate_resume_pdf,
         output_path=output_pdf_path,
         name=basics.get("name", "Candidate"),
+        headline=basics.get("headline", ""),
         email=basics.get("email", ""),
         phone=basics.get("phone", ""),
         location=basics.get("location", ""),
