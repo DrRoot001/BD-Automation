@@ -7,33 +7,21 @@ CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "vector";
 
 -- Create Enums
-CREATE TYPE application_status AS ENUM (
-    'FOUND',
-    'ANALYZED',
-    'MATCHED',
-    'RESUME_UPDATED',
-    'COVER_LETTER_CREATED',
-    'QUEUED',
-    'APPLICATION_STARTED',
-    'FORM_COMPLETED',
-    'SUBMITTED',
-    'CONFIRMED',
-    'INTERVIEW_R1',
-    'INTERVIEW_R2',
-    'REJECTED',
-    'OFFER',
-    'FAILED',
-    'BLOCKED'
+CREATE TYPE userrole AS ENUM (
+    'admin',
+    'bd_user'
 );
 
-CREATE TYPE email_classification AS ENUM (
-    'APPLIED_CONFIRMATION',
-    'INTERVIEW_R1',
-    'INTERVIEW_R2',
-    'ASSESSMENT',
-    'REJECTED',
-    'OFFER',
-    'UNKNOWN'
+-- Table: users
+CREATE TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    supabase_user_id VARCHAR(255) NOT NULL UNIQUE,
+    email VARCHAR(255) NOT NULL UNIQUE,
+    full_name VARCHAR(255),
+    role userrole NOT NULL DEFAULT 'bd_user',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    hashed_password VARCHAR(255)
 );
 
 -- Table: candidates
@@ -48,7 +36,9 @@ CREATE TABLE candidates (
     years_exp INTEGER,
     linkedin_url VARCHAR(500),
     created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    google_refresh_token TEXT,
+    user_id UUID REFERENCES users(id) ON DELETE SET NULL
 );
 
 -- Table: companies
@@ -57,7 +47,7 @@ CREATE TABLE companies (
     name VARCHAR(255) NOT NULL UNIQUE,
     domain VARCHAR(255),
     ats_type VARCHAR(50),
-    rate_limit_config JSONB,
+    rate_limit_config JSON,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -106,7 +96,7 @@ CREATE TABLE applications (
     job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     resume_id UUID REFERENCES resumes(id) ON DELETE SET NULL,
     cover_letter_url VARCHAR(1000),
-    status application_status NOT NULL DEFAULT 'FOUND',
+    status VARCHAR(100) NOT NULL DEFAULT 'FOUND',
     fit_score NUMERIC(5,2),
     ats_score NUMERIC(5,2),
     combined_score NUMERIC(5,2),
@@ -123,9 +113,9 @@ CREATE TABLE applications (
 CREATE TABLE application_history (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-    from_status application_status,
-    to_status application_status NOT NULL,
-    metadata JSONB,
+    from_status VARCHAR(100),
+    to_status VARCHAR(100) NOT NULL,
+    meta_data JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -138,11 +128,11 @@ CREATE TABLE emails (
     from_addr VARCHAR(255),
     subject TEXT,
     body_text TEXT,
-    classification email_classification,
+    classification VARCHAR(100),
     confidence NUMERIC(3,2),
     raw_json JSONB,
     received_at TIMESTAMPTZ,
-    processed_at TIMESTAMPTZ DEFAULT NOW()
+    processed_at TIMESTAMPTZ
 );
 
 -- Table: interviews
@@ -156,4 +146,16 @@ CREATE TABLE interviews (
     interviewer_name VARCHAR(255),
     notes TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Table: cover_letters
+CREATE TABLE cover_letters (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    candidate_id UUID NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+    resume_id UUID REFERENCES resumes(id) ON DELETE SET NULL,
+    file_url VARCHAR(1000) NOT NULL,
+    source VARCHAR(255),
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
