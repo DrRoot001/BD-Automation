@@ -28,7 +28,6 @@ Given a resume JSON and a job description, write a professional cover letter.
 
 Output ONLY a valid JSON object — no markdown, no preamble — in this schema:
 {
-  "hiring_manager": "<Hiring Manager or 'Hiring Team'>",
   "paragraphs": [
     "<One single, combined paragraph containing your entire message. DO NOT output multiple paragraphs.>"
   ]
@@ -96,7 +95,6 @@ async def generate_cover_letter(
         logger.error(f"Failed to generate cover letter JSON: {e}")
         # Safe fallback in case of rate limit or JSON schema failure
         cl_json = {
-            "hiring_manager": f"Hiring Manager at {job.company}",
             "paragraphs": [
                 "I am writing to express my strong interest in the open position. My technical background aligns well with the core requirements outlined in the job description, and I would welcome the opportunity to discuss how I can leverage my experience to contribute to your engineering team. Thank you for your time and consideration."
             ]
@@ -110,7 +108,6 @@ async def generate_cover_letter(
     pdf_filename = f"{safe_filename(candidate_name, default='candidate', extension='')}_cover_letter.pdf"
     output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
     
-    candidate_location = candidate_profile.get("location", "US")
     candidate_location = candidate_profile.get("location", "US")
     candidate_email = candidate_profile.get("email", "email@example.com")
     candidate_phone = candidate_profile.get("phone", "")
