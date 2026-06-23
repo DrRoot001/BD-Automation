@@ -181,6 +181,41 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    "remoterocketship": {
+        "apply_selectors": [
+            "button[aria-label='Apply']",
+            "button:has-text('Apply')",
+            "a.link:has-text('Apply')",
+            "a:has-text('Apply Now')",
+        ],
+        # Submit/success keys delegate to whichever ATS the listing links out
+        # to (Greenhouse / Lever / Ashby / …). The RR adapter pre-resolves
+        # that URL via HTTP before the browser opens, so by the time the
+        # loop sees the form it's already on the ATS host.
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+            "your application has been received",
+        ],
+        "url_hint": (
+            "Listing pages live on remoterocketship.com. Each posting's Apply "
+            "button is an anchor pointing at the underlying ATS (Greenhouse, "
+            "Lever, Ashby, etc.). The adapter pre-resolves that URL via HTTP "
+            "and navigates the browser directly to the ATS form — you should "
+            "never see remoterocketship.com once the form loads."
+        ),
+        "quirks": [
+            "Listing page has NO form fields — only a job description and an Apply button.",
+            "The 'underlying' ATS host determines the actual form layout; treat that ATS's quirks as authoritative.",
+            "If you ever land on a remoterocketship.com URL during fill, the HTTP pre-resolve failed — abort or click Apply with the vision agent.",
+        ],
+    },
+
     "generic": {
         "apply_selectors": [
             "a:has-text('Apply')",

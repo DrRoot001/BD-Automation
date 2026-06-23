@@ -468,7 +468,7 @@ _POLICY_SCAN_JS = r"""() => {
         const fs=el.closest('fieldset'); if(fs){const lg=fs.querySelector('legend'); if(lg) return (lg.textContent||'').trim();}
         let p=el.parentElement;
         for(let i=0;i<6&&p;i++){const l=p.querySelector(':scope > label, :scope > .application-question__label, :scope > .question-label, :scope > div > label'); if(l) return (l.textContent||'').trim(); p=p.parentElement;}
-        const c=el.closest('.application-question,[class*="question"],fieldset,.field'); return c ? (c.textContent||'').slice(0,160).trim() : (el.name||el.id||'');
+        const c=el.closest('.application-question,[class*="question"],fieldset,.field'); return c ? (c.textContent||'').slice(0,500).trim() : (el.name||el.id||'');
     }
     document.querySelectorAll('input, select, textarea, [role="combobox"]').forEach(el => {
         if (out.length >= 60) return;
@@ -483,7 +483,10 @@ _POLICY_SCAN_JS = r"""() => {
         else if (type==='checkbox'||type==='radio'){ value = el.checked ? 'checked' : ''; }
         else { value = (el.value||'').trim(); }
         if (!value && role==='combobox'){ const ctrl=el.closest('[class*="select__control"],[class*="-control"]'); if(ctrl){const sv=ctrl.querySelector('[class*="singleValue"],[class*="-singleValue"],[class*="multi-value"]'); if(sv) value=sv.textContent.trim();} }
-        const entry={ sel, type: (role==='combobox'?'combobox':type), label: labelFor(el).slice(0,160), value };
+        // Bumped slice 160 -> 500 so long consent labels (e.g. dv01's "you
+        // confirm that you will work within the united states...") fit in
+        // full and the policy regex can match against the FULL question text.
+        const entry={ sel, type: (role==='combobox'?'combobox':type), label: labelFor(el).slice(0,500), value };
         out.push(entry);
     });
     return out;
@@ -1104,11 +1107,17 @@ def _sanitize_selector(sel: Optional[str]) -> Optional[str]:
     if not sel:
         return sel
     s = sel.strip()
-    # #1234abc → [id="1234abc"]   (only when the first char after # is a digit)
-    if len(s) >= 2 and s[0] == "#" and s[1].isdigit():
-        # Stop at the first selector-combinator char so we don't swallow trailing
-        # bits like ".foo" or " >.bar". Conservative: take while alphanumeric / _ / -.
+    # #<id>... → [id="<id>"]<rest> when the id is invalid as a CSS ident.
+    # Triggered when:
+    #   (a) first char after # is a digit (e.g. Vercel/Greenhouse digit IDs), OR
+    #   (b) the id chunk contains a CSS-meta char that breaks tokenization
+    #       (e.g. Greenhouse multi-select IDs like "question_37045238002[]"
+    #        where the trailing []s make the whole selector unparseable).
+    if len(s) >= 2 and s[0] == "#":
         body = s[1:]
+        # The "id chunk" runs until a selector combinator/separator.
+        # We treat ANY char other than [A-Za-z0-9_-] as id-terminating, then
+        # decide whether the chunk needs the [id="…"] rewrite.
         cut = 0
         for ch in body:
             if ch.isalnum() or ch in ("_", "-"):
@@ -1116,7 +1125,29 @@ def _sanitize_selector(sel: Optional[str]) -> Optional[str]:
             else:
                 break
         ident, rest = body[:cut], body[cut:]
-        return f'[id="{ident}"]' + rest
+        # First char digit  → always rewrite (case a).
+        # rest is a clearly pathological literal suffix that belongs to the id
+        # token, not a real CSS combinator/attr-selector. We deliberately do
+        # NOT trigger on `[attr=val]` etc. — those are valid CSS and the LLM
+        # never emits a legit attribute selector after a malformed id anyway.
+        starts_with_digit = ident and ident[0].isdigit()
+        needs_attr_form = rest.startswith(("[]", "()", "{}"))
+        if starts_with_digit or needs_attr_form:
+            # Consume trailing junk that belongs to the id token (the literal
+            # `[]` or `()` after question_37045238002). DO NOT consume `.` —
+            # that begins a class selector and is a real combinator.
+            extra = 0
+            for ch in rest:
+                if ch in ("[", "]", "(", ")"):
+                    extra += 1
+                else:
+                    break
+            full_ident = ident + rest[:extra]
+            tail = rest[extra:]
+            # Inside attr-value double quotes, [, ], (, ), . are all literal.
+            # Only " and \ need escaping per CSS spec.
+            escaped = full_ident.replace("\\", "\\\\").replace('"', '\\"')
+            return f'[id="{escaped}"]' + tail
     return sel
 
 
@@ -2595,6 +2626,85 @@ class AgentLoop:
         }
         return "Female" if fn in female else "Male"
 
+    # Minimal city → state map for US locations. Used when the candidate's
+    # location string lacks a state code. We keep it small and pragmatic —
+    # only the cities that show up in real candidate profiles. Add more as
+    # they surface in production.
+    _US_CITY_TO_STATE: dict[str, tuple[str, str]] = {
+        "san francisco": ("California", "CA"),
+        "los angeles":   ("California", "CA"),
+        "san diego":     ("California", "CA"),
+        "san jose":      ("California", "CA"),
+        "oakland":       ("California", "CA"),
+        "sacramento":    ("California", "CA"),
+        "new york":      ("New York", "NY"),
+        "brooklyn":      ("New York", "NY"),
+        "manhattan":     ("New York", "NY"),
+        "nyc":           ("New York", "NY"),
+        "seattle":       ("Washington", "WA"),
+        "austin":        ("Texas", "TX"),
+        "houston":       ("Texas", "TX"),
+        "dallas":        ("Texas", "TX"),
+        "chicago":       ("Illinois", "IL"),
+        "boston":        ("Massachusetts", "MA"),
+        "miami":         ("Florida", "FL"),
+        "atlanta":       ("Georgia", "GA"),
+        "denver":        ("Colorado", "CO"),
+        "portland":      ("Oregon", "OR"),
+        "philadelphia":  ("Pennsylvania", "PA"),
+        "washington":    ("District of Columbia", "DC"),
+        "phoenix":       ("Arizona", "AZ"),
+    }
+    _US_STATE_ABBR: dict[str, str] = {
+        "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+        "CA": "California", "CO": "Colorado", "CT": "Connecticut",
+        "DE": "Delaware", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii",
+        "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa",
+        "KS": "Kansas", "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine",
+        "MD": "Maryland", "MA": "Massachusetts", "MI": "Michigan",
+        "MN": "Minnesota", "MS": "Mississippi", "MO": "Missouri",
+        "MT": "Montana", "NE": "Nebraska", "NV": "Nevada", "NH": "New Hampshire",
+        "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+        "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio",
+        "OK": "Oklahoma", "OR": "Oregon", "PA": "Pennsylvania",
+        "RI": "Rhode Island", "SC": "South Carolina", "SD": "South Dakota",
+        "TN": "Tennessee", "TX": "Texas", "UT": "Utah", "VT": "Vermont",
+        "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+        "WI": "Wisconsin", "WY": "Wyoming", "DC": "District of Columbia",
+    }
+
+    @classmethod
+    def _resolve_us_state(cls, location: str) -> Optional[tuple[str, str]]:
+        """Map a free-form candidate location to (state_name, state_abbr), or
+        None if no real US state can be identified.
+
+        Priority: explicit 2-letter code → full state name in string →
+        city-to-state lookup. Returns None when NONE of these matched — the
+        caller decides what to do (typically: skip the location-dependent
+        policy entry and let the AI handle the field).
+        """
+        if not location:
+            return None
+        s = location.strip()
+        low = s.lower()
+        # Explicit 2-letter code after a comma, e.g. "San Francisco, CA, USA"
+        import re as _re
+        m = _re.search(r",\s*([A-Z]{2})\b", s)
+        if m and m.group(1) in cls._US_STATE_ABBR:
+            abbr = m.group(1)
+            return (cls._US_STATE_ABBR[abbr], abbr)
+        # Full state name appearing anywhere
+        for abbr, name in cls._US_STATE_ABBR.items():
+            if name.lower() in low:
+                return (name, abbr)
+        # City fallback — only when the city occurs as a whole word, not as
+        # a substring (so "Norman" matches but "manchester" does NOT match
+        # "man").
+        for city, (name, abbr) in cls._US_CITY_TO_STATE.items():
+            if _re.search(rf"\b{_re.escape(city)}\b", low):
+                return (name, abbr)
+        return None
+
     def _policy_fields(self) -> list:
         """The fixed-answer policy map. Each entry: (label_regex, value,
         [option aliases for fuzzy dropdown matching]). Order matters —
@@ -2611,7 +2721,52 @@ class AgentLoop:
         gender = self._infer_gender(p.get("first_name") or (p.get("name", "").split() or [""])[0])
         gender_alias = "man" if gender == "Male" else "woman"
         referral = (p.get("referral_source") or "LinkedIn").strip() or "LinkedIn"
-        return [
+
+        # Derive city + US-state from the candidate's location string.
+        # Profile format is typically "City, State[, Country]" or "City, USA".
+        # We do NOT hardcode per-candidate defaults here — the system has to
+        # be candidate-agnostic. If location is empty/generic (just a country
+        # code like "US"), we SKIP the location-dependent policy entries
+        # entirely and let the AgentLoop's AI handle those fields using the
+        # enriched profile context (resume-extracted location lives there).
+        loc_raw = (p.get("location") or "").strip()
+        _country_like = {
+            "", "us", "usa", "u.s.", "u.s.a.", "united states",
+            "united states of america", "america",
+        }
+        if loc_raw.lower() in _country_like or len(loc_raw) <= 2:
+            city = ""              # signals: skip Location (City) policy
+            state_name = ""        # signals: skip dv01-state policy
+            state_abbr = ""
+        else:
+            city = loc_raw.split(",")[0].strip()
+            resolved = self._resolve_us_state(loc_raw)
+            if resolved is None:
+                # Real city but no identifiable US state — let AI handle the
+                # state question. Location (City) policy can still fire.
+                state_name = ""
+                state_abbr = ""
+            else:
+                state_name, state_abbr = resolved
+        salary = (p.get("salary_expectation") or "").strip()
+
+        entries = [
+            # dv01-style consent multi-select: "...your application acknowledges
+            # this and you confirm that you will work within the united states...
+            # what state are you working from?". The options are US STATE NAMES,
+            # so the answer is the candidate's state — NOT "Yes". This MUST go
+            # before the generic `acknowledge` policy below, because both regexes
+            # match this label (it contains both "acknowledges" and "you confirm"),
+            # and the first-match-wins policy loop would otherwise hand it to the
+            # ack policy and try to commit "Yes" against a state-only dropdown.
+            # We only add this if the resolver gave us a real state — otherwise
+            # the AI handles the field using the enriched profile context.
+            *(
+                [(r"you\s+confirm.*work\s+within\s+the\s+united\s+states|what\s+state\s+are\s+you\s+working\s+from",
+                  state_name,
+                  [state_name.lower(), state_abbr.lower()])]
+                if state_name else []
+            ),
             # "Where / how did you hear about us / this role?" — fixed referral
             # source. It's a react-select with options like LinkedIn / Job
             # board / Referral; default to LinkedIn. Listed FIRST so it's
@@ -2646,6 +2801,180 @@ class AgentLoop:
             (r"acknowledge|i have read|double[- ]check|ensuring accuracy|privacy notice|terms of service|i confirm|i agree|consent to",
              "Yes", ["yes", "i acknowledge", "i agree", "i confirm", "i have read", "i understand"]),
         ]
+
+        # ── Remix-Greenhouse (job-boards.greenhouse.io) additions ───────
+        # "Location (City)" autocomplete: candidate's city. Autocomplete branch
+        # in _commit_policy_field handles the API-driven option load.
+        if city:
+            entries.append(
+                (r"^location\s*\(city\)|location\s*\(city|^city\b",
+                 city, [city.lower(), loc_raw.lower()]),
+            )
+        # Salary expectation: pass the candidate's stated number through. If
+        # empty in profile we skip — better to let the AI answer than to type
+        # a wrong default. We don't add aliases (text inputs don't fuzzy-match).
+        if salary:
+            entries.append(
+                (r"salary\s+expect|expected\s+(salary|compensation)|compensation\s+expect",
+                 salary, [salary]),
+            )
+        # dv01-style consent multi-select policy is inserted at the TOP of
+        # `entries` above (priority over the generic acknowledge rule).
+        return entries
+
+    async def _deterministic_file_upload(
+        self,
+        page: Page,
+        frame: Optional[Any],
+        actions: List[AgentAction],
+    ) -> int:
+        """Upload resume and (optionally) cover letter to the right file
+        inputs WITHOUT asking the AI. Idempotent — won't re-upload a slot
+        that's already attached.
+
+        Slot routing:
+          • Resume slot → id/name/aria-label/parent-group-label contains any of:
+            'resume', 'cv', 'curriculum'. Fallback: first file input on page
+            when only ONE file input exists and the resume_path is set.
+          • Cover-letter slot → contains 'cover', 'letter', 'coverletter'.
+            ONLY uploaded when self.cover_letter_path is set; we NEVER fall
+            back to the resume here (that was the source of the
+            "two copies of resume_v5.pdf" bug).
+        """
+        ctx = frame or page
+        attempted: set[str] = {
+            (a.selector or "").strip()
+            for a in actions
+            if a.raw and a.raw.get("source") == "deterministic_file_upload"
+        }
+
+        try:
+            inputs = await ctx.evaluate(r"""() => {
+                const out = [];
+                document.querySelectorAll('input[type="file"]').forEach(el => {
+                    // Build a meaningful selector — prefer id, then name.
+                    let sel = '';
+                    if (el.id) sel = '#' + CSS.escape(el.id);
+                    else if (el.name) sel = `input[name="${el.name}"]`;
+                    else return;
+                    // Group label: Greenhouse wraps each file input in a
+                    // role="group" whose aria-labelledby points at "Resume/CV*"
+                    // or "Cover Letter".
+                    let groupLabel = '';
+                    const grp = el.closest('[role="group"]');
+                    if (grp) {
+                        const lid = grp.getAttribute('aria-labelledby');
+                        if (lid) {
+                            const lbl = document.getElementById(lid);
+                            if (lbl) groupLabel = (lbl.textContent || '').trim();
+                        }
+                        if (!groupLabel) {
+                            const sib = grp.querySelector('.upload-label, [class*="upload-label"]');
+                            if (sib) groupLabel = (sib.textContent || '').trim();
+                        }
+                    }
+                    // Already-uploaded indicators (Greenhouse replaces the
+                    // input with a filename display element after upload).
+                    let alreadyAttached = false;
+                    if (el.files && el.files.length > 0) alreadyAttached = true;
+                    if (!alreadyAttached && grp) {
+                        const filename = grp.querySelector(
+                            '.file-attachment-name, .attachment-name, '
+                          + '[class*="filename"], [class*="uploaded-file"]'
+                        );
+                        if (filename && (filename.textContent || '').trim()) {
+                            alreadyAttached = true;
+                        }
+                    }
+                    out.push({
+                        sel,
+                        id: el.id || '',
+                        name: el.name || '',
+                        ariaLabel: el.getAttribute('aria-label') || '',
+                        groupLabel,
+                        alreadyAttached,
+                    });
+                });
+                return out;
+            }""")
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] file-input scan failed: {exc}")
+            return 0
+
+        def _classify(info: dict) -> Optional[str]:
+            """Return 'resume' / 'cover' / None for a file-input descriptor."""
+            haystack = " ".join((
+                info.get("id", ""), info.get("name", ""),
+                info.get("ariaLabel", ""), info.get("groupLabel", ""),
+            )).lower()
+            if any(k in haystack for k in ("cover", "letter")):
+                return "cover"
+            if any(k in haystack for k in ("resume", "curriculum", "cv")):
+                return "resume"
+            return None
+
+        uploaded = 0
+        resume_inputs = []
+        cover_inputs = []
+        unknown_inputs = []
+        for info in inputs or []:
+            kind = _classify(info)
+            if kind == "resume":
+                resume_inputs.append(info)
+            elif kind == "cover":
+                cover_inputs.append(info)
+            else:
+                unknown_inputs.append(info)
+
+        # Positional fallback: exactly two file inputs, no labels matched.
+        # By convention resume comes first on every ATS we support.
+        if not resume_inputs and not cover_inputs and len(unknown_inputs) >= 1:
+            resume_inputs.append(unknown_inputs[0])
+            if len(unknown_inputs) >= 2:
+                cover_inputs.append(unknown_inputs[1])
+
+        async def _do_upload(info: dict, path: str, kind: str) -> bool:
+            sel = info["sel"]
+            if sel in attempted:
+                return False
+            if info.get("alreadyAttached"):
+                logger.info(f"[AgentLoop] file-upload skip {kind} ({sel!r}) — already attached")
+                attempted.add(sel)
+                return False
+            try:
+                loc = ctx.locator(sel).first
+                if await loc.count() == 0:
+                    return False
+                await loc.set_input_files(path, timeout=8000)
+                logger.info(f"[AgentLoop] deterministic upload {kind} → {sel!r} = {path!r}")
+                actions.append(AgentAction(
+                    kind="upload_file", selector=sel, value=kind,
+                    field_label=info.get("groupLabel") or info.get("id") or "",
+                    step=-1, ok=True,
+                    raw={"source": "deterministic_file_upload"},
+                ))
+                attempted.add(sel)
+                return True
+            except Exception as exc:
+                logger.debug(f"[AgentLoop] file upload failed for {sel!r}: {exc}")
+                actions.append(AgentAction(
+                    kind="upload_file", selector=sel, value=kind,
+                    step=-1, ok=False,
+                    raw={"source": "deterministic_file_upload"},
+                ))
+                attempted.add(sel)
+                return False
+
+        if self.resume_path:
+            for info in resume_inputs:
+                if await _do_upload(info, self.resume_path, "resume"):
+                    uploaded += 1
+        if self.cover_letter_path:
+            for info in cover_inputs:
+                if await _do_upload(info, self.cover_letter_path, "cover_letter"):
+                    uploaded += 1
+
+        return uploaded
 
     async def _deterministic_prefill(
         self,
@@ -2845,14 +3174,59 @@ class AgentLoop:
                         }""", [sel, target],
                     )
                     if not clicked:
-                        # keyboard fallback: type + Enter (filters then selects)
+                        # keyboard fallback. Two regimes:
+                        #   • Static react-select: type filters, Enter picks.
+                        #   • API-backed autocomplete (e.g. Greenhouse's
+                        #     #candidate-location): typing fires an async query.
+                        #     Suggestions arrive 300–1200 ms later; we must wait
+                        #     for the listbox to populate before clicking,
+                        #     otherwise Enter commits a free-text value the
+                        #     server rejects.
                         try:
                             await loc.fill("")
                         except Exception:
                             pass
                         await loc.type(str(target)[:30], delay=35)
-                        await page.wait_for_timeout(350)
-                        await loc.press("Enter")
+
+                        # Poll the scoped listbox for up to 1.6s. Quit early
+                        # the moment the first option text matches our target
+                        # so we don't burn the full budget on a fast static menu.
+                        clicked_via_listbox = False
+                        for _ in range(8):
+                            await page.wait_for_timeout(200)
+                            try:
+                                pool2 = await ctx.evaluate(_SCOPED_OPTIONS_JS, sel) or []
+                            except Exception:
+                                pool2 = []
+                            if not pool2:
+                                continue
+                            target2 = self._best_option(value, aliases, pool2)
+                            clicked_via_listbox = await ctx.evaluate(
+                                """([s, t]) => {
+                                    const want = (t||'').trim().toLowerCase();
+                                    const el = document.querySelector(s);
+                                    if (!el) return false;
+                                    let menu = null;
+                                    const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+                                    if (lid) menu = document.getElementById(lid);
+                                    if (!menu) {
+                                        const cont = el.closest('[class*="select__container"],[class*="-container"],[class*="select"]');
+                                        if (cont) menu = cont.querySelector('[class*="select__menu"],[role="listbox"]');
+                                    }
+                                    const scope = menu || document;
+                                    const nodes = scope.querySelectorAll('[class*="select__option"],[role="option"]');
+                                    for (const n of nodes) {
+                                        if ((n.textContent||'').trim().toLowerCase() === want) { n.click(); return true; }
+                                    }
+                                    // First suggestion when nothing matches exactly
+                                    if (nodes.length) { nodes[0].click(); return true; }
+                                    return false;
+                                }""", [sel, target2],
+                            )
+                            if clicked_via_listbox:
+                                break
+                        if not clicked_via_listbox:
+                            await loc.press("Enter")
                     await page.wait_for_timeout(300)
                     committed = await ctx.evaluate(
                         """(s) => {
@@ -3282,6 +3656,28 @@ class AgentLoop:
                     # are still enforced via the system prompt rules in
                     # _SYSTEM_PROMPT_BASE, so the AI handles them through its
                     # normal sequential fill flow.
+
+                    # ★ DETERMINISTIC FILE UPLOAD — runs BEFORE field prefill.
+                    # The FORM STATUS check intentionally skips file inputs
+                    # (.value is unreliable after set_input_files), so an
+                    # un-uploaded resume looks like a "filled form" to the
+                    # readiness gate. If we wait for the AI to upload, it
+                    # frequently clicks Submit on its first turn because all
+                    # NON-FILE fields are already populated by prefill/memory.
+                    # Master-controlled, mechanical, idempotent — same model
+                    # as _deterministic_prefill but for the file slots.
+                    try:
+                        up_count = await self._deterministic_file_upload(
+                            page, live_frame, actions
+                        )
+                        if up_count:
+                            logger.info(
+                                f"[AgentLoop] step={step} deterministic uploaded "
+                                f"{up_count} file(s) — no LLM used"
+                            )
+                            page_verified = True
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] deterministic file upload error (non-fatal): {exc}")
 
                     # ★ DETERMINISTIC PRE-FILL — fill ALL fixed-policy fields
                     # (country=US, UK-auth=No, US-auth=Yes, sponsorship=No,
