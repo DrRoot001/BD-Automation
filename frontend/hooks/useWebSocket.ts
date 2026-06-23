@@ -56,6 +56,7 @@ export function useWebSocket(onEvent?: (evt: WSEvent) => void) {
         switch (parsed.event) {
           case 'connected':
             break
+          case 'application.created':
           case 'application.status_changed':
           case 'application.submitted':
           case 'application.failed':

@@ -21,6 +21,17 @@ export function formatDistanceToNow(isoString: string | null | undefined): strin
   return date.toLocaleDateString()
 }
 
+/**
+ * Convert a file_url into a browser-navigable href.
+ * New uploads are always Supabase https:// URLs; legacy records may be absolute OS paths.
+ */
+export function resolveFileUrl(fileUrl: string | null | undefined): string | null {
+  if (!fileUrl) return null
+  if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) return fileUrl
+  // Legacy absolute OS path — nothing we can serve anymore
+  return null
+}
+
 /** Format a future or past ISO date as a calendar label */
 export function formatScheduled(isoString: string | null | undefined): string {
   if (!isoString) return 'Time TBD'

@@ -97,13 +97,13 @@ export function PlatformStatsChart() {
               />
               <Bar
                 dataKey="applications"
-                fill="#111110"
+                fill="#3b82f6"
                 radius={[4, 4, 0, 0]}
                 maxBarSize={40}
               />
               <Bar
                 dataKey="interviews"
-                fill="#8a8a7a"
+                fill="#10b981"
                 radius={[4, 4, 0, 0]}
                 maxBarSize={40}
               />

@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type InterviewSummary } from '@/lib/api'
-import { formatScheduled } from './utils'
+import { formatScheduled } from '../utils'
 import { clsx } from 'clsx'
 import { Calendar, Link, Target } from 'lucide-react'
 

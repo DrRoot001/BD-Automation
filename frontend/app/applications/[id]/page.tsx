@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { api, type ApplicationHistoryEntry } from '@/lib/api'
 import { clsx } from 'clsx'
-import { formatDistanceToNow } from '@/components/utils'
+import { formatDistanceToNow, resolveFileUrl } from '@/components/utils'
 
 function StatusBadge({ status }: { status: string }) {
   const s = status?.toLowerCase() || ''
@@ -14,9 +14,11 @@ function StatusBadge({ status }: { status: string }) {
     found:        'badge-found',
     submitted:    'badge-submitted',
     confirmed:    'badge-confirmed',
-    interview_r1: 'badge-interview_r1',
-    interview_r2: 'badge-interview_r2',
-    failed:       'badge-failed',
+    interview_r1:   'badge-interview_r1',
+    interview_r2:   'badge-interview_r2',
+    interview_r3:   'badge-interview_r1',
+    interview_r4:   'badge-interview_r1',
+    failed:         'badge-failed',
     blocked:      'badge-blocked',
     rejected:     'badge-rejected',
     offer:        'badge-offer',
@@ -159,7 +161,7 @@ export default function ApplicationDetailPage() {
               </h2>
               <div className="text-sm text-text-secondary whitespace-pre-wrap bg-bg-primary p-4 rounded-lg border border-bg-border">
                 {/* Note: if this is a URL, we'd fetch it. If it's raw text, we just render it. Assuming URL for now. */}
-                <a href={application.cover_letter_url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
+                <a href={resolveFileUrl(application.cover_letter_url) ?? application.cover_letter_url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
                   View Cover Letter Document ↗
                 </a>
               </div>

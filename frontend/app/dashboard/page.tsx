@@ -2,139 +2,69 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
-import { useWebSocket } from '@/hooks/useWebSocket'
-import { KPICard } from '@/components/KPICard'
-import { ApplicationsQueue } from '@/components/ApplicationsQueue'
-import { InterviewList } from '@/components/InterviewList'
-import { ConversionFunnel } from '@/components/ConversionFunnel'
-import { ActivityFeed } from '@/components/ActivityFeed'
-import { PlatformStatsChart } from '@/components/PlatformStatsChart'
-import { useState, useCallback, useEffect } from 'react'
-import Link from 'next/link'
-import { clsx } from 'clsx'
-import { Send, Zap, Target, TrendingUp, Hourglass, XCircle, Award } from 'lucide-react'
+import { KPICard } from '@/components/dashboard/KPICard'
+import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
+import { PipelineKanban } from '@/components/dashboard/PipelineKanban'
+import { Send, Target, Award, Briefcase } from 'lucide-react'
 
 export default function DashboardPage() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics'>('dashboard')
-  const [wsConnected, setWsConnected] = useState(false)
-
-  const handleEvent = useCallback((evt: { event: string }) => {
-    if (evt.event === 'connected') setWsConnected(true)
-    else if (evt.event === 'disconnected') setWsConnected(false)
-  }, [])
-
-  useWebSocket(handleEvent)
-
   const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: ['kpis'],
     queryFn: () => api.getKPIs(),
     refetchInterval: 60_000,
   })
 
-  const { data: analytics } = useQuery({
-    queryKey: ['analytics'],
-    queryFn: () => api.getAnalytics(),
-    refetchInterval: 5 * 60_000,
-  })
-
-  const tabs = [
-    { id: 'dashboard', label: 'Dashboard' },
-    { id: 'analytics', label: 'Analytics' },
-  ] as const
-
   return (
-    <div className="min-h-screen bg-bg-primary p-6">
-      {/* ── Page Header ───────────────────────────────────────────────────────── */}
-      <header className="border-b border-bg-border mb-6 pb-4 flex items-center justify-between gap-6">
-        {/* Tabs */}
-        <nav className="flex items-center gap-2">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={clsx(
-                'px-4 py-2 rounded-lg text-sm font-medium transition-colors duration-150',
-                activeTab === tab.id
-                  ? 'bg-accent/10 text-accent'
-                  : 'text-text-muted hover:text-text-primary hover:bg-bg-hover',
-              )}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </nav>
+    <div className="space-y-8 animate-in fade-in duration-500">
+      <div>
+        <h1 className="text-2xl font-bold text-text-primary tracking-tight">Overview</h1>
+        <p className="text-sm text-text-muted mt-1">Your automated job search progress.</p>
+      </div>
 
-        {/* Status */}
-          <div className="flex items-center gap-2 shrink-0">
-            <span
-              className={clsx(
-                'w-1.5 h-1.5 rounded-full',
-                wsConnected ? 'bg-success' : 'bg-bg-border',
-              )}
-            />
-            <span className="text-xs text-text-muted">
-              {wsConnected ? 'Live' : 'Offline'}
-            </span>
+      {/* Summary Cards */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <KPICard 
+          label="Jobs Found Today" 
+          value={kpis?.applied_today ?? 0} // In real app, we might need a specific endpoint for 'found today'
+          icon={<Briefcase className="w-4 h-4" />} 
+          accent="info"  
+          loading={kpisLoading} 
+        />
+        <KPICard 
+          label="Applications In Progress" 
+          value={kpis?.pending_in_queue ?? 0} 
+          icon={<Send className="w-4 h-4" />} 
+          accent="warning" 
+          loading={kpisLoading} 
+        />
+        <KPICard 
+          label="Interviews Scheduled" 
+          value={kpis?.interviews_this_week ?? 0} 
+          icon={<Target className="w-4 h-4" />} 
+          accent="purple" 
+          loading={kpisLoading} 
+        />
+        <KPICard 
+          label="Offers Received" 
+          value={kpis?.total_offers ?? 0} 
+          icon={<Award className="w-4 h-4" />} 
+          accent="success" 
+          loading={kpisLoading} 
+        />
+      </section>
+
+      {/* Main content grid */}
+      <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
+        <div className="xl:col-span-3 space-y-6">
+          <div className="card p-6">
+            <h2 className="text-lg font-semibold text-text-primary mb-4">Application Pipeline</h2>
+            <PipelineKanban />
           </div>
-      </header>
-
-      {/* ── Content ──────────────────────────────────────────────────────── */}
-      <div className="flex-1">
-        {activeTab === 'analytics' ? (
-        <main className="space-y-5 animate-fade-in">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-            <ConversionFunnel />
-            <PlatformStatsChart />
-          </div>
-        </main>
-
-      ) : (
-        <main className="space-y-5 animate-fade-in">
-
-          {/* Page title row */}
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-base font-semibold text-text-primary">Overview</h1>
-              <p className="text-xs text-text-muted mt-0.5">Job search automation status</p>
-            </div>
-            {analytics?.avg_time_to_response_hours != null && (
-              <div className="text-xs text-text-muted">
-                Avg. response:{' '}
-                <span className="text-text-secondary font-medium">
-                  {analytics.avg_time_to_response_hours.toFixed(1)}h
-                </span>
-              </div>
-            )}
-          </div>
-
-          {/* KPI row */}
-          <section className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
-            <KPICard label="Total Applied"    value={kpis?.total_applied ?? 0}                           icon={<Send className="w-4 h-4" />}      accent="accent"  loading={kpisLoading} subtext="all time"            />
-            <KPICard label="Applied Today"    value={kpis?.applied_today ?? 0}                           icon={<Zap className="w-4 h-4" />}       accent="info"    loading={kpisLoading} subtext="since midnight"       />
-            <KPICard label="Interviews"       value={kpis?.interviews_this_week ?? 0}                    icon={<Target className="w-4 h-4" />}    accent="purple"  loading={kpisLoading} subtext="next 7 days"         />
-            <KPICard label="Success Rate"     value={`${kpis?.success_rate?.toFixed(1) ?? '0.0'}%`}     icon={<TrendingUp className="w-4 h-4" />} accent="success" loading={kpisLoading} subtext="interviews / applied" />
-            <KPICard label="In Queue"         value={kpis?.pending_in_queue ?? 0}                        icon={<Hourglass className="w-4 h-4" />} accent="warning" loading={kpisLoading} subtext="pending"              />
-            <KPICard label="Rejected"         value={kpis?.total_rejected ?? 0}                          icon={<XCircle className="w-4 h-4" />}   accent="danger"  loading={kpisLoading} subtext="all time"            />
-            <KPICard label="Offers"           value={kpis?.total_offers ?? 0}                            icon={<Award className="w-4 h-4" />}     accent="success" loading={kpisLoading} subtext="received"            />
-          </section>
-
-          {/* Main grid */}
-          <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
-            <div className="xl:col-span-2 space-y-5">
-              <ApplicationsQueue />
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                <ConversionFunnel />
-                <PlatformStatsChart />
-              </div>
-            </div>
-            <div className="space-y-5">
-              <InterviewList />
-              <ActivityFeed />
-            </div>
-          </div>
-
-        </main>
-      )}
+        </div>
+        
+        <div className="xl:col-span-1">
+          <ActivityFeed />
+        </div>
       </div>
     </div>
   )

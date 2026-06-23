@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type ActivityEvent } from '@/lib/api'
-import { formatDistanceToNow } from './utils'
+import { formatDistanceToNow } from '../utils'
 import { clsx } from 'clsx'
 import { RefreshCcw, Send, XCircle, Mail, Target, Search, FileText, Inbox } from 'lucide-react'
 import { ReactNode } from 'react'

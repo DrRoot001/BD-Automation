@@ -1,6 +1,6 @@
 'use client'
 
-import { ApplicationsQueue } from '@/components/ApplicationsQueue'
+import { ApplicationsQueue } from '@/components/dashboard/ApplicationsQueue'
 
 const IN_PROGRESS_STATUSES = ['QUEUED', 'APPLICATION_STARTED', 'FORM_COMPLETED']
 

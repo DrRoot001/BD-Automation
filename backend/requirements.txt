@@ -184,3 +184,4 @@ rpds-py==0.25.0
 rsa==4.9.1
 #scikit-learn==1.6.1
 #scipy==1.15.3
+passlib[bcrypt]

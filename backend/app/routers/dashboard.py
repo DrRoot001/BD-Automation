@@ -29,6 +29,7 @@ class DashboardKPIs(BaseModel):
 
 class ApplicationSummary(BaseModel):
     application_id: str
+    job_id: str
     job_title: str
     company: str
     platform: str
@@ -38,6 +39,8 @@ class ApplicationSummary(BaseModel):
     submitted_at: Optional[datetime] = None
     created_at: datetime
     error_message: Optional[str] = None
+    resume_url: Optional[str] = None
+    job_url: Optional[str] = None
 
 
 class InterviewSummary(BaseModel):
@@ -164,11 +167,14 @@ async def get_applications(
     where = ("WHERE " + " AND ".join(filters)) if filters else ""
 
     rows = await db.execute(text(f"""
-        SELECT a.id, j.title, j.company, j.source AS platform,
+        SELECT a.id, a.job_id, j.title, j.company, j.source AS platform,
                a.status, a.fit_score, a.ats_score,
-               a.submitted_at, a.created_at, a.error_message
+               a.submitted_at, a.created_at, a.error_message,
+               r.file_url AS resume_url,
+               COALESCE(j.canonical_url, j.source_url) AS job_url
         FROM applications a
         JOIN jobs j ON a.job_id = j.id
+        LEFT JOIN resumes r ON a.resume_id = r.id
         {where}
         ORDER BY a.created_at DESC
         LIMIT :limit OFFSET :offset
@@ -177,6 +183,7 @@ async def get_applications(
     return [
         ApplicationSummary(
             application_id=str(r.id),
+            job_id=str(r.job_id),
             job_title=r.title or "",
             company=r.company or "",
             platform=r.platform or "",
@@ -186,6 +193,8 @@ async def get_applications(
             submitted_at=r.submitted_at,
             created_at=r.created_at,
             error_message=r.error_message,
+            resume_url=r.resume_url,
+            job_url=r.job_url,
         )
         for r in rows.fetchall()
     ]

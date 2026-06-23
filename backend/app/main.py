@@ -1,5 +1,4 @@
 import sys
-import os
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,7 +34,7 @@ def create_app() -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://localhost:3000"],
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -67,6 +66,14 @@ def create_app() -> FastAPI:
     @app.get("/api/health")
     def health_check():
         return {"status": "ok", "app_name": "BD Automator API", "module": "data_orchestration"}
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request, exc):
+        import traceback, sys
+        print(f"GLOBAL ERROR: {type(exc)} {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        from fastapi.responses import JSONResponse
+        return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "msg": str(exc)})
 
     return app
 
