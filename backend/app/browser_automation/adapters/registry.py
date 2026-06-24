@@ -2,6 +2,8 @@ from .ashby import AshbyAdapter
 from .base import BasePlatformAdapter
 from .generic import GenericFormAdapter
 from .greenhouse import GreenhouseAdapter
+from .icims import ICIMSAdapter
+from .indeed import IndeedAdapter
 from .lever import LeverAdapter
 from .linkedin import LinkedInEasyApplyAdapter
 from .remoterocketship import RemoteRocketshipAdapter
@@ -15,6 +17,8 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "workday": WorkdayAdapter,
     "linkedin": LinkedInEasyApplyAdapter,
     "remoterocketship": RemoteRocketshipAdapter,
+    "icims": ICIMSAdapter,
+    "indeed": IndeedAdapter,
     "generic": GenericFormAdapter,
 }
 
@@ -38,6 +42,10 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
             cls = AshbyAdapter
         elif "greenhouse" in key:
             cls = GreenhouseAdapter
+        elif "icims.com" in key or "icims" in normalized:
+            cls = ICIMSAdapter
         elif "linkedin" in key:
             cls = LinkedInEasyApplyAdapter
+        elif "indeed.com" in key or "smartapply" in key:
+            cls = IndeedAdapter
     return (cls or GenericFormAdapter)()
