@@ -1,4 +1,3 @@
-import os
 import uuid
 from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,15 +11,32 @@ from app.models.resume import Resume
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
 from app.schemas.resume import ResumeResponse
 
+from app.routers.auth import get_current_user
+from app.models.user import User, UserRole
+
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
 @router.get("", response_model=List[CandidateResponse])
-async def list_candidates(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Candidate))
+async def list_candidates(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    if current_user.role == UserRole.admin:
+        result = await db.execute(select(Candidate).order_by(Candidate.created_at.desc()))
+    else:
+        result = await db.execute(
+            select(Candidate)
+            .where(Candidate.user_id == current_user.id)
+            .order_by(Candidate.created_at.desc())
+        )
     return result.scalars().all()
 
 @router.post("", response_model=CandidateResponse, status_code=201)
-async def create_candidate(candidate: CandidateCreate, db: AsyncSession = Depends(get_db)):
+async def create_candidate(
+    candidate: CandidateCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
     # Check if candidate exists by email or name
     from sqlalchemy import or_
     conditions = []
@@ -33,9 +49,14 @@ async def create_candidate(candidate: CandidateCreate, db: AsyncSession = Depend
         result = await db.execute(select(Candidate).where(or_(*conditions)))
         existing_candidate = result.scalars().first()
         if existing_candidate:
+            if not existing_candidate.user_id:
+                existing_candidate.user_id = current_user.id
+                await db.commit()
+                await db.refresh(existing_candidate)
             return existing_candidate
 
     db_candidate = Candidate(**candidate.model_dump())
+    db_candidate.user_id = current_user.id
     db.add(db_candidate)
     try:
         await db.commit()
@@ -47,7 +68,11 @@ async def create_candidate(candidate: CandidateCreate, db: AsyncSession = Depend
 
 @router.get("/{candidate_id}", response_model=CandidateResponse)
 async def get_candidate(candidate_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -55,7 +80,11 @@ async def get_candidate(candidate_id: str, db: AsyncSession = Depends(get_db)):
 
 @router.put("/{candidate_id}", response_model=CandidateResponse)
 async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     db_candidate = result.scalar_one_or_none()
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -79,28 +108,36 @@ async def upload_candidate_resume(
     is_base: str = Form("true"),
     db: AsyncSession = Depends(get_db)
 ):
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
     # Verify candidate exists
-    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    # Define storage path
-    local_dir = "/Users/sabihhaider/Documents/BD-Automator-Agent/backend/data/resumes"
-    os.makedirs(local_dir, exist_ok=True)
-    
-    # Generate unique filename to avoid duplicates/collisions
-    file_ext = os.path.splitext(file.filename)[1] if file.filename else ".pdf"
-    new_filename = f"{candidate_id}_{uuid.uuid4()}{file_ext}"
-    full_path = os.path.join(local_dir, new_filename)
+    # Upload directly to Supabase "resume" bucket (no local saving)
+    import tempfile
+    from module3.utils.storage import upload_file_to_supabase as _upload
 
-    # Save file content locally
-    try:
-        with open(full_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+    content = await file.read()
+    supabase_name = f"{candidate_id}_base_{uuid.uuid4().hex[:8]}.pdf"
+    file_url: str | None = None
+
+    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
+        tmp.write(content)
+        tmp.flush()
+        try:
+            uploaded_url = await _upload(tmp.name, "resume", supabase_name)
+            if uploaded_url and uploaded_url.startswith("http"):
+                file_url = uploaded_url
+        except Exception:
+            pass
+
+    if not file_url:
+        raise HTTPException(status_code=500, detail="Failed to upload resume to Supabase. Check server logs for details.")
 
     # Parse boolean
     is_base_bool = is_base.lower() == "true"
@@ -108,7 +145,7 @@ async def upload_candidate_resume(
     # Find the maximum version for this candidate's resumes to set next version
     version_result = await db.execute(
         select(Resume.version)
-        .where(Resume.candidate_id == candidate_id)
+        .where(Resume.candidate_id == candidate_uuid)
         .order_by(Resume.version.desc())
         .limit(1)
     )
@@ -117,9 +154,9 @@ async def upload_candidate_resume(
 
     # Create Resume DB record
     db_resume = Resume(
-        candidate_id=candidate_id,
+        candidate_id=candidate_uuid,
         version=next_version,
-        file_url=full_path,
+        file_url=file_url,
         is_base=is_base_bool,
         parsed_json=None
     )
@@ -133,8 +170,12 @@ class ApplyRequest(BaseModel):
 
 @router.post("/{candidate_id}/apply")
 async def trigger_apply(candidate_id: str, request: ApplyRequest, db: AsyncSession = Depends(get_db)):
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
     # Verify candidate exists
-    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -165,7 +206,11 @@ class GoogleCallbackRequest(BaseModel):
 
 @router.get("/{candidate_id}/google/auth-url")
 async def get_google_auth_url(candidate_id: str, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -195,7 +240,11 @@ async def get_google_auth_url(candidate_id: str, db: AsyncSession = Depends(get_
 
 @router.post("/{candidate_id}/google/callback")
 async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Candidate).where(Candidate.id == candidate_id))
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     db_candidate = result.scalar_one_or_none()
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
@@ -244,3 +293,28 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
             await db.rollback()
             raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
         return {"status": "success", "message": "Google OAuth connected successfully", "mock": False}
+
+
+@router.post("/{candidate_id}/google/disconnect")
+async def disconnect_google(candidate_id: str, db: AsyncSession = Depends(get_db)):
+    from uuid import UUID
+    from fastapi import HTTPException
+    from app.models.candidate import Candidate
+    
+    try:
+        cand_uuid = UUID(candidate_id) if isinstance(candidate_id, str) else candidate_id
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+        
+    db_candidate = await db.get(Candidate, cand_uuid)
+    if not db_candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    db_candidate.google_refresh_token = None
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
+        
+    return {"status": "success", "message": "Google OAuth disconnected successfully"}

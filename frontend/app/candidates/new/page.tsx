@@ -1,6 +1,6 @@
 'use client'
 
-import CandidateProfileForm from '@/components/CandidateProfileForm'
+import CandidateProfileForm from '@/components/dashboard/CandidateProfileForm'
 
 export default function NewCandidatePage() {
   return (

@@ -54,8 +54,8 @@ async def orchestrate_application_package(
         
         if resp.status_code == 200 and resp.json():
             resumes = resp.json()
-            # Find the base resume
-            base_resume = resumes[0]
+            # Find the latest base resume
+            base_resume = resumes[-1]
             base_resume_id = base_resume["id"]
             parsed_json = base_resume.get("parsed_json")
             if parsed_json:
@@ -68,6 +68,20 @@ async def orchestrate_application_package(
                     raw_text="[Loaded from DB]"
                 )
                 print(f"[ORCHESTRATOR] Loaded existing base resume from DB (ID: {base_resume_id})")
+            else:
+                # Base resume record exists but parsed_json is NULL — auto-parse from file_url
+                file_url = base_resume.get("file_url", "")
+                if file_url:
+                    print(f"[ORCHESTRATOR] Base resume has no parsed_json. Parsing from file/URL: {file_url}")
+                    parsed_resume = await parse_resume(file_url, candidate_id=candidate_id, resume_id=base_resume_id)
+                    # Persist parsed_json back to DB via resume update
+                    update_payload = {"parsed_json": parsed_resume.sections.model_dump()}
+                    patch_resp = await client.patch(f"/api/resumes/{base_resume_id}", json=update_payload)
+                    if patch_resp.status_code not in (200, 204):
+                        print(f"[ORCHESTRATOR] Warning: could not persist parsed_json ({patch_resp.status_code}): {patch_resp.text}")
+                    resume_data = parsed_resume
+                    resume_data.resume_id = base_resume_id
+                    print(f"[ORCHESTRATOR] Auto-parsed base resume and updated DB (ID: {base_resume_id})")
         
         # If no base resume exists, parse the local PDF and insert it as the base resume!
         if not resume_data:
@@ -354,7 +368,8 @@ async def prepare_package_for_live_application(
         
         if resp.status_code == 200 and resp.json():
             resumes = resp.json()
-            base_resume = resumes[0]
+            # Find the latest base resume
+            base_resume = resumes[-1]
             base_resume_id = base_resume["id"]
             parsed_json = base_resume.get("parsed_json")
             if parsed_json:
@@ -370,8 +385,8 @@ async def prepare_package_for_live_application(
             else:
                 # Base resume record exists but parsed_json is NULL — auto-parse from file_url
                 file_url = base_resume.get("file_url", "")
-                if file_url and os.path.exists(file_url):
-                    print(f"[ORCHESTRATOR] Base resume has no parsed_json. Parsing from file: {file_url}")
+                if file_url:
+                    print(f"[ORCHESTRATOR] Base resume has no parsed_json. Parsing from file/URL: {file_url}")
                     parsed_resume = await parse_resume(file_url, candidate_id=candidate_id, resume_id=base_resume_id)
                     # Persist parsed_json back to DB via resume update
                     update_payload = {"parsed_json": parsed_resume.sections.model_dump()}

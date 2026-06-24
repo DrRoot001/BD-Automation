@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type InterviewSummary } from '@/lib/api'
-import { formatScheduled } from './utils'
+import { formatScheduled } from '../utils'
 import { clsx } from 'clsx'
 import { Calendar, Link, Target } from 'lucide-react'
 
@@ -34,10 +34,10 @@ function addToCalendarLink(interview: InterviewSummary): string {
   return `https://calendar.google.com/calendar/r/eventedit?${params.toString()}`
 }
 
-export function InterviewList() {
+export function InterviewList({ candidateId }: { candidateId?: string }) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['interviews'],
-    queryFn: () => api.getInterviews(true),
+    queryKey: ['interviews', candidateId],
+    queryFn: () => api.getInterviews(true, candidateId),
     refetchInterval: 60_000,
   })
 

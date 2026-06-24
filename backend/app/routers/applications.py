@@ -58,6 +58,15 @@ async def create_application(
     db.add(history)
     await db.commit()
     
+    # Publish event for Module 5 WebSocket so it appears instantly
+    await publish_event("application.created", {
+        "application_id": str(db_application.id),
+        "candidate_id": str(db_application.candidate_id),
+        "job_id": str(db_application.job_id),
+        "status": db_application.status,
+        "timestamp": datetime.utcnow().isoformat()
+    })
+    
     return db_application
 
 @router.get("", response_model=List[ApplicationResponse])

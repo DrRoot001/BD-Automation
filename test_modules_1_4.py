@@ -91,24 +91,28 @@ def log_failure(msg):
     logger.error(f"{RED}✗ FAILURE: {msg}{RESET}")
 
 API_BASE = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
-RESUME_PDF = str(PROJECT_ROOT / "harmain_ali_butt_resume.pdf")
 
 
 async def get_or_parse_base_resume(candidate_id: str) -> ResumeData:
-    logger.info("Resolving base resume for candidate...")
+    logger.info("Resolving base resume for candidate from database...")
     async with AsyncSessionLocal() as session:
         res_query = select(Resume).where(Resume.candidate_id == candidate_id, Resume.is_base == True).order_by(Resume.version.desc())
         res_result = await session.execute(res_query)
         base_resume = res_result.scalars().first()
         
-        if base_resume and base_resume.parsed_json:
+        if not base_resume:
+            logger.error("No base resume record found in database.")
+            raise ValueError(f"No base resume found for candidate {candidate_id} in database. Please upload one via the UI.")
+
+        if base_resume.parsed_json:
             logger.info(f"Base resume found in DB (ID: {base_resume.id}). Loading parsed JSON.")
             
             # Ensure the file_url is a Supabase URL, not a local path
             if base_resume.file_url and not base_resume.file_url.startswith("http"):
                 logger.info(f"Existing base resume has a local path: {base_resume.file_url}. Uploading to Supabase...")
                 from module3.utils.storage import upload_file_to_supabase
-                remote_url = await upload_file_to_supabase(base_resume.file_url, "resume", f"{candidate_id}_base.pdf")
+                local_path = str(PROJECT_ROOT / "backend" / base_resume.file_url.lstrip("/")) if base_resume.file_url.startswith("/files/") else base_resume.file_url
+                remote_url = await upload_file_to_supabase(local_path, "resume", f"{candidate_id}_base.pdf")
                 if remote_url != base_resume.file_url:
                     base_resume.file_url = remote_url
                     await session.commit()
@@ -122,61 +126,69 @@ async def get_or_parse_base_resume(candidate_id: str) -> ResumeData:
                 sections=sections,
                 raw_text="[Loaded from DB]"
             )
-            
-    # Parse PDF if database record is missing
-    logger.info(f"No parsed base resume in database. Attempting to parse local PDF: {RESUME_PDF}")
-    if not os.path.exists(RESUME_PDF):
-        raise FileNotFoundError(f"Resume PDF not found at: {RESUME_PDF}")
-        
-    parsed_resume = await parse_resume(RESUME_PDF, candidate_id=candidate_id)
-    
-    # Save base resume to database
-    async with AsyncSessionLocal() as session:
-        # Find next version
-        res_query = select(Resume).where(Resume.candidate_id == candidate_id)
-        res_result = await session.execute(res_query)
-        existing_resumes = res_result.scalars().all()
-        next_version = max([r.version or 0 for r in existing_resumes] + [0]) + 1
-        
-        parsed_json_data = parsed_resume.sections.model_dump()
-        parsed_json_data["file_hash"] = parsed_resume.file_hash
-        
-        from module3.utils.storage import upload_file_to_supabase
-        remote_url = await upload_file_to_supabase(RESUME_PDF, "resume", f"{candidate_id}_base.pdf")
-        
-        db_resume = Resume(
-            candidate_id=candidate_id,
-            version=next_version,
-            file_url=remote_url,
-            parsed_json=parsed_json_data,
-            is_base=True
-        )
-        session.add(db_resume)
-        await session.commit()
-        await session.refresh(db_resume)
-        
-        parsed_resume.resume_id = db_resume.id
-        logger.info(f"Saved new base resume version {next_version} to DB with ID: {db_resume.id}")
-        
-    return parsed_resume
+        else:
+            # Auto-parse since it has a file_url but no parsed_json
+            file_url = base_resume.file_url
+            if not file_url:
+                raise ValueError("Base resume has no parsed_json and no file_url.")
+
+            # Supabase HTTPS URL — download to a temp file first
+            if file_url.startswith("http://") or file_url.startswith("https://"):
+                import tempfile, httpx
+                logger.info(f"Base resume has no parsed_json. Downloading from Supabase: {file_url}")
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.get(file_url)
+                        resp.raise_for_status()
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(resp.content)
+                        tmp_path = tmp.name
+                    parsed_resume = await parse_resume(tmp_path, candidate_id=candidate_id, resume_id=str(base_resume.id))
+                    os.unlink(tmp_path)
+                    base_resume.parsed_json = parsed_resume.sections.model_dump()
+                    await session.commit()
+                    logger.info("Successfully parsed resume from Supabase and saved to DB.")
+                    return parsed_resume
+                except Exception as e:
+                    raise RuntimeError(f"Failed to download/parse resume from Supabase ({file_url}): {e}")
+
+            # Local /files/ relative path
+            if file_url.startswith("/files/"):
+                local_path = str(PROJECT_ROOT / "backend" / file_url.lstrip("/"))
+            else:
+                local_path = file_url  # absolute OS path (legacy)
+
+            if os.path.exists(local_path):
+                logger.info(f"Base resume has no parsed_json. Parsing from file: {local_path}")
+                parsed_resume = await parse_resume(local_path, candidate_id=candidate_id, resume_id=str(base_resume.id))
+                base_resume.parsed_json = parsed_resume.sections.model_dump()
+                await session.commit()
+                logger.info("Successfully parsed resume and saved to DB.")
+                return parsed_resume
+            else:
+                raise FileNotFoundError(
+                    f"Resume file not found at {local_path}. "
+                    "The resume was saved locally but the file no longer exists. "
+                    "Please re-upload the resume via the UI."
+                )
 
 
 async def load_candidate() -> Candidate:
     log_header("STEP 1: Fetching Candidate from Database")
     async with AsyncSessionLocal() as session:
-        query = select(Candidate).where(Candidate.name.ilike("%Harmain%"))
+        query = select(Candidate).where(Candidate.email == "sabih0364@gmail.com")
         result = await session.execute(query)
         candidate = result.scalar_one_or_none()
         
         if not candidate:
-            log_failure("Candidate 'Harmain' not found in database.")
+            log_failure("Candidate 'Sabih Haider' not found in database.")
             # List available candidates to aid debugging
             all_result = await session.execute(select(Candidate))
             candidates = all_result.scalars().all()
             logger.info("Existing candidates in database:")
             for c in candidates:
                 logger.info(f"  - Name: {c.name} | Email: {c.email} | ID: {c.id}")
-            raise ValueError("Candidate 'Harmain' must be present in the database.")
+            raise ValueError("Candidate 'Sabih Haider' must be present in the database.")
             
         log_success(f"Candidate found: {candidate.name} (ID: {candidate.id})")
         logger.info(f"Email: {candidate.email}")
@@ -384,7 +396,6 @@ async def execute_tailoring_pipeline(candidate_id: str, job_id: str) -> Dict[str
     result = await orchestrate_application_package(
         candidate_id=candidate_id,
         job_id=job_id,
-        base_resume_pdf_path=RESUME_PDF,
         api_base_url=API_BASE.replace("/api", ""),
         skip_gate=True
     )

@@ -19,6 +19,8 @@ class ApplicationStatus(str, Enum):
     CONFIRMED = 'CONFIRMED'
     INTERVIEW_R1 = 'INTERVIEW_R1'
     INTERVIEW_R2 = 'INTERVIEW_R2'
+    INTERVIEW_R3 = 'INTERVIEW_R3'
+    INTERVIEW_R4 = 'INTERVIEW_R4'
     REJECTED = 'REJECTED'
     OFFER = 'OFFER'
     FAILED = 'FAILED'
@@ -28,6 +30,8 @@ class EmailClassification(str, Enum):
     APPLIED_CONFIRMATION = 'APPLIED_CONFIRMATION'
     INTERVIEW_R1 = 'INTERVIEW_R1'
     INTERVIEW_R2 = 'INTERVIEW_R2'
+    INTERVIEW_R3 = 'INTERVIEW_R3'
+    INTERVIEW_R4 = 'INTERVIEW_R4'
     ASSESSMENT = 'ASSESSMENT'
     REJECTED = 'REJECTED'
     OFFER = 'OFFER'
@@ -46,8 +50,10 @@ VALID_TRANSITIONS: Dict[ApplicationStatus, List[ApplicationStatus]] = {
     ApplicationStatus.FORM_COMPLETED: [ApplicationStatus.SUBMITTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
     ApplicationStatus.SUBMITTED: [ApplicationStatus.CONFIRMED, ApplicationStatus.REJECTED],
     ApplicationStatus.CONFIRMED: [ApplicationStatus.INTERVIEW_R1, ApplicationStatus.REJECTED],
-    ApplicationStatus.INTERVIEW_R1: [ApplicationStatus.INTERVIEW_R2, ApplicationStatus.REJECTED],
-    ApplicationStatus.INTERVIEW_R2: [ApplicationStatus.OFFER, ApplicationStatus.REJECTED],
+    ApplicationStatus.INTERVIEW_R1: [ApplicationStatus.INTERVIEW_R2, ApplicationStatus.REJECTED, ApplicationStatus.OFFER],
+    ApplicationStatus.INTERVIEW_R2: [ApplicationStatus.INTERVIEW_R3, ApplicationStatus.OFFER, ApplicationStatus.REJECTED],
+    ApplicationStatus.INTERVIEW_R3: [ApplicationStatus.INTERVIEW_R4, ApplicationStatus.OFFER, ApplicationStatus.REJECTED],
+    ApplicationStatus.INTERVIEW_R4: [ApplicationStatus.OFFER, ApplicationStatus.REJECTED],
     ApplicationStatus.FAILED: [],
     ApplicationStatus.BLOCKED: [ApplicationStatus.QUEUED],
     ApplicationStatus.REJECTED: [],

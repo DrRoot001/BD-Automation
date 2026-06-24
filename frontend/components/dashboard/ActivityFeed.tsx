@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type ActivityEvent } from '@/lib/api'
-import { formatDistanceToNow } from './utils'
+import { formatDistanceToNow } from '../utils'
 import { clsx } from 'clsx'
 import { RefreshCcw, Send, XCircle, Mail, Target, Search, FileText, Inbox } from 'lucide-react'
 import { ReactNode } from 'react'
@@ -35,10 +35,10 @@ function EventItem({ event }: { event: ActivityEvent }) {
   )
 }
 
-export function ActivityFeed() {
+export function ActivityFeed({ candidateId }: { candidateId?: string }) {
   const { data, isLoading, isError } = useQuery({
-    queryKey: ['activity-feed'],
-    queryFn: () => api.getActivityFeed(25),
+    queryKey: ['activity-feed', candidateId],
+    queryFn: () => api.getActivityFeed(25, candidateId),
     refetchInterval: 30_000,
   })
 
