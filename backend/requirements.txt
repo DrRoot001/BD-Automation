@@ -1,0 +1,15 @@
+fastapi==0.115.*
+uvicorn[standard]
+sqlalchemy[asyncio]==2.0.*
+asyncpg
+alembic
+pydantic==2.*
+pydantic-settings
+python-jose[cryptography]
+httpx
+celery[redis]==5.*
+redis[hiredis]>=4.5.0,<5.1.0
+python-multipart
+pgvector
+python-dotenv
+structlog
