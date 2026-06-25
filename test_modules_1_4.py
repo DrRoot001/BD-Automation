@@ -22,6 +22,16 @@ import traceback
 from pathlib import Path
 from typing import List, Dict, Any
 
+# Force UTF-8 on the console BEFORE importing modules that print unicode glyphs
+# (module2/module3 emit ✓/✗/… at import time, which crash a Windows cp1252
+# console with UnicodeEncodeError). Reconfiguring the existing streams in place
+# fixes every downstream print/log for this process.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 # Path configuration
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -197,6 +207,36 @@ async def load_candidate() -> Candidate:
         return candidate
 
 
+async def is_application_live(url: str) -> bool:
+    """Quick liveness check for a job posting. Returns False for expired
+    postings (Greenhouse redirects dead jobs to <board>?error=true, or the page
+    says 'no longer accepting applications'). Network hiccups -> treat as live
+    (don't over-filter)."""
+    if not url:
+        return False
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(url)
+    except Exception:
+        return True
+    final = str(r.url).lower()
+    if "error=true" in final or r.status_code >= 400:
+        return False
+    body = (r.text or "").lower()
+    dead_markers = (
+        "no longer accepting application", "this job is no longer",
+        "position has been filled", "job is no longer available",
+        "posting is no longer", "not currently accepting",
+        "this job is no longer active", "no longer available",
+        # Greenhouse deactivated-board page (entire company board removed):
+        "page not found", "no longer active", "job board you were viewing",
+        # Lever / generic expired:
+        "this posting is closed", "the position you are looking for",
+    )
+    return not any(m in body for m in dead_markers)
+
+
 async def load_jobs(candidate_id: str) -> List[Job]:
     log_header("STEP 2: Fetching Scraped Jobs from Database")
     async with AsyncSessionLocal() as session:
@@ -207,10 +247,15 @@ async def load_jobs(candidate_id: str) -> List[Job]:
             Application.job_id == Job.id
         )
         
-        # Fetch active jobs (we focus on greenhouse or lever jobs since browser automation is built for them)
-        # Filter out jobs that the candidate has already applied to
+        # Fetch active jobs (greenhouse / lever — browser automation is built for them).
+        # Restrict to DIRECT ATS URLs (job-boards/boards.greenhouse.io, jobs.lever.co):
+        # company "careers-proxy" URLs (e.g. careers.datadoghq.com?gh_jid=...) pass an
+        # HTTP liveness check but their Greenhouse board is often dead (the "Page not
+        # found" only renders after JS), so they waste M3 tailoring + M4 on a dead form.
+        # Filter out jobs already applied to.
         query = select(Job).where(
             Job.source.in_(["greenhouse", "lever"]),
+            (Job.source_url.ilike("%greenhouse.io%") | Job.source_url.ilike("%lever.co%")),
             ~exists(applied_stmt)
         ).order_by(Job.created_at.desc()).limit(20)
         result = await session.execute(query)
@@ -257,6 +302,19 @@ async def load_jobs(candidate_id: str) -> List[Job]:
             logger.info(f"Stored {len(saved_jobs)} USA Vercel jobs in database.")
             jobs = saved_jobs
             
+        # ── Filter out EXPIRED postings before we waste M3 tailoring + M4 on a
+        # dead job (the previous run picked an expired datadog posting that had
+        # no application form, so M4 had nothing to fill). ──
+        logger.info(f"Checking liveness of {len(jobs)} postings (filtering expired)...")
+        checks = await asyncio.gather(*[is_application_live(j.source_url) for j in jobs])
+        live_jobs = [j for j, ok in zip(jobs, checks) if ok]
+        dead_count = len(jobs) - len(live_jobs)
+        logger.info(f"{len(live_jobs)}/{len(jobs)} postings are live ({dead_count} expired/filtered).")
+        if live_jobs:
+            jobs = live_jobs
+        else:
+            log_warn("No live postings detected — proceeding with full list (liveness check may be unreliable).")
+
         logger.info(f"Retrieved {len(jobs)} eligible jobs for matching.")
         for idx, j in enumerate(jobs[:5], 1):
             logger.info(f"  {idx}. {j.title} @ {j.company} ({j.location}) [ID: {j.id}]")
@@ -426,9 +484,17 @@ async def run_browser_automation(app_result: Dict[str, Any]) -> Any:
         "screening_answers": screening_answers,
     }
     
-    # Disable dry run to perform a real job application submission
-    os.environ["DRY_RUN_NO_SUBMIT"] = "false"
-    logger.info("DRY_RUN_NO_SUBMIT=false is active. Performing a REAL live job application submission.")
+    # Submit behavior is env-overridable so the full pipeline can be validated
+    # WITHOUT firing real applications at real companies during testing. Export
+    # DRY_RUN_NO_SUBMIT=true for a safe validation run (fills the form, stops
+    # before the final submit); leave it unset / "false" for a REAL submission.
+    os.environ.setdefault("DRY_RUN_NO_SUBMIT", "false")
+    _dry = os.environ["DRY_RUN_NO_SUBMIT"].lower() == "true"
+    logger.info(
+        f"DRY_RUN_NO_SUBMIT={os.environ['DRY_RUN_NO_SUBMIT']} — "
+        + ("filling form then stopping before submit (safe)" if _dry
+           else "performing a REAL live job application submission")
+    )
     
     logger.info("Starting hydrate_and_execute Playwright session...")
     try:

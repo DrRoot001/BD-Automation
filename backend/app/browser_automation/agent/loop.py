@@ -3384,6 +3384,26 @@ class AgentLoop:
         page_verified = False
         is_iframe_mode = frame is not None
 
+        # ── Backward-navigation guard state ──────────────────────────────
+        # Multi-step ATS flows (iCIMS, Workday, LinkedIn) move FORWARD only:
+        # listing → consent → profile → questions → confirmation. If the AI
+        # ever emits `navigate_url` to a host+path it has already visited it
+        # is undoing its own progress — usually because a transient SPA
+        # render confused it. We reject those navigations and force a
+        # re-perceive so the next LLM turn sees the current screen again.
+        def _norm_url(u: str) -> str:
+            from urllib.parse import urlparse
+            try:
+                p = urlparse(u or "")
+                return f"{(p.hostname or '').lower()}{(p.path or '').rstrip('/').lower()}"
+            except Exception:
+                return (u or "").lower()
+        visited_urls: set[str] = set()
+        try:
+            visited_urls.add(_norm_url(page.url))
+        except Exception:
+            pass
+
         transition_state = {"is_transitioning": False}
 
         def on_frame_attached(f: Any):
@@ -4297,10 +4317,51 @@ class AgentLoop:
                 # Observational actions (scroll/wait/verify) don't need it.
                 if action.kind in ("fill_field", "click", "upload_file", "next_step"):
                     await self._human_delay()
+
+                # ── Backward-navigation guard ─────────────────────────────
+                # Reject navigate_url if it points at a host+path the loop
+                # has already left. ATS application flows are forward-only
+                # (listing → consent → profile → questions → confirm); going
+                # back undoes progress and burns turns. The AI is told to
+                # re-perceive instead of nav'ing away.
+                if action.kind == "navigate_url" and action.url:
+                    target_norm = _norm_url(action.url)
+                    current_norm = _norm_url(page.url)
+                    if target_norm and target_norm != current_norm and target_norm in visited_urls:
+                        logger.warning(
+                            f"[AgentLoop] step={step} NAV-BACK BLOCKED: target "
+                            f"{action.url!r} → norm={target_norm!r} already visited. "
+                            "Forcing re-perceive of current page instead."
+                        )
+                        action.ok = False
+                        action.reason = (
+                            f"BLOCKED: navigate_url to previously-visited "
+                            f"{target_norm!r} would undo forward progress"
+                        )
+                        actions.append(action)
+                        await asyncio.sleep(0.3)
+                        continue
+
                 ok = await _execute_action(
                     action, page, frame, self.resume_path, self.cover_letter_path
                 )
                 action.ok = ok
+
+                # A successful fill/upload is self-evident proof we are on a
+                # real application form — satisfy the verify-page gate even if
+                # the model never emitted an explicit verify_page (weaker
+                # fallback models often skip it and would otherwise trip the
+                # "page never verified" abort). A wrong page could not have a
+                # field filled or a file uploaded successfully.
+                if ok and action.kind in ("fill_field", "upload_file"):
+                    page_verified = True
+
+                # Track every URL the page ends up on after each action so a
+                # later navigate_url that points back at it gets blocked above.
+                try:
+                    visited_urls.add(_norm_url(page.url))
+                except Exception:
+                    pass
 
                 # ── Email verification code wall (Greenhouse, etc.) ──────────
                 # When the user submits a Greenhouse/Vercel-style hosted form,
