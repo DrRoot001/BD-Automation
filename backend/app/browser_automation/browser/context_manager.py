@@ -236,6 +236,27 @@ class BrowserContextManager:
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
+        # ── Persistent storage_state (cookies + localStorage) per platform ──
+        # Auth-walled ATSes (Dice, LinkedIn, Workday) bot-throttle repeated
+        # logins. Logging in ONCE and reusing the full storage_state avoids
+        # that. Path: env "<PLATFORM>_STORAGE_STATE" or backend/data/sessions/
+        # <platform>.json. When present we DON'T also restore redis cookies
+        # (storage_state already carries them).
+        storage_state_used = False
+        try:
+            from pathlib import Path as _Path
+            backend_dir = _Path(__file__).resolve().parents[3]
+            storage_state_path = os.getenv(
+                f"{platform.upper()}_STORAGE_STATE",
+                str(backend_dir / "data" / "sessions" / f"{platform}.json"),
+            )
+            if storage_state_path and os.path.isfile(storage_state_path):
+                context_kwargs["storage_state"] = storage_state_path
+                storage_state_used = True
+                logger.info(f"[Browser] Loaded storage_state for {platform} ← {storage_state_path}")
+        except Exception as exc:
+            logger.debug(f"[Browser] storage_state load skipped: {exc}")
+
         context = await self._browser.new_context(**context_kwargs)
 
         # Inject stealth scripts — DISABLED while debugging react-select interaction.
@@ -243,7 +264,7 @@ class BrowserContextManager:
         # of Greenhouse react-select widgets not opening; testing without them.
         # await context.add_init_script(STEALTH_JS)
 
-        if session_data:
+        if session_data and not storage_state_used:
             cookies = json.loads(session_data)
             await context.add_cookies(cookies)
 

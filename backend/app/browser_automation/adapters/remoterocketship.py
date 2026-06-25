@@ -153,6 +153,23 @@ class RemoteRocketshipAdapter(BasePlatformAdapter):
         # Lazy import to avoid a circular import with adapters/__init__.py.
         from .registry import get_adapter
 
+        # 0. The pipeline sometimes stores the ALREADY-RESOLVED inner-ATS URL as
+        # jobs.source_url while still tagging jobs.source='www.remoterocketship.com'
+        # (so it routes here). If the URL we were handed is itself a known ATS
+        # (not a remoterocketship.com listing), skip the RR scrape and delegate
+        # straight to that ATS adapter — otherwise we'd try to scrape an
+        # Ashby/Greenhouse page as if it were an RR listing and fail.
+        direct_key = _detect_ats_from_url(job_url)
+        if direct_key and "remoterocketship" not in (urlparse(job_url).hostname or "").lower():
+            self._inner = get_adapter(direct_key)
+            self._resolved_url = job_url
+            logger.info(f"[RR] URL is already a resolved {direct_key!r} ATS — delegating directly")
+            await self._inner.navigate_to_application(page, job_url)
+            self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
+            self._frame_locator = getattr(self._inner, "_frame_locator", None)
+            self._frame = getattr(self._inner, "_frame", None)
+            return
+
         # 1. Load RR in the real browser, scrape the underlying ATS link.
         resolved = await self._scrape_apply_url(page, job_url)
 

@@ -313,9 +313,23 @@ class ApplicationExecutor:
                     # the system prompt tight; the AI only needs enough context to
                     # answer "why this role?" type screening questions.
                     job_desc = (package.job_description or "")[:1200]
+                    # Passthrough/aggregator adapters (RemoteRocketship, Indeed
+                    # external-apply) resolve an INNER ATS during navigation. The
+                    # real form belongs to that inner ATS, so the AgentLoop must
+                    # get the inner ATS's hints (e.g. Greenhouse react-select
+                    # quirks) — not the aggregator's thin cheat-sheet. Without
+                    # this, RR jobs route correctly but the AI flies blind.
+                    effective_platform = package.platform
+                    _inner = getattr(adapter, "_inner", None)
+                    if _inner is not None and getattr(_inner, "platform_name", None):
+                        effective_platform = _inner.platform_name
+                        logger.info(
+                            f"[M4] Passthrough adapter resolved inner platform="
+                            f"{effective_platform!r} — using its hints for the AgentLoop"
+                        )
                     job_ctx_for_loop = {
-                        "platform": package.platform,
-                        "ats_type": package.ats_type or package.platform,
+                        "platform": effective_platform,
+                        "ats_type": package.ats_type or effective_platform,
                         "job_url": package.job_url,
                         "job_title": package.job_title or "",
                         "company": package.company or "",
@@ -324,6 +338,13 @@ class ApplicationExecutor:
                     # Screening answers pre-resolved by M3 — pass to AgentLoop so the
                     # AI uses M3's answers verbatim instead of re-inventing them.
                     pre_answers = dict(package.screening_answers or {})
+                    # DRY_RUN_NO_SUBMIT must be honored in AgentLoop mode too —
+                    # the AI drives the final submit itself, so without this flag
+                    # a "dry run" would still file a real application. When set,
+                    # the loop fills + validates the form then returns SUBMITTED
+                    # with confirmation="dry_run_stopped_before_submit" WITHOUT
+                    # clicking the real Submit button.
+                    dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
                     agent_loop = AgentLoop(
                         candidate_profile=package.candidate_profile,
                         job_context=job_ctx_for_loop,
@@ -331,6 +352,7 @@ class ApplicationExecutor:
                         cover_letter_path=_temp_cover,
                         screening_answers=pre_answers,
                         candidate_id=package.candidate_id,
+                        stop_before_submit=dry_run,
                     )
                     frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                     loop_result: LoopResult = await agent_loop.run(

@@ -311,6 +311,53 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    "dice": {
+        "container": "main",
+        "apply_selectors": [
+            # The Easy Apply CTA is clicked by the DiceAdapter BEFORE the loop
+            # runs; these are here only for the PageAgent recovery path.
+            "apply-button-wc button",
+            "button:has-text('Easy apply')",
+            "button:has-text('Easy Apply')",
+        ],
+        "submit_selectors": [
+            "button[data-cy='submit-application']",
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "your application has been submitted",
+            "application has been submitted",
+            "thank you for applying",
+            "we've received your application",
+        ],
+        "url_hint": (
+            "Dice Easy Apply is a 3-step wizard. URL paths (NEVER rely on the "
+            "application id or query params): wizard = '/job-applications/<id>/wizard', "
+            "success = '/job-applications/<id>/wizard/success'. You start on Step 1 "
+            "after the adapter has already clicked 'Easy apply' and logged in."
+        ),
+        "quirks": [
+            "FLOW IS FORWARD-ONLY, 3 STEPS: Step 1 'Resume & Cover Letter' → Step 2 'Additional Information' (questions) → Step 3 'Review' → Submit → success page. A step indicator like 'Step 1 of 3' or section titles ('Resume & Cover Letter', 'Review') tells you where you are. NEVER navigate_url BACK to a step you already passed — the loop blocks it. To advance, click the primary 'Next' / 'Continue' button; to finish, click 'Submit'.",
+            "STABILITY OVER SPEED: after EVERY action wait for the next element to be visible and the page to settle before acting again. Validate each step before clicking Next. Do not rush.",
+            "STEP 1 — RESUME (required): find the resume file input (label 'Upload Resume' or 'Resume') and upload the candidate's resume via the upload_file action. After upload, VERIFY the uploaded filename appears on the page before continuing. If you see 'Upload failed' / 'File too large' / 'Unsupported file', retry the upload ONCE; if it fails again, abort with reason='upload_failure'.",
+            "STEP 1 — COVER LETTER (optional): only upload a cover letter if one was provided to you. If no cover letter is available, SKIP it — do not block on it. If uploaded, verify its filename appears.",
+            "STEP 1 — before clicking Next: confirm the resume filename is visible AND there are no validation errors on the page. Then click 'Next' and wait for Step 2 to load.",
+            "STEP 2 — ADDITIONAL INFORMATION is a DYNAMIC question set. The current observed fields are 'Work Authorization' and 'Current Location', but future jobs may add more (years of experience, current/expected salary, notice period, sponsorship requirement, relocation willingness, remote preference). Classify EVERY visible question by its input type (text, textarea, dropdown, radio, checkbox, autocomplete) and answer it from the candidate profile / pre-resolved screening answers. NEVER hardcode an answer.",
+            "WORK AUTHORIZATION is a DROPDOWN. Valid options are exactly: 'US Citizen', 'Green Card Holder', 'H1B', 'OPT', 'TN Visa', 'Other'. Choose the option matching the candidate's work_authorization_type field (already provided in the profile). Pick the closest valid option; never invent a value outside this list.",
+            "CURRENT LOCATION is a Google-Places-style AUTOCOMPLETE, not a plain text field. Algorithm: (1) type the candidate's location into the input, (2) WAIT for the suggestion dropdown to appear, (3) click the first suggestion that matches, (4) verify the input still shows the chosen value. If no suggestions appear, clear and retype (up to 2 retries). Just typing without selecting a suggestion often fails validation — you MUST pick a suggestion.",
+            "VALIDATION ERRORS: before moving to the next step, scan the page for 'Required', 'This field is required', 'Please enter', 'Invalid value'. If any are present, the step is NOT complete — fix the offending field(s) (fill the missing value / re-select the autocomplete) and only then click Next. Do not advance past unresolved validation errors.",
+            "STEP 3 — REVIEW: this page summarizes Resume, Cover Letter, Location, and Authorization. Verify the resume is present, location is present, and authorization is present. This is NOT the success page — the application is only submitted AFTER you click the final Submit button.",
+            "SUBMIT: the final action is a large primary button labelled 'Submit', 'Submit Application', or 'Apply'. After clicking, a SUBMITTING state follows (loading spinner / disabled button / network activity / redirect). Wait for it.",
+            "SUCCESS is confirmed ONLY when the URL contains '/wizard/success' OR the page text shows 'Application Submitted' (or a similar confirmation). Only then emit done with the confirmation text. Reaching the Review page is NOT success.",
+            "Do not toggle marketing / 'save my answers' / job-alert checkboxes unless the candidate policy explicitly opts in. Default them OFF.",
+            "Use accessible selectors in your reasoning (role, label, placeholder, text) rather than brittle CSS — Dice's class names are generated and change between builds.",
+        ],
+    },
+
     "remoterocketship": {
         "apply_selectors": [
             "button[aria-label='Apply']",
@@ -373,9 +420,26 @@ _HINTS: Dict[str, Dict[str, Any]] = {
 
 
 def get_platform_hints(platform: str) -> Dict[str, Any]:
-    """Return hint dict for the given platform, falling back to 'generic'."""
+    """Return hint dict for the given platform, falling back to 'generic'.
+
+    The pipeline stores ``jobs.source`` as a host (e.g. 'www.dice.com',
+    'boards.greenhouse.io'), NOT the canonical adapter key ('dice',
+    'greenhouse'). So after the exact-key lookup we host-substring match the
+    same way the adapter registry does — otherwise a real Dice job would route
+    to DiceAdapter but the AI would get GENERIC hints and lose the Dice wizard
+    knowledge. Keep this in sync with adapters/registry.get_adapter().
+    """
     key = (platform or "generic").lower().strip()
-    return _HINTS.get(key, _HINTS["generic"])
+    if key in _HINTS:
+        return _HINTS[key]
+    normalized = key.replace("-", "").replace("_", "")
+    # Most specific first so e.g. 'smartapply' wins before any looser match.
+    for k in _HINTS:
+        if k == "generic":
+            continue
+        if k in key or k in normalized:
+            return _HINTS[k]
+    return _HINTS["generic"]
 
 
 def format_hints_for_prompt(hints: Dict[str, Any]) -> str:

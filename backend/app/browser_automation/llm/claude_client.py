@@ -75,17 +75,25 @@ def _resolve_api_keys() -> list[str]:
     when one key hits its TPM cap mid-form, the chain rolls to the next and
     keeps the agent moving instead of stalling on a 429.
     """
-    candidates = [
-        os.getenv("ANTHROPIC_API_KEY", ""),
-        os.getenv("ANTHROPIC_API_KEY_2", ""),
-        os.getenv("CLAUDE_API_KEY", ""),
-        os.getenv("OPENROUTER_API_KEY", ""),
-        os.getenv("GROQ_API_KEY", ""),
-        os.getenv("GROQ_API_KEY_2", ""),
-        os.getenv("GROQ_API_KEY_3", ""),
-        os.getenv("GEMINI_API_KEY", ""),
-        os.getenv("GEMINI_API_KEY_2", ""),
+    # Priority order. Anthropic first (best model when funded). Gemini is placed
+    # AHEAD of Groq/OpenRouter because it's a capable vision model with a
+    # generous free tier (high RPM/TPM) — when Anthropic has no credits it
+    # becomes the reliable primary, whereas Groq's free tier (~12k TPM) gets
+    # exhausted mid-run and 429s, and OpenRouter's free tier caps prompt tokens.
+    # An explicit LLM_KEY_PRIORITY env (comma-separated env-var names) overrides.
+    default_order = [
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_2",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY_2",
+        "CLAUDE_API_KEY",
+        "GROQ_API_KEY",
+        "GROQ_API_KEY_2",
+        "GROQ_API_KEY_3",
+        "OPENROUTER_API_KEY",
     ]
+    order = [n.strip() for n in os.getenv("LLM_KEY_PRIORITY", "").split(",") if n.strip()] or default_order
+    candidates = [os.getenv(name, "") for name in order]
     seen: set[str] = set()
     result = []
     for k in candidates:
