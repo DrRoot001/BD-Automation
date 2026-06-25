@@ -181,6 +181,136 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    "icims": {
+        "container": ".iCIMS_MainWrapper",
+        "apply_selectors": [
+            "a#applyButton",
+            "a.iCIMS_Anchor_ApplyOnline",
+            "a:has-text('Apply for this job')",
+            "a:has-text('Apply for this Job')",
+            "a:has-text('Apply Now')",
+            "button:has-text('Apply for this job')",
+            "input.iCIMS_PrimaryButton[value*='Apply']",
+        ],
+        "submit_selectors": [
+            "input#cp_form_submit_i",
+            "input.iCIMS_PrimaryButton[type='submit']",
+            "input.iCIMS_PrimaryButton[value='Submit Profile']",
+            "input.iCIMS_PrimaryButton[value='Submit']",
+            "button.iCIMS_PrimaryButton",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "thank you for applying",
+            "your application has been submitted",
+            "your application was submitted",
+            "application received",
+            "thanks for your interest",
+        ],
+        "url_hint": (
+            "Hosts: careers.icims.com, <tenant>.icims.com, globalcareers-customerN.icims.com. "
+            "Posting URLs look like /jobs/<id>/... — the form is reached via 'Apply for this job'. "
+            "Apply click usually leads to an email-consent screen FIRST, then the candidate "
+            "profile form (step 1 of 2), then a candidate-questions screen (step 2 of 2)."
+        ),
+        "quirks": [
+            "FLOW IS FORWARD-ONLY: listing → email-consent → candidate profile (step 1) → candidate questions (step 2) → confirmation. NEVER use navigate_url to go BACK to a page you already left — the loop will block it. If you land on a page that looks confusing, scroll and re-read the screenshot; do NOT navigate elsewhere.",
+            "RIGHT AFTER you click 'Apply for this job' the URL changes to 'globalcareers-customer<N>.icims.com/jobs/<id>/login' and an EMAIL-CONSENT screen appears inside form#enterEmailForm. Exact field IDs: '#email' (the email input, name='css_loginName'), '#accept_privacy' (the privacy-consent checkbox), '#enterEmailSubmitButton' (the Next submit). The Next button is INITIALLY disabled='' — it only enables AFTER the checkbox is ticked. Order: fill #email first, THEN tick #accept_privacy, THEN click #enterEmailSubmitButton.",
+            "The email-consent form has an INVISIBLE hCaptcha attached to onsubmit (sitekey on '.h-captcha[data-sitekey]'). When the Next button is clicked, the form's onsubmit handler calls hcaptcha.execute() and only submits AFTER a token is appended as 'h-captcha-response'. The browser_automation captcha service handles this automatically — but the AI MUST click the visible Next button (not call form.submit() directly) so the hCaptcha flow fires. If submit appears to do nothing, that's the hCaptcha solving in the background; wait 5-10s before re-acting.",
+            "If after clicking Apply you see only an email field and a checkbox (no name/phone/resume fields), that IS the consent screen — proceed as above. Don't treat it as a wrong page.",
+            "Multi-step wizard. The progress bar lives in '.iCIMS_Steps' with li#Step_profileStep (step 1) and #Step_personQuestionsStep (step 2). After submitting step 1, step 2 loads on the same URL — keep filling and submit again.",
+            "Email-consent screen: an email <input> + a single consent checkbox + a 'Next' button. Tick the checkbox BEFORE clicking Next or the form rejects.",
+            "Resume upload: '#PortalProfileFields.Resume_File' is a hidden <input type=file>. Trigger it via the visible '.iCIMS_FileFieldButton' (label text 'My Computer'). Avoid the Google Drive / Dropbox / OneDrive buttons — they open OAuth popups.",
+            "Login section: '#PersonProfileFields.Login' (username) + '#PersonProfileFields.Password' + '#PersonProfileFields.Password_Confirm'. Password MUST satisfy: ≥8 chars, ≥1 alpha, ≥1 lowercase, ≥1 uppercase, ≥1 digit, ≥1 special. Use the candidate's email as Login if no dedicated username is requested.",
+            "Country / State dropdowns are iCIMS custom widgets (class 'dropdown-select', not <select>). To choose: click the '.dropdown-select' anchor → type into '.dropdown-search' → click the matching li.dropdown-result.result-selectable. The native <select> stays hidden; setting its value alone does NOT update the visible widget.",
+            "State dropdown is parent-linked to Country (data-ddd-parent-link). Fill Country first, wait for the State list to populate, THEN open State.",
+            "'How did you hear about us?' = '#rcf3048' (native <select>). It already has a default 'globalapply' value — overwrite it explicitly if the operator policy demands a specific source.",
+            "Recruiter-custom-fields use IDs like '#rcf<N>' (e.g. rcf2008 'Preferred First Name', rcf2092 'Full Legal Name'). Treat the for-attribute label, NOT the id, as authoritative.",
+            "Phone group is collection-indexed: '#-1_PersonProfileFields.PhoneType' (select) + '#-1_PersonProfileFields.PhoneNumber' (text). Type='Mobile' for the operator policy.",
+            "Address group is collection-indexed too: '#-1_PersonProfileFields.AddressType' / .AddressStreet1 / .AddressCity / .AddressZip / .AddressCountry / .AddressState.",
+            "Submit button on step 1 is '<input id=\"cp_form_submit_i\" value=\"Submit Profile\">' — clicking it advances to step 2, not the final confirmation.",
+            "iCIMS sometimes opens in an iframe when embedded on a company careers page (in_iframe=1 in the URL). The form itself behaves identically; treat the iframe as the operating context if present.",
+            "Cookie / consent banners: OneTrust ('#onetrust-accept-btn-handler') is the most common; click it before scrolling so it does not intercept pointer events.",
+        ],
+    },
+
+    "indeed": {
+        "apply_selectors": [
+            # In-Indeed Easy Apply CTA (the only branch we drive ourselves)
+            "button#indeedApplyButton",
+            "button[data-testid='indeedApplyButton']",
+            "button:has-text('Apply with Indeed')",
+            "button:has-text('Easily apply')",
+            "a:has-text('Easily apply')",
+            # External-apply CTAs (we click these, then follow the redirect/popup
+            # and delegate to the destination ATS adapter)
+            "a:has-text('Apply on company site')",
+            "a:has-text('Apply on employer site')",
+            "button:has-text('Apply on company site')",
+            "a:has-text('Apply now')",
+            "button:has-text('Apply now')",
+        ],
+        # Submit on Indeed job-detail is a no-op — the actual submit lives on
+        # SmartApply or the external ATS. Kept for interface compatibility.
+        "submit_selectors": [],
+        "success_patterns": [],
+        "url_hint": (
+            "Indeed job-detail URLs look like https://www.indeed.com/viewjob?jk=<key> "
+            "or https://<region>.indeed.com/cmp/<co>/jobs/<...>. Two branches: "
+            "(a) EASY_APPLY — clicking the blue 'Apply with Indeed' button navigates "
+            "to smartapply.indeed.com (same tab). (b) EXTERNAL_APPLY — clicking "
+            "'Apply on company site' / 'Apply now' opens the employer ATS in a new "
+            "tab or redirects the current tab to a non-indeed.com domain."
+        ),
+        "quirks": [
+            "PRODUCT TARGET IS US CANDIDATES. Default country=United States, US phone format, US ZIP. Never claim US citizenship / work auth / sponsorship / EEO / veteran / disability / clearance unless those fields are explicit in the candidate profile.",
+            "Apply-button classification is the FIRST decision on this page. Read the button label BEFORE clicking: 'Apply with Indeed' / 'Easily apply' → EASY_APPLY branch (stay in Indeed, expect smartapply.indeed.com). 'Apply on company site' / 'Apply on employer site' / 'Apply now' → EXTERNAL_APPLY branch (a new tab or non-indeed domain follows; the IndeedAdapter resolves the destination ATS and delegates).",
+            "External apply may open in a new tab OR redirect the current tab. The adapter handles popup vs same-tab via page.context.expect_page(); if you (AgentLoop) see the URL change off indeed.com, that IS the external branch — keep going.",
+            "If the job-detail page shows 'This job is no longer available' / 'Job expired' / 'Position filled' — abort with reason='JOB_UNAVAILABLE'. Do not retry.",
+            "If you see a login wall, CAPTCHA, Cloudflare 'verify you are human', or a security challenge BEFORE the apply button — abort with reason='BLOCKED_HUMAN_REQUIRED'. NEVER attempt to bypass CAPTCHA / reCAPTCHA / hCaptcha / Cloudflare / MFA / email-verification gates on Indeed.",
+            "Do not toggle any 'Save my answers for pre-filling', 'Get job alerts', 'Subscribe' or marketing checkboxes unless candidate policy explicitly opts in. Default OFF.",
+            "Chrome address autofill can fire during typing on the Indeed location form. Prefer setInputFiles / explicit fill_field over keystroke simulation; if a value other than the candidate's appears, clear and retype.",
+        ],
+    },
+
+    "smartapply": {
+        "url_hint": (
+            "Easy Apply form lives on https://smartapply.indeed.com/.../form. "
+            "Sequence: location → contact info → resume → (cover letter, optional) "
+            "→ employer questions → voluntary self-ID → 'Preparing review' loader "
+            "→ 'Review your application' → 'Your application has been submitted!'"
+        ),
+        "apply_selectors": [],  # already on the form; no separate apply click
+        "submit_selectors": [
+            "button:has-text('Submit your application')",
+            "button:has-text('Submit application')",
+            "button[data-testid='indeedApplyButton-submit']",
+            "button[type='submit']:has-text('Submit')",
+        ],
+        # Note: 'Review your application' is the page TITLE that comes BEFORE
+        # submit — do NOT treat it as a success signal. Only the post-submit
+        # confirmation strings below are valid success markers.
+        "success_patterns": [
+            "your application has been submitted",
+            "application has been submitted",
+            "we've sent your application",
+            "we have sent your application",
+            "thank you for applying",
+        ],
+        "quirks": [
+            "MULTI-STEP, FORWARD-ONLY. Each page has a 'Continue' / 'Review your application' / 'Submit your application' primary button. Use next_step / click — never navigate_url BACK to a page you already passed; the wizard rejects it.",
+            "Page identification by visible heading (lowercased): 'add your location' → location step; 'add a resume' → resume step; 'voluntary self identification questions from the employer' → EEO/self-ID consent; 'review your application' → final review (NOT yet submitted); 'preparing review' → transient loader, just wait, do not act.",
+            "Location step: country MUST be 'United States'. Fill ZIP, city/state, street from candidate.location data. If country is anything else, click 'Change' and pick US. If candidate has no US address, abort with reason='MISSING_CANDIDATE_DATA'.",
+            "Resume step: a previously-uploaded resume card may already be selected. Verify the filename matches the candidate's current resume before clicking Continue; if not, upload the candidate's resume via the file input.",
+            "Voluntary self-ID consent: the 'Agree' / consent checkbox is REQUIRED to proceed but the demographic answers underneath are NOT. Tick the consent checkbox only — leave gender/race/veteran/disability blank or 'Prefer not to answer' unless the candidate profile has explicit values.",
+            "'Save my answers for pre-filling' checkbox: leave OFF by default. Job-alert opt-in on the review page: also OFF.",
+            "'Review your application' is NOT the confirmation page. The application is only submitted AFTER clicking 'Submit your application' on that review page AND seeing the 'Your application has been submitted!' screen.",
+            "If a question is required and the candidate profile has no explicit answer (work auth, sponsorship, clearance, salary, years of <tech>, demographics) — abort with reason='UNKNOWN_REQUIRED_QUESTION'. NEVER guess.",
+            "reCAPTCHA / 'verify you are human' / Cloudflare challenge appearing mid-flow → abort with reason='BLOCKED_HUMAN_REQUIRED'. No bypass.",
+            "DRY_RUN mode: if env DRY_RUN=true OR ENABLE_PRODUCTION_SUBMIT!=true, STOP at the 'Review your application' page. Emit done with confirmation='DRY_RUN_READY_TO_SUBMIT' and the review-page heading screenshot. Do NOT click 'Submit your application'.",
+        ],
+    },
+
     "remoterocketship": {
         "apply_selectors": [
             "button[aria-label='Apply']",
