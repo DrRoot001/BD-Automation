@@ -32,7 +32,8 @@ def generate_resume_pdf(
     experience: list[dict],
     education: list[dict],
     certifications: list[str],
-    projects: list[dict] = None  # NEW: Added projects for rendering only
+    projects: list[dict] = None,  # NEW: Added projects for rendering only
+    headline: str = ""
 ) -> None:
     """Generate a clean, ATS-compliant PDF resume using the HTML template."""
     if projects is None:
@@ -44,6 +45,7 @@ def generate_resume_pdf(
     resume_data = {
         "basics": {
             "name": name,
+            "headline": headline,
             "email": email,
             "phone": phone,
             "location": location,

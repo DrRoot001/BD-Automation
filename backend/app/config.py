@@ -15,6 +15,11 @@ class Settings(BaseSettings):
     secret_key: str
     google_client_id: str = ""
     google_client_secret: str = ""
+    # Supabase
+    supabase_url: str = ""
+    supabase_service_role_key: str = ""
+    supabase_anon_key: str = ""
+    supabase_admin_user_id: str = ""
 
 
     # JWT

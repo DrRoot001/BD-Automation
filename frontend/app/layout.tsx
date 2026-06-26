@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import { ReactQueryProvider } from '@/lib/providers'
-import { ClientLayout } from '@/components/ClientLayout'
+import { ClientLayout } from '@/components/shared/ClientLayout'
 
 export const metadata: Metadata = {
   title: 'BD Automator — Dashboard',

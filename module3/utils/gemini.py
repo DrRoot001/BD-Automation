@@ -29,6 +29,17 @@ class GeminiResponse:
                 
         self.usage_metadata = UsageMetadata(prompt_tokens, completion_tokens)
 
+class GroqResponse:
+    def __init__(self, text: str, prompt_tokens: int = 0, completion_tokens: int = 0):
+        self.text = text
+        
+        class UsageMetadata:
+            def __init__(self, in_tokens: int, out_tokens: int):
+                self.prompt_token_count = in_tokens
+                self.candidates_token_count = out_tokens
+                
+        self.usage_metadata = UsageMetadata(prompt_tokens, completion_tokens)
+
 def _clean_response_text(text: str, is_json: bool) -> str:
     text = text.strip()
     if is_json:
@@ -199,6 +210,93 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
                 await asyncio.sleep(1.0)
     return None
 
+async def _generate_with_groq(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type):
+    groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+
+    if isinstance(contents, list):
+        user_content = ""
+        for item in contents:
+            if isinstance(item, str):
+                user_content += item
+            elif hasattr(item, "text"):
+                user_content += item.text
+            else:
+                user_content += str(item)
+    else:
+        user_content = str(contents)
+
+    payload = {
+        "model": groq_model,
+        "messages": [{"role": "user", "content": user_content}],
+        "temperature": temperature,
+        "max_tokens": 1500,
+    }
+
+    if response_schema or response_mime_type == "application/json":
+        payload["response_format"] = {"type": "json_object"}
+        if response_schema:
+            if hasattr(response_schema, "model_json_schema"):
+                schema_desc = json.dumps(response_schema.model_json_schema(), indent=2)
+            else:
+                schema_desc = str(response_schema)
+            payload["messages"][0]["content"] += f"\n\nCRITICAL: You must return valid JSON that conforms strictly to this JSON Schema:\n{schema_desc}"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    delay = initial_delay
+    for attempt in range(max_retries):
+        try:
+            start_time = time.time()
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+            
+            if resp.status_code == 429 or resp.status_code == 402:
+                raise RuntimeError(f"Rate limit or quota hit ({resp.status_code}): {resp.text}")
+
+            if resp.status_code != 200:
+                raise ValueError(f"Groq API error ({resp.status_code}): {resp.text}")
+
+            data = resp.json()
+            choices = data.get("choices", [])
+            if not choices:
+                raise ValueError(f"Groq returned empty choices: {data}")
+
+            text_content = choices[0]["message"]["content"]
+            is_json = bool(response_schema or response_mime_type == "application/json")
+            text_content = _clean_response_text(text_content, is_json)
+
+            usage = data.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+
+            latency_ms = (time.time() - start_time) * 1000
+            cost_usd = 0.0
+
+            print(f"[GROQ SUCCESS] Model: {groq_model} | Latency: {latency_ms:.0f}ms | Tokens (In/Out): {prompt_tokens}/{completion_tokens} | Est. Cost: ${cost_usd:.6f}")
+            return GroqResponse(text_content, prompt_tokens, completion_tokens)
+
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = "429" in err_str or "Rate limit" in err_str or "RESOURCE_EXHAUSTED" in err_str or "402" in err_str
+
+            if is_rate_limit and attempt < max_retries - 1:
+                print(f"[GROQ RETRY] Rate limit hit. Retrying in {delay:.2f}s... (Attempt {attempt+1}/{max_retries})")
+                await asyncio.sleep(delay)
+                delay = min(30.0, delay * 2.0)
+            else:
+                print(f"[GROQ ERROR] Attempt {attempt+1} failed: {e}")
+                if attempt == max_retries - 1:
+                    raise e
+                await asyncio.sleep(1.0)
+    return None
+
 class AnthropicResponse:
     def __init__(self, text: str, prompt_tokens: int = 0, completion_tokens: int = 0):
         self.text = text
@@ -309,7 +407,7 @@ async def generate_content_with_retry(
     temperature: float = 0.3,
     max_retries: int = 10,
     initial_delay: float = 5.0,
-    model: str = "gemini-2.5-flash",
+    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
     response_mime_type: str = None
 ) -> Any:
     """
@@ -320,6 +418,7 @@ async def generate_content_with_retry(
     seen_keys = set()
     
     candidates = [
+        ("GROQ_API_KEY", os.getenv("GROQ_API_KEY")),
         ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
         ("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY")),
         ("ANTHROPIC_API_KEY_2", os.getenv("ANTHROPIC_API_KEY_2")),
@@ -335,7 +434,9 @@ async def generate_content_with_retry(
             continue
         seen_keys.add(key)
         
-        if key.startswith("sk-or-"):
+        if key.startswith("gsk_"):
+            providers.append(("groq", key))
+        elif key.startswith("sk-or-"):
             providers.append(("openrouter", key))
         elif key.startswith("sk-ant-") or key.startswith("sk-"):
             providers.append(("anthropic", key))
@@ -365,7 +466,14 @@ async def generate_content_with_retry(
         current_max_retries = 2 if has_fallback else max_retries
         
         try:
-            if provider_type == "openrouter":
+            if provider_type == "groq":
+                res = await _generate_with_groq(
+                    api_key, contents, response_schema, temperature, 
+                    current_max_retries, initial_delay, response_mime_type
+                )
+                _working_provider_key = api_key
+                return res
+            elif provider_type == "openrouter":
                 res = await _generate_with_openrouter(
                     api_key, contents, response_schema, temperature, 
                     current_max_retries, initial_delay, response_mime_type

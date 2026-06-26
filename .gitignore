@@ -10,8 +10,8 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -101,3 +101,14 @@ backend/app/scripts/screenshots/
 # agent learns from successful fills. Treat as machine-local state.
 backend/data/field_memory.json
 backend/data/field_failures.json
+# M4: never commit auth session cookies / local run artifacts
+backend/data/sessions/
+.merge-stash/
+scratch/
+test_m4_evidence_*.json
+test_m4_evidence_*.png
+test_capsolver_evidence.png
+dice_test.log
+
+# Ignore node_modules globally
+node_modules/

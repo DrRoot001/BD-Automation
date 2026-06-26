@@ -5,7 +5,24 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { api, type ApplicationHistoryEntry } from '@/lib/api'
 import { clsx } from 'clsx'
-import { formatDistanceToNow } from '@/components/utils'
+import { formatDistanceToNow, resolveFileUrl } from '@/components/utils'
+import { ExternalLink, AlertCircle } from 'lucide-react'
+
+const COMPLETED_STATUSES = [
+  'SUBMITTED',
+  'CONFIRMED',
+  'REJECTED',
+  'OFFER',
+  'INTERVIEW_R1',
+  'INTERVIEW_R2',
+  'INTERVIEW_R3',
+  'INTERVIEW_R4',
+  'ASSESSMENT'
+]
+
+function isCompleted(status: string) {
+  return COMPLETED_STATUSES.includes(status?.toUpperCase())
+}
 
 function StatusBadge({ status }: { status: string }) {
   const s = status?.toLowerCase() || ''
@@ -14,9 +31,11 @@ function StatusBadge({ status }: { status: string }) {
     found:        'badge-found',
     submitted:    'badge-submitted',
     confirmed:    'badge-confirmed',
-    interview_r1: 'badge-interview_r1',
-    interview_r2: 'badge-interview_r2',
-    failed:       'badge-failed',
+    interview_r1:   'badge-interview_r1',
+    interview_r2:   'badge-interview_r2',
+    interview_r3:   'badge-interview_r1',
+    interview_r4:   'badge-interview_r1',
+    failed:         'badge-failed',
     blocked:      'badge-blocked',
     rejected:     'badge-rejected',
     offer:        'badge-offer',
@@ -88,14 +107,26 @@ export default function ApplicationDetailPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-text-primary">
-              {job?.title || 'Unknown Position'}
+              {job?.canonical_url || job?.source_url ? (
+                <a 
+                  href={job.canonical_url || job.source_url} 
+                  target="_blank" 
+                  rel="noopener noreferrer" 
+                  className="hover:text-accent hover:underline inline-flex items-center gap-2"
+                >
+                  {job.title}
+                  <ExternalLink className="w-5 h-5 text-text-muted" />
+                </a>
+              ) : (
+                job?.title || 'Unknown Position'
+              )}
             </h1>
             <p className="text-text-secondary text-base mt-1">
               {job?.company || 'Unknown Company'}
             </p>
           </div>
           <div className="flex items-center gap-4">
-            <StatusBadge status={application.status} />
+            <StatusBadge status={isCompleted(application.status) ? application.status : 'FAILED'} />
           </div>
         </div>
       </div>
@@ -129,15 +160,48 @@ export default function ApplicationDetailPage() {
                 <div className="text-text-muted mb-1 text-xs">Submitted At</div>
                 <div>{application.submitted_at ? new Date(application.submitted_at).toLocaleString() : '—'}</div>
               </div>
+              <div className="col-span-2">
+                <div className="text-text-muted mb-1 text-xs">Job Posting Link</div>
+                <div>
+                  {job?.canonical_url || job?.source_url ? (
+                    <a 
+                      href={job.canonical_url || job.source_url} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="text-accent hover:underline inline-flex items-center gap-1 font-semibold"
+                    >
+                      View Original Job Description ↗
+                    </a>
+                  ) : (
+                    '—'
+                  )}
+                </div>
+              </div>
             </div>
           </div>
 
-          {application.error_message && (
-            <div className="bg-danger/10 border border-danger/20 rounded-xl p-6">
-              <h2 className="text-sm font-semibold text-danger mb-2">Failure Reason</h2>
-              <pre className="text-xs text-danger/80 whitespace-pre-wrap font-mono">
-                {application.error_message}
-              </pre>
+          {!isCompleted(application.status) && (
+            <div className="bg-danger/10 border border-danger/20 rounded-xl p-6 space-y-4">
+              <div className="flex items-start gap-2">
+                <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" />
+                <div>
+                  <h2 className="text-sm font-semibold text-danger">Application Incomplete / Failed</h2>
+                  <p className="text-xs text-danger/80 mt-1">
+                    {application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity."}
+                  </p>
+                </div>
+              </div>
+              {job?.source_url && (
+                <a
+                  href={job.source_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-danger hover:bg-danger/90 px-4 py-2 rounded-lg transition-colors shadow-sm"
+                >
+                  <ExternalLink className="w-4 h-4" />
+                  Apply Manually Now ↗
+                </a>
+              )}
             </div>
           )}
 
@@ -152,16 +216,44 @@ export default function ApplicationDetailPage() {
             </div>
           )}
           
-          {application.cover_letter_url && (
+          {(application.resume_id || application.cover_letter_url) && (
             <div className="card p-6">
               <h2 className="text-sm font-semibold text-text-primary border-b border-bg-border pb-3 mb-4">
-                Generated Cover Letter
+                Application Documents
               </h2>
-              <div className="text-sm text-text-secondary whitespace-pre-wrap bg-bg-primary p-4 rounded-lg border border-bg-border">
-                {/* Note: if this is a URL, we'd fetch it. If it's raw text, we just render it. Assuming URL for now. */}
-                <a href={application.cover_letter_url} target="_blank" rel="noreferrer" className="text-accent hover:underline">
-                  View Cover Letter Document ↗
-                </a>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                {application.resume_id && (
+                  <div className="flex items-center justify-between p-4 bg-bg-primary rounded-xl border border-bg-border">
+                    <div>
+                      <div className="text-sm font-semibold text-text-primary">Tailored Resume</div>
+                      <div className="text-xs text-text-muted mt-0.5">Optimized for this job</div>
+                    </div>
+                    <a
+                      href={`/api/resumes/${application.resume_id}/view`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs bg-text-primary text-bg-card px-3.5 py-2 rounded-lg font-semibold hover:opacity-90 transition-opacity"
+                    >
+                      View Resume ↗
+                    </a>
+                  </div>
+                )}
+                {application.cover_letter_url && (
+                  <div className="flex items-center justify-between p-4 bg-bg-primary rounded-xl border border-bg-border">
+                    <div>
+                      <div className="text-sm font-semibold text-text-primary">Cover Letter</div>
+                      <div className="text-xs text-text-muted mt-0.5">AI custom cover letter</div>
+                    </div>
+                    <a
+                      href={resolveFileUrl(application.cover_letter_url) ?? application.cover_letter_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs bg-text-primary text-bg-card px-3.5 py-2 rounded-lg font-semibold hover:opacity-90 transition-opacity"
+                    >
+                      View Cover Letter ↗
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
           )}

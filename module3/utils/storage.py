@@ -29,8 +29,24 @@ def get_env_var_from_file(filepath: str, var_name: str) -> Optional[str]:
         pass
     return None
 
-SUPABASE_URL = get_env_var_from_file("frontend/.env.local", "NEXT_PUBLIC_SUPABASE_URL") or get_env_var_from_file("frontend/.env", "NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = get_env_var_from_file("frontend/.env.local", "NEXT_PUBLIC_SUPABASE_ANON_KEY") or get_env_var_from_file("frontend/.env", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+import os as _os
+# Resolve the project root absolutely so this works regardless of CWD
+_project_root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+_env_local = _os.path.join(_project_root, "frontend", ".env.local")
+_env_fallback = _os.path.join(_project_root, "frontend", ".env")
+
+SUPABASE_URL = (
+    _os.getenv("SUPABASE_URL")
+    or _os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+    or get_env_var_from_file(_env_local, "NEXT_PUBLIC_SUPABASE_URL")
+    or get_env_var_from_file(_env_fallback, "NEXT_PUBLIC_SUPABASE_URL")
+)
+SUPABASE_KEY = (
+    _os.getenv("SUPABASE_KEY")
+    or _os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    or get_env_var_from_file(_env_local, "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+    or get_env_var_from_file(_env_fallback, "NEXT_PUBLIC_SUPABASE_ANON_KEY")
+)
 
 async def upload_file_to_supabase(file_path: str, bucket_name: str, file_name: str) -> str:
     """
@@ -44,7 +60,7 @@ async def upload_file_to_supabase(file_path: str, bucket_name: str, file_name: s
     headers = {
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "apikey": SUPABASE_KEY,
-        "Content-Type": "application/pdf" # Assuming all these are PDFs
+        "Content-Type": "application/pdf",
     }
     
     print(f"[STORAGE] Uploading {file_path} to Supabase bucket '{bucket_name}'...")

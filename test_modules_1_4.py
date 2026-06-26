@@ -22,6 +22,16 @@ import traceback
 from pathlib import Path
 from typing import List, Dict, Any
 
+# Force UTF-8 on the console BEFORE importing modules that print unicode glyphs
+# (module2/module3 emit ✓/✗/… at import time, which crash a Windows cp1252
+# console with UnicodeEncodeError). Reconfiguring the existing streams in place
+# fixes every downstream print/log for this process.
+try:
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+except Exception:
+    pass
+
 # Path configuration
 PROJECT_ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -91,24 +101,28 @@ def log_failure(msg):
     logger.error(f"{RED}✗ FAILURE: {msg}{RESET}")
 
 API_BASE = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
-RESUME_PDF = str(PROJECT_ROOT / "harmain_ali_butt_resume.pdf")
 
 
 async def get_or_parse_base_resume(candidate_id: str) -> ResumeData:
-    logger.info("Resolving base resume for candidate...")
+    logger.info("Resolving base resume for candidate from database...")
     async with AsyncSessionLocal() as session:
         res_query = select(Resume).where(Resume.candidate_id == candidate_id, Resume.is_base == True).order_by(Resume.version.desc())
         res_result = await session.execute(res_query)
         base_resume = res_result.scalars().first()
         
-        if base_resume and base_resume.parsed_json:
+        if not base_resume:
+            logger.error("No base resume record found in database.")
+            raise ValueError(f"No base resume found for candidate {candidate_id} in database. Please upload one via the UI.")
+
+        if base_resume.parsed_json:
             logger.info(f"Base resume found in DB (ID: {base_resume.id}). Loading parsed JSON.")
             
             # Ensure the file_url is a Supabase URL, not a local path
             if base_resume.file_url and not base_resume.file_url.startswith("http"):
                 logger.info(f"Existing base resume has a local path: {base_resume.file_url}. Uploading to Supabase...")
                 from module3.utils.storage import upload_file_to_supabase
-                remote_url = await upload_file_to_supabase(base_resume.file_url, "resume", f"{candidate_id}_base.pdf")
+                local_path = str(PROJECT_ROOT / "backend" / base_resume.file_url.lstrip("/")) if base_resume.file_url.startswith("/files/") else base_resume.file_url
+                remote_url = await upload_file_to_supabase(local_path, "resume", f"{candidate_id}_base.pdf")
                 if remote_url != base_resume.file_url:
                     base_resume.file_url = remote_url
                     await session.commit()
@@ -122,67 +136,105 @@ async def get_or_parse_base_resume(candidate_id: str) -> ResumeData:
                 sections=sections,
                 raw_text="[Loaded from DB]"
             )
-            
-    # Parse PDF if database record is missing
-    logger.info(f"No parsed base resume in database. Attempting to parse local PDF: {RESUME_PDF}")
-    if not os.path.exists(RESUME_PDF):
-        raise FileNotFoundError(f"Resume PDF not found at: {RESUME_PDF}")
-        
-    parsed_resume = await parse_resume(RESUME_PDF, candidate_id=candidate_id)
-    
-    # Save base resume to database
-    async with AsyncSessionLocal() as session:
-        # Find next version
-        res_query = select(Resume).where(Resume.candidate_id == candidate_id)
-        res_result = await session.execute(res_query)
-        existing_resumes = res_result.scalars().all()
-        next_version = max([r.version or 0 for r in existing_resumes] + [0]) + 1
-        
-        parsed_json_data = parsed_resume.sections.model_dump()
-        parsed_json_data["file_hash"] = parsed_resume.file_hash
-        
-        from module3.utils.storage import upload_file_to_supabase
-        remote_url = await upload_file_to_supabase(RESUME_PDF, "resume", f"{candidate_id}_base.pdf")
-        
-        db_resume = Resume(
-            candidate_id=candidate_id,
-            version=next_version,
-            file_url=remote_url,
-            parsed_json=parsed_json_data,
-            is_base=True
-        )
-        session.add(db_resume)
-        await session.commit()
-        await session.refresh(db_resume)
-        
-        parsed_resume.resume_id = db_resume.id
-        logger.info(f"Saved new base resume version {next_version} to DB with ID: {db_resume.id}")
-        
-    return parsed_resume
+        else:
+            # Auto-parse since it has a file_url but no parsed_json
+            file_url = base_resume.file_url
+            if not file_url:
+                raise ValueError("Base resume has no parsed_json and no file_url.")
+
+            # Supabase HTTPS URL — download to a temp file first
+            if file_url.startswith("http://") or file_url.startswith("https://"):
+                import tempfile, httpx
+                logger.info(f"Base resume has no parsed_json. Downloading from Supabase: {file_url}")
+                try:
+                    async with httpx.AsyncClient(timeout=30.0) as client:
+                        resp = await client.get(file_url)
+                        resp.raise_for_status()
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
+                        tmp.write(resp.content)
+                        tmp_path = tmp.name
+                    parsed_resume = await parse_resume(tmp_path, candidate_id=candidate_id, resume_id=str(base_resume.id))
+                    os.unlink(tmp_path)
+                    base_resume.parsed_json = parsed_resume.sections.model_dump()
+                    await session.commit()
+                    logger.info("Successfully parsed resume from Supabase and saved to DB.")
+                    return parsed_resume
+                except Exception as e:
+                    raise RuntimeError(f"Failed to download/parse resume from Supabase ({file_url}): {e}")
+
+            # Local /files/ relative path
+            if file_url.startswith("/files/"):
+                local_path = str(PROJECT_ROOT / "backend" / file_url.lstrip("/"))
+            else:
+                local_path = file_url  # absolute OS path (legacy)
+
+            if os.path.exists(local_path):
+                logger.info(f"Base resume has no parsed_json. Parsing from file: {local_path}")
+                parsed_resume = await parse_resume(local_path, candidate_id=candidate_id, resume_id=str(base_resume.id))
+                base_resume.parsed_json = parsed_resume.sections.model_dump()
+                await session.commit()
+                logger.info("Successfully parsed resume and saved to DB.")
+                return parsed_resume
+            else:
+                raise FileNotFoundError(
+                    f"Resume file not found at {local_path}. "
+                    "The resume was saved locally but the file no longer exists. "
+                    "Please re-upload the resume via the UI."
+                )
 
 
 async def load_candidate() -> Candidate:
     log_header("STEP 1: Fetching Candidate from Database")
     async with AsyncSessionLocal() as session:
-        query = select(Candidate).where(Candidate.name.ilike("%Harmain%"))
+        query = select(Candidate).where(Candidate.email == "sabih0364@gmail.com")
         result = await session.execute(query)
         candidate = result.scalar_one_or_none()
         
         if not candidate:
-            log_failure("Candidate 'Harmain' not found in database.")
+            log_failure("Candidate 'Sabih Haider' not found in database.")
             # List available candidates to aid debugging
             all_result = await session.execute(select(Candidate))
             candidates = all_result.scalars().all()
             logger.info("Existing candidates in database:")
             for c in candidates:
                 logger.info(f"  - Name: {c.name} | Email: {c.email} | ID: {c.id}")
-            raise ValueError("Candidate 'Harmain' must be present in the database.")
+            raise ValueError("Candidate 'Sabih Haider' must be present in the database.")
             
         log_success(f"Candidate found: {candidate.name} (ID: {candidate.id})")
         logger.info(f"Email: {candidate.email}")
         logger.info(f"Tech Stack: {candidate.tech_stack}")
         logger.info(f"Years of Experience: {candidate.years_exp}")
         return candidate
+
+
+async def is_application_live(url: str) -> bool:
+    """Quick liveness check for a job posting. Returns False for expired
+    postings (Greenhouse redirects dead jobs to <board>?error=true, or the page
+    says 'no longer accepting applications'). Network hiccups -> treat as live
+    (don't over-filter)."""
+    if not url:
+        return False
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as c:
+            r = await c.get(url)
+    except Exception:
+        return True
+    final = str(r.url).lower()
+    if "error=true" in final or r.status_code >= 400:
+        return False
+    body = (r.text or "").lower()
+    dead_markers = (
+        "no longer accepting application", "this job is no longer",
+        "position has been filled", "job is no longer available",
+        "posting is no longer", "not currently accepting",
+        "this job is no longer active", "no longer available",
+        # Greenhouse deactivated-board page (entire company board removed):
+        "page not found", "no longer active", "job board you were viewing",
+        # Lever / generic expired:
+        "this posting is closed", "the position you are looking for",
+    )
+    return not any(m in body for m in dead_markers)
 
 
 async def load_jobs(candidate_id: str) -> List[Job]:
@@ -195,10 +247,15 @@ async def load_jobs(candidate_id: str) -> List[Job]:
             Application.job_id == Job.id
         )
         
-        # Fetch active jobs (we focus on greenhouse or lever jobs since browser automation is built for them)
-        # Filter out jobs that the candidate has already applied to
+        # Fetch active jobs (greenhouse / lever — browser automation is built for them).
+        # Restrict to DIRECT ATS URLs (job-boards/boards.greenhouse.io, jobs.lever.co):
+        # company "careers-proxy" URLs (e.g. careers.datadoghq.com?gh_jid=...) pass an
+        # HTTP liveness check but their Greenhouse board is often dead (the "Page not
+        # found" only renders after JS), so they waste M3 tailoring + M4 on a dead form.
+        # Filter out jobs already applied to.
         query = select(Job).where(
             Job.source.in_(["greenhouse", "lever"]),
+            (Job.source_url.ilike("%greenhouse.io%") | Job.source_url.ilike("%lever.co%")),
             ~exists(applied_stmt)
         ).order_by(Job.created_at.desc()).limit(20)
         result = await session.execute(query)
@@ -245,6 +302,19 @@ async def load_jobs(candidate_id: str) -> List[Job]:
             logger.info(f"Stored {len(saved_jobs)} USA Vercel jobs in database.")
             jobs = saved_jobs
             
+        # ── Filter out EXPIRED postings before we waste M3 tailoring + M4 on a
+        # dead job (the previous run picked an expired datadog posting that had
+        # no application form, so M4 had nothing to fill). ──
+        logger.info(f"Checking liveness of {len(jobs)} postings (filtering expired)...")
+        checks = await asyncio.gather(*[is_application_live(j.source_url) for j in jobs])
+        live_jobs = [j for j, ok in zip(jobs, checks) if ok]
+        dead_count = len(jobs) - len(live_jobs)
+        logger.info(f"{len(live_jobs)}/{len(jobs)} postings are live ({dead_count} expired/filtered).")
+        if live_jobs:
+            jobs = live_jobs
+        else:
+            log_warn("No live postings detected — proceeding with full list (liveness check may be unreliable).")
+
         logger.info(f"Retrieved {len(jobs)} eligible jobs for matching.")
         for idx, j in enumerate(jobs[:5], 1):
             logger.info(f"  {idx}. {j.title} @ {j.company} ({j.location}) [ID: {j.id}]")
@@ -384,14 +454,14 @@ async def execute_tailoring_pipeline(candidate_id: str, job_id: str) -> Dict[str
     result = await orchestrate_application_package(
         candidate_id=candidate_id,
         job_id=job_id,
-        base_resume_pdf_path=RESUME_PDF,
-        api_base_url=API_BASE,
+        api_base_url=API_BASE.replace("/api", ""),
         skip_gate=True
     )
     
     log_success("Tailoring pipeline finished.")
     logger.info(f"Application Package ID: {result.get('application_id')}")
     logger.info(f"Tailored Resume ID    : {result.get('tailored_resume_id')}")
+    logger.info(f"Tailored Resume URL   : {result.get('resume_pdf_url')}")
     logger.info(f"Cover Letter URL     : {result.get('cover_letter_url')}")
     logger.info(f"Screening Answers    : {result.get('screening_answers')}")
     return result
@@ -414,9 +484,17 @@ async def run_browser_automation(app_result: Dict[str, Any]) -> Any:
         "screening_answers": screening_answers,
     }
     
-    # Disable dry run to perform a real job application submission
-    os.environ["DRY_RUN_NO_SUBMIT"] = "false"
-    logger.info("DRY_RUN_NO_SUBMIT=false is active. Performing a REAL live job application submission.")
+    # Submit behavior is env-overridable so the full pipeline can be validated
+    # WITHOUT firing real applications at real companies during testing. Export
+    # DRY_RUN_NO_SUBMIT=true for a safe validation run (fills the form, stops
+    # before the final submit); leave it unset / "false" for a REAL submission.
+    os.environ.setdefault("DRY_RUN_NO_SUBMIT", "false")
+    _dry = os.environ["DRY_RUN_NO_SUBMIT"].lower() == "true"
+    logger.info(
+        f"DRY_RUN_NO_SUBMIT={os.environ['DRY_RUN_NO_SUBMIT']} — "
+        + ("filling form then stopping before submit (safe)" if _dry
+           else "performing a REAL live job application submission")
+    )
     
     logger.info("Starting hydrate_and_execute Playwright session...")
     try:

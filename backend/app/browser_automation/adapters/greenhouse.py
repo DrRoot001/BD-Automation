@@ -48,6 +48,91 @@ class GreenhouseAdapter(BasePlatformAdapter):
     # Navigation
     # ──────────────────────────────────────────────────────────────────────────
 
+    async def _smart_rewrite_to_canonical_greenhouse(self, job_url: str) -> str:
+        """Rewrite + probe. Returns the URL we should navigate to.
+
+        Steps:
+          1. Compute candidate canonical URL via `_rewrite_to_canonical_greenhouse`.
+          2. If unchanged → return as-is (no rewrite was applicable).
+          3. HEAD-probe the candidate. If it 302's back to the original host,
+             return the original URL (avoid the redirect loop).
+          4. Otherwise return the canonical URL.
+        """
+        canonical = self._rewrite_to_canonical_greenhouse(job_url)
+        if canonical == job_url:
+            return job_url
+        try:
+            import httpx
+            from urllib.parse import urlparse
+            original_host = (urlparse(job_url).hostname or "").lower()
+            async with httpx.AsyncClient(follow_redirects=False, timeout=6.0) as client:
+                resp = await client.head(canonical)
+            # 3xx → check the redirect target host
+            if 300 <= resp.status_code < 400:
+                loc = resp.headers.get("location", "")
+                loc_host = (urlparse(loc).hostname or "").lower()
+                if loc_host == original_host:
+                    logger.info(
+                        f"[GH] Canonical {canonical!r} redirects back to original host "
+                        f"({original_host}) — using ORIGINAL URL instead"
+                    )
+                    return job_url
+            # 404/410 → canonical doesn't exist; fall back to original
+            if resp.status_code in (404, 410):
+                logger.info(
+                    f"[GH] Canonical {canonical!r} returned {resp.status_code} — "
+                    f"using ORIGINAL URL"
+                )
+                return job_url
+        except Exception as exc:
+            logger.warning(f"[GH] HEAD probe of {canonical!r} failed: {exc} — using canonical anyway")
+        return canonical
+
+    @staticmethod
+    def _rewrite_to_canonical_greenhouse(job_url: str) -> str:
+        """Translate mirrored careers URLs to job-boards.greenhouse.io.
+
+        Common patterns this handles:
+          https://jobs.elastic.co/jobs?gh_jid=7960302              -> https://job-boards.greenhouse.io/elastic/jobs/7960302
+          https://www.acme.com/careers?gh_jid=12345                -> https://job-boards.greenhouse.io/acme/jobs/12345
+          https://boards.greenhouse.io/elastic/jobs/7960302        -> unchanged
+          https://job-boards.greenhouse.io/elastic/jobs/7960302    -> unchanged
+
+        Returns the rewritten URL, or the original if the pattern doesn't apply.
+        The slug is derived from the host's second-level domain (jobs.elastic.co
+        → "elastic"), which matches the Greenhouse board token convention for the
+        vast majority of clients. If the rewrite fails at navigation time the
+        executor's existing PageAgent will recover.
+        """
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(job_url)
+            host = (parsed.hostname or "").lower()
+            # Already canonical — nothing to do
+            if host in ("boards.greenhouse.io", "job-boards.greenhouse.io"):
+                return job_url
+            qs = parse_qs(parsed.query or "")
+            gh_jid_list = qs.get("gh_jid") or []
+            if not gh_jid_list:
+                return job_url
+            gh_jid = gh_jid_list[0].strip()
+            if not gh_jid.isdigit():
+                return job_url
+            # Derive a board slug from the host: strip leading 'jobs.' / 'www.'
+            # then take the second-level domain.
+            host_parts = host.split(".")
+            if host_parts and host_parts[0] in ("jobs", "careers", "www"):
+                host_parts = host_parts[1:]
+            slug = host_parts[0] if host_parts else ""
+            if not slug:
+                return job_url
+            canonical = f"https://job-boards.greenhouse.io/{slug}/jobs/{gh_jid}"
+            logger.info(f"[GH] Rewrote mirrored URL {job_url!r} -> {canonical!r}")
+            return canonical
+        except Exception as exc:
+            logger.warning(f"[GH] Canonical-URL rewrite failed for {job_url!r}: {exc}")
+            return job_url
+
     async def _settle_page(self, page: Page, timeout_ms: int = 6_000) -> None:
         """Wait for any in-flight navigation to finish, then stop loading.
 
@@ -95,18 +180,76 @@ class GreenhouseAdapter(BasePlatformAdapter):
             await self._settle_page(page)
 
     async def navigate_to_application(self, page: Page, job_url: str) -> None:
-        # ── 0. Quick homepage warm-up for sites with CloudFront WAF ──
+        # ── 0a. Try to rewrite mirrored-careers URLs to canonical Greenhouse host.
+        # Some companies front their Greenhouse jobs at jobs.<company>.<tld>?gh_jid=<id>
+        # That URL often renders a careers-search SPA wrapper, not the form. The
+        # canonical Greenhouse URL job-boards.greenhouse.io/<slug>/jobs/<id> usually
+        # serves the listing+Apply page directly.
+        #
+        # HOWEVER: some boards (e.g. Elastic) configure Greenhouse to 302-redirect
+        # the canonical URL BACK to the mirror — so rewriting unconditionally
+        # creates a redirect loop that wastes time. We probe with a HEAD first
+        # and only commit the rewrite if the canonical URL doesn't bounce back.
+        job_url = await self._smart_rewrite_to_canonical_greenhouse(job_url)
+
+        # ── 0b. Quick homepage warm-up for sites with CloudFront WAF ──
         # boards.greenhouse.io/monks/* redirects to monks.com — warm up monks.com
         if "monks.com" in job_url or "greenhouse.io/monks" in job_url:
             await self._warm_up_domain(page, "https://www.monks.com")
 
         # ── 1. Load the URL (job listing page or direct application form) ──
+        logger.info(f"[GH] >>> NAVIGATING TO: {job_url!r}")
         try:
             await page.goto(job_url, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
         except Exception as exc:
             logger.warning(f"[GH] Job page navigation timeout/error: {exc}")
             # Settle the page so content() won't throw "page is navigating"
             await self._settle_page(page, timeout_ms=8_000)
+
+        # Log the URL we ACTUALLY landed on after any client/server redirects.
+        # If this differs from job_url, the company's site redirected us — which
+        # is the root cause behind "redirects me to careers page" complaints.
+        final_url = page.url
+        def _same_job_url(a: str, b: str) -> bool:
+            """True if a and b point at the same job, ignoring trivial host-side
+            URL normalization (trailing slashes, /job/ ↔ /jobs/ pluralization)."""
+            from urllib.parse import urlparse, parse_qs
+            pa, pb = urlparse(a), urlparse(b)
+            if pa.netloc.lower() != pb.netloc.lower():
+                return False
+            norm = lambda p: p.rstrip("/").lower().replace("/jobs/", "/job/")
+            if norm(pa.path) != norm(pb.path):
+                return False
+            qa, qb = parse_qs(pa.query), parse_qs(pb.query)
+            # Same gh_jid (or both lack it) → same job
+            return qa.get("gh_jid") == qb.get("gh_jid")
+
+        if final_url != job_url and not _same_job_url(final_url, job_url):
+            logger.warning(
+                f"[GH] >>> REDIRECT DETECTED: navigated to {job_url!r} "
+                f"but landed on {final_url!r}"
+            )
+            # If we landed on a careers-listing rather than a job-specific page,
+            # short-circuit with a clear error so the test moves on quickly.
+            careers_landing_patterns = (
+                "/careers$", "/careers/$", "/careers/jobs$", "/jobs$",
+                "/jobs/$", "/jobs/search", "/careers/search",
+            )
+            import re as _re
+            from urllib.parse import urlparse
+            final_path = urlparse(final_url).path.rstrip('/').lower()
+            if any(_re.search(pat, final_path) for pat in careers_landing_patterns) and not urlparse(final_url).query:
+                logger.error(
+                    f"[GH] Landed on a generic careers-listing page, NOT the specific job. "
+                    f"Likely cause: this gh_jid is closed/removed, OR the host site doesn't "
+                    f"honor the gh_jid param. Final URL: {final_url!r}"
+                )
+                raise RuntimeError(
+                    f"BLOCKED: Job-specific URL redirected to careers landing ({final_url!r}). "
+                    "Possible reasons: job is closed, gh_jid invalid, or anti-bot redirect."
+                )
+        else:
+            logger.info(f"[GH] >>> LANDED ON: {final_url!r} (no redirect)")
 
         # Check for bot-block pages (CloudFront/WAF 403)
         try:
@@ -151,16 +294,29 @@ class GreenhouseAdapter(BasePlatformAdapter):
         # ── 3. If we're on a job LISTING page, click "Apply" to reach the form ──
         # boards.greenhouse.io job pages show description + an Apply link, not the form itself.
         target = self._frame_locator if self._iframe_mode else page
-        has_inputs = False
+        # Look for APPLICATION-specific inputs, not just ANY input. Mirror sites
+        # like jobs.elastic.co have a careers-site search bar at the top which
+        # was making this check return True even when no application form was
+        # actually loaded — adapter would skip the Apply click and the AI would
+        # then wander around the site shell forever. Specifically check for
+        # name/email/file-upload fields which only appear on real Greenhouse
+        # application forms.
+        has_application_form = False
         try:
-            await target.locator("input, select, textarea").first.wait_for(
-                state="attached", timeout=2_000
-            )
-            has_inputs = True
+            app_form_locator = target.locator(
+                "input[name='first_name'], input[name='last_name'], "
+                "input#first_name, input#last_name, "
+                "input[name='email'], input#email, "
+                "input[type='file'], "
+                "input[name='job_application[first_name]']"
+            ).first
+            await app_form_locator.wait_for(state="attached", timeout=2_500)
+            has_application_form = True
+            logger.info("[GH] Application form fields detected — no Apply click needed")
         except Exception:
-            pass
+            logger.info("[GH] No application form fields visible yet — Apply button required")
 
-        if not has_inputs:
+        if not has_application_form:
             logger.info("[GH] No form inputs detected yet — looking for Apply button")
             # Try learned selectors first — they were proven to work last time.
             learned = get_learned_fixes("greenhouse").get("apply_button")

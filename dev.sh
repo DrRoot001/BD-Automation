@@ -138,6 +138,7 @@ healthy=0
 while [ $(date +%s) -lt $deadline ]; do
   if curl -sf "http://localhost:$BACKEND_PORT/healthz" >/dev/null 2>&1 || \
      curl -sf "http://localhost:$BACKEND_PORT/health" >/dev/null 2>&1 || \
+     curl -sf "http://localhost:$BACKEND_PORT/api/health" >/dev/null 2>&1 || \
      curl -sf "http://localhost:$BACKEND_PORT/api/candidates" >/dev/null 2>&1; then
     healthy=1
     break

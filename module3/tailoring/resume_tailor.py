@@ -126,9 +126,7 @@ async def tailor_resume(
         "requirements": job.skills
     }
 
-    api_key = os.getenv("GEMINI_API_KEY")
-    client = genai.Client(api_key=api_key)
-    loop = asyncio.get_event_loop()
+    from module3.utils.gemini import generate_content_with_retry
 
     max_loops = 5
     loop_count = 0
@@ -138,22 +136,17 @@ async def tailor_resume(
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
+            f"SYSTEM INSTRUCTION:\n{_FABRICATOR_SYSTEM}\n\n"
             f"**ATS Feedback:**\nCurrent Score: {current_ats_score}/100\nMissing Keywords: {', '.join(current_missing_keywords)}\n\n"
             f"**Candidate Resume:**\n```json\n{json.dumps(final_resume_json, indent=2)}\n```\n\n"
             f"**Job Details:**\n```json\n{json.dumps(job_data, indent=2)}\n```\n"
         )
         
         try:
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.models.generate_content(
-                    model="gemini-2.5-flash",
-                    contents=user_prompt,
-                    config=genai_types.GenerateContentConfig(
-                        system_instruction=_FABRICATOR_SYSTEM,
-                        temperature=0.3,
-                    ),
-                )
+            response = await generate_content_with_retry(
+                contents=user_prompt,
+                temperature=0.3,
+                response_mime_type="application/json"
             )
             
             raw_text = response.text.strip()

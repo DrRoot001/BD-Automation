@@ -179,6 +179,19 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     work_auth_answer  = "Yes" if is_authorized else "No"
     sponsorship_answer = "No" if is_authorized else "Yes"
 
+    # Map DB work_auth codes to the *category* vocabulary used by dropdown-style
+    # work-authorization fields (e.g. Dice: US Citizen / Green Card Holder / H1B /
+    # OPT / TN Visa / Other). The Yes/No answer above is for "Are you authorized?"
+    # style questions; this category answer is for "What is your work auth?" lists.
+    _WORK_AUTH_TYPE_MAP = {
+        "citizen":       "US Citizen",
+        "us_authorized": "US Citizen",
+        "green_card":    "Green Card Holder",
+        "visa":          "H1B",
+        "ead":           "OPT",
+    }
+    work_auth_type = _WORK_AUTH_TYPE_MAP.get(work_auth, "Other")
+
     candidate_profile = {
         # Identity
         "name":       full_name,
@@ -200,6 +213,8 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         "salary_expectation": cand_data.get("salary_expectation") or "",
         # Work authorization (used by screening question answers in filler)
         "work_authorization": work_auth_answer,
+        # Category answer for dropdown-style work-auth fields (Dice, etc.)
+        "work_authorization_type": work_auth_type,
         "sponsorship":        sponsorship_answer,
         # Application defaults — these satisfy boilerplate checkbox questions
         "agree_terms":        "Yes",
@@ -219,6 +234,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         "job_url":          job_data.get("source_url") or "",
         "platform":         job_data.get("source") or "",
         "ats_type":         job_data.get("ats_type") or "",
+        "company":          job_data.get("company") or "",
         "candidate_profile": candidate_profile,
         "resume_url":        resume_url,
         "cover_letter_url":  cover_letter_url,

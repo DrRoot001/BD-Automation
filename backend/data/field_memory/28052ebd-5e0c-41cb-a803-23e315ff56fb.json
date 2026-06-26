@@ -1,18 +1,26 @@
 {
   "email": {
-    "count": 1,
+    "count": 5,
     "field_type": "text",
     "label": "Email",
-    "last_seen": 1782053491,
-    "source": "profile_direct",
+    "last_seen": 1782215867,
+    "source": "agent_loop",
     "value": "harmain.dev@gmail.com"
   },
-  "first name": {
+  "end date year": {
     "count": 1,
     "field_type": "text",
+    "label": "End date year",
+    "last_seen": 1782075699,
+    "source": "screening",
+    "value": "2024"
+  },
+  "first name": {
+    "count": 3,
+    "field_type": "text",
     "label": "First Name",
-    "last_seen": 1782053487,
-    "source": "profile_direct",
+    "last_seen": 1782215859,
+    "source": "agent_loop",
     "value": "Harmain"
   },
   "have you been employed by cockroach labs in the past": {
@@ -23,6 +31,14 @@
     "source": "llm:0.90",
     "value": "No"
   },
+  "have you led multiple large, parallel, technically complex engineering projects (multi-quarter in scope) to production simultaneously- without being a hands-on individual contributor": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Have you led multiple large, parallel, technically complex engineering projects (multi-quarter in scope) to production simultaneously-  without being a hands-on individual contributor?*",
+    "last_seen": 1782075739,
+    "source": "screening",
+    "value": "Not provided in candidate profile"
+  },
   "how did you first hear about cockroach labs": {
     "count": 1,
     "field_type": "select",
@@ -31,13 +47,29 @@
     "source": "llm:0.90",
     "value": "Online"
   },
-  "last name": {
+  "how many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct ic reports)": {
     "count": 1,
+    "field_type": "select",
+    "label": "How many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct IC reports)?\n*",
+    "last_seen": 1782075734,
+    "source": "screening",
+    "value": "Not provided in candidate profile - work history reflects individual contributor and technical leadership roles, not people management experience"
+  },
+  "last name": {
+    "count": 3,
     "field_type": "text",
     "label": "Last Name",
-    "last_seen": 1782053489,
-    "source": "profile_direct",
+    "last_seen": 1782215862,
+    "source": "agent_loop",
     "value": "Ali"
+  },
+  "linkedin profile": {
+    "count": 2,
+    "field_type": "text",
+    "label": "LinkedIn Profile",
+    "last_seen": 1782215827,
+    "source": "policy_override",
+    "value": "N/A"
   },
   "location (city)": {
     "count": 1,
@@ -47,13 +79,29 @@
     "source": "profile_direct",
     "value": "US"
   },
-  "phone": {
+  "name": {
     "count": 1,
-    "field_type": "phone",
+    "field_type": "text",
+    "label": "Name",
+    "last_seen": 1782215827,
+    "source": "resume_parse",
+    "value": "Harmain Ali"
+  },
+  "phone": {
+    "count": 2,
+    "field_type": "text",
     "label": "Phone",
-    "last_seen": 1782053492,
-    "source": "profile_direct",
+    "last_seen": 1782215827,
+    "source": "resume_parse",
     "value": "+1 (650) 555-1234"
+  },
+  "pick your favorite color": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Pick your favorite color",
+    "last_seen": 1782215872,
+    "source": "agent_loop",
+    "value": "Red"
   },
   "please confirm you live near our new york city office location and understand the in-office expectation of mondays, tuesdays and thursdays": {
     "count": 1,
@@ -78,5 +126,37 @@
     "last_seen": 1782053490,
     "source": "profile_direct",
     "value": "Harmain"
+  },
+  "school": {
+    "count": 1,
+    "field_type": "select",
+    "label": "School",
+    "last_seen": 1782075710,
+    "source": "screening",
+    "value": "Not provided in candidate profile"
+  },
+  "website / github": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Website / GitHub:",
+    "last_seen": 1782075700,
+    "source": "screening",
+    "value": "Not provided in candidate profile"
+  },
+  "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "What additional accommodations do you need to feel comfortable during your interview process? All responses will be kept private.",
+    "last_seen": 1782075701,
+    "source": "screening",
+    "value": "No specific accommodations needed at this time."
+  },
+  "which of the following best describes your current or most recent role level": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Which of the following best describes your current or most recent role level?*",
+    "last_seen": 1782075747,
+    "source": "screening",
+    "value": "Senior Engineer (based on current role as Senior Machine Learning Engineer at AMD)"
   }
 }

@@ -202,6 +202,8 @@ async def _ask_llm_for_values(
     """Returns {field_id: {value, confidence, reason}}. Raises LLMUnavailable."""
     prompt = _build_llm_prompt(fields, profile, screening_answers, job_context)
     client = get_gemini()
+    from ..llm import telemetry as _tele
+    _tele.set_label("llm_filler.batch")
     data = await client.generate_json(prompt, temperature=0.1, timeout_s=30.0)
     answers = (data or {}).get("answers") or []
     out: Dict[int, Dict[str, Any]] = {}
@@ -360,8 +362,16 @@ async def fill_form_with_llm(
         if field.field_type == "file":
             lbl = field.label.lower()
             sel = field.selector.lower()
-            if ("cover" in lbl or "cover" in sel) and cover_letter_path:
-                resolved[idx] = (cover_letter_path, "file_cover")
+            is_cover_slot = "cover" in lbl or "cover" in sel
+            if is_cover_slot:
+                # COVER LETTER slot: only upload when caller provided a path.
+                # Falling back to the resume here was the source of the
+                # "two copies of resume_v5.pdf attached" bug — both slots
+                # ended up with the same file because cover_letter_path was
+                # None but the slot still received the resume via `elif`.
+                if cover_letter_path:
+                    resolved[idx] = (cover_letter_path, "file_cover")
+                # else: leave unresolved — slot stays empty (cover letter is optional)
             elif resume_path:
                 resolved[idx] = (resume_path, "file_resume")
             continue

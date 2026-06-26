@@ -21,7 +21,7 @@ from app.tasks.email_scan import scan_candidate_inbox
 
 async def get_candidate():
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Candidate).where(Candidate.name.ilike('%Sabih%')).limit(1))
+        result = await session.execute(select(Candidate).where(Candidate.email == 'sabih0364@gmail.com').limit(1))
         return result.scalar_one_or_none()
 
 async def get_job():

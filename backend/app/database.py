@@ -22,5 +22,11 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 Base = declarative_base()
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with AsyncSessionLocal() as session:
-        yield session
+    try:
+        async with AsyncSessionLocal() as session:
+            yield session
+    except Exception as e:
+        import sys, traceback
+        print(f"GET_DB ERROR: {type(e)} {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        raise e

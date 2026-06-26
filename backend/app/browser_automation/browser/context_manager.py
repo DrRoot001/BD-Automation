@@ -168,8 +168,19 @@ class BrowserContextManager:
             # that bypasses CloudFront/Akamai WAF bot detection which blocks bundled Chromium.
             # headless=False avoids the HeadlessChrome user-agent token and related signals.
             headless = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
+            # PLAYWRIGHT_SLOW_MO=250 inserts a 250ms pause between every Playwright
+            # action (click, fill, etc.) so a human can actually watch the run.
+            # Default 0 = full speed. Set when demoing or debugging visually.
+            slow_mo_ms = int(os.getenv("PLAYWRIGHT_SLOW_MO", "0") or "0")
+            logger.info(
+                f"[Browser] Launching Chrome — headless={headless} "
+                f"slow_mo={slow_mo_ms}ms "
+                f"(set PLAYWRIGHT_HEADLESS=true to hide, "
+                f"PLAYWRIGHT_SLOW_MO=300 to slow down for watching)"
+            )
             launch_kwargs = dict(
                 headless=headless,
+                slow_mo=slow_mo_ms,
                 args=[
                     "--disable-blink-features=AutomationControlled",
                     "--disable-infobars",
@@ -177,6 +188,9 @@ class BrowserContextManager:
                     "--no-default-browser-check",
                     "--disable-extensions-except=",
                     "--start-maximized",
+                    # Force the window to the top-left of your primary monitor
+                    # so it doesn't end up off-screen on multi-monitor setups
+                    "--window-position=0,0",
                 ],
             )
             # Prefer the real installed Chrome; fall back to bundled Chromium if unavailable
@@ -222,6 +236,27 @@ class BrowserContextManager:
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
+        # ── Persistent storage_state (cookies + localStorage) per platform ──
+        # Auth-walled ATSes (Dice, LinkedIn, Workday) bot-throttle repeated
+        # logins. Logging in ONCE and reusing the full storage_state avoids
+        # that. Path: env "<PLATFORM>_STORAGE_STATE" or backend/data/sessions/
+        # <platform>.json. When present we DON'T also restore redis cookies
+        # (storage_state already carries them).
+        storage_state_used = False
+        try:
+            from pathlib import Path as _Path
+            backend_dir = _Path(__file__).resolve().parents[3]
+            storage_state_path = os.getenv(
+                f"{platform.upper()}_STORAGE_STATE",
+                str(backend_dir / "data" / "sessions" / f"{platform}.json"),
+            )
+            if storage_state_path and os.path.isfile(storage_state_path):
+                context_kwargs["storage_state"] = storage_state_path
+                storage_state_used = True
+                logger.info(f"[Browser] Loaded storage_state for {platform} ← {storage_state_path}")
+        except Exception as exc:
+            logger.debug(f"[Browser] storage_state load skipped: {exc}")
+
         context = await self._browser.new_context(**context_kwargs)
 
         # Inject stealth scripts — DISABLED while debugging react-select interaction.
@@ -229,7 +264,7 @@ class BrowserContextManager:
         # of Greenhouse react-select widgets not opening; testing without them.
         # await context.add_init_script(STEALTH_JS)
 
-        if session_data:
+        if session_data and not storage_state_used:
             cookies = json.loads(session_data)
             await context.add_cookies(cookies)
 

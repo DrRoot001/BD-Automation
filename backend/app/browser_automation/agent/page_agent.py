@@ -1,18 +1,26 @@
-"""Vision-driven page agent.
+"""Vision-driven page agent — the AI's eyes on the live page.
 
-Wraps a Playwright Page in a thin "what is this page?" / "find me a selector"
-layer powered by Gemini. The agent is consulted in two situations:
+In this module the AI is the MASTER making dynamic decisions; Playwright is
+the SLAVE executing them. The agent is consulted whenever the runner needs
+the AI to make a context-aware decision rather than fall back to hardcoded
+selectors:
 
-  1. After navigation, when an adapter needs to know whether the page is an
-     application FORM, a job LISTING that requires an Apply click, a SUCCESS
-     confirmation, or a BLOCKED bot-protection page.
-  2. When an adapter's hardcoded selectors all miss — the agent inspects a
-     screenshot + the relevant DOM slice and proposes a new selector. The
-     adapter tries it; if it works, the selector is persisted via LearnedFixes.
+  1. After navigation — "what page did we actually land on?" The AI looks
+     at a screenshot + DOM slice and classifies: FORM, LISTING, SUCCESS,
+     BLOCKED, ERROR, UNKNOWN. For LISTING / blocked-by-modal cases it also
+     tells Playwright the exact selector to click next.
+  2. When an adapter's hardcoded selectors all miss — "what should we click
+     instead?" The AI proposes 1-3 working selectors from what it can see
+     in the DOM. Playwright tries them in order; the winning one is
+     persisted via LearnedFixes so the same decision is free next run.
 
-Every LLM call is optional. If Gemini is not configured the page agent quietly
-falls back to "UNKNOWN" page-state and lets the caller proceed on its
-existing hardcoded heuristics — the system never blocks on the LLM.
+These decisions are NOT recovery hacks — they're the AI exercising its
+"navigation power" to handle popups, redirects, unexpected modals, mirror-
+site SPAs, and any other context that hardcoded heuristics can't predict.
+
+Every LLM call is optional. If the LLM is unavailable the page agent quietly
+falls back to "UNKNOWN" page-state and the caller proceeds on its existing
+heuristics — the pipeline never hard-blocks on the LLM.
 """
 from __future__ import annotations
 
@@ -40,55 +48,76 @@ _VALID_KINDS = {"FORM", "LISTING", "SUCCESS", "BLOCKED", "ERROR", "UNKNOWN"}
 
 
 _PAGE_PROMPT = """
-You are inspecting the current state of a job-application page. Use the
-screenshot AND the DOM snippet to decide.
+You are the AI agent driving a real web browser on behalf of a job candidate.
+Playwright is your hand — it executes whatever decision you make. Your job
+right now is to ANALYZE the page you've landed on and decide what to do next.
+
+Use the screenshot AND the DOM snippet to make your call.
 
 Return STRICT JSON with this schema:
   {
     "kind": "FORM" | "LISTING" | "SUCCESS" | "BLOCKED" | "ERROR" | "UNKNOWN",
     "confidence": 0.0-1.0,
-    "reason": "<= 120 chars",
+    "reason": "<= 120 chars — why you classified this page that way",
     "next_action": "click_apply" | "fill_form" | "submit" | "retry" | null,
-    "suggested_selector": "<css selector if you can identify the next button>"
-                          | null
+    "suggested_selector": "<the CSS selector Playwright should target next>" | null
   }
 
-Definitions:
-  FORM     — visible application form with fillable fields.
-  LISTING  — job description page; an Apply button is present that must be
-             clicked to reveal the form. If so, return next_action="click_apply"
-             and suggested_selector pointing at the most visible Apply button.
-  SUCCESS  — confirmation that the application was received.
-  BLOCKED  — CloudFront/WAF/captcha-wall blocks access. next_action="retry".
-  ERROR    — generic error page (404, 500, "this job no longer exists").
-  UNKNOWN  — you cannot tell.
+How to classify the page:
+  FORM     — a visible application form with fillable fields. Tell Playwright
+             to start filling: next_action="fill_form".
+  LISTING  — a job description page with an Apply button (NO form fields yet).
+             Tell Playwright to click Apply: next_action="click_apply" and put
+             the most visible Apply button's selector in suggested_selector.
+             Common patterns: <a id="apply_button">, <a>Apply for this Job</a>,
+             <button>Apply Now</button>. Surface unexpected popups too — if a
+             newsletter modal or cookie banner blocks the form, point at its
+             close-X selector and set next_action="click_apply".
+  SUCCESS  — a confirmation that the application was received. Stop here.
+  BLOCKED  — CloudFront/WAF/captcha wall blocks the page. next_action="retry".
+  ERROR    — generic error / "this job no longer exists" / 404.
+  UNKNOWN  — you cannot tell from what's visible.
 
-For LISTING / FORM, prefer the SHORTEST stable selector that uniquely targets
-the next interactive element (id > data-attr > short class chain). Never invent
-selectors you cannot see in the DOM snippet.
+Selector rules (you decide, Playwright follows):
+  - Pick the SHORTEST stable selector — #id > [data-qa=...] > [aria-label=...]
+    > short class chain.
+  - Never invent a selector you cannot see in the DOM snippet.
+  - For text-based clicks (Apply buttons that lack a clean id) prefer
+    a:has-text("Apply for this Job") syntax.
 """
 
 
 _SELECTOR_PROMPT = """
-You are helping a Playwright automation recover from a missing selector.
+You are the AI agent driving the browser. Playwright is the slave — it only
+executes what you decide. Right now you need to make a DYNAMIC DECISION:
+which element on this page should Playwright interact with next.
 
-The bot tried these selectors and none matched:
+Context: an earlier attempt tried these selectors and none matched:
   CANDIDATES_TRIED
 
-Channel: CHANNEL (e.g. apply_button, submit, resume_input).
+Your goal channel is: CHANNEL  (e.g. apply_button, submit, resume_input,
+popup_close, modal_dismiss).
 
-Look at the DOM snippet below and return STRICT JSON:
+Look at the DOM snippet + screenshot and DECIDE the selector. Return STRICT
+JSON:
   {
     "selectors": ["<best>", "<2nd>", "<3rd>"],
-    "reason": "<= 120 chars"
+    "reason": "<= 120 chars — why these"
   }
 
-Rules:
-  1. Each selector must be valid CSS / Playwright syntax.
-  2. Prefer #id, [data-qa=...], [aria-label=...] over long class chains.
-  3. For text-based clicks use :has-text("Apply") style.
-  4. Return 1-3 selectors max, ordered best-first.
-  5. Never return a selector that doesn't appear in the DOM snippet.
+How to decide:
+  1. Each selector you propose MUST be valid CSS / Playwright syntax.
+  2. Prefer in order: #id  >  [data-qa=...]  >  [aria-label=...]  >
+     short class chain. Never propose a long brittle class soup.
+  3. For text-driven clicks (Apply buttons, modal close buttons, "I agree"
+     etc.) use a:has-text("Apply") or button:has-text("Close") syntax.
+  4. If the page has a popup/modal/cookie banner blocking interaction, the
+     CORRECT next decision is to target ITS close/accept button — surface
+     that selector even if the channel is different.
+  5. Return 1–3 selectors, ordered best-first. Playwright will try them
+     in order until one works.
+  6. Never propose a selector that doesn't actually appear in the DOM
+     snippet — that's a hallucination and wastes a turn.
 """
 
 
@@ -128,6 +157,8 @@ class PageAgent:
             return PageState(kind="UNKNOWN", confidence=0.0, reason=f"capture_failed:{exc}")
 
         try:
+            from ..llm import telemetry as _tele
+            _tele.set_label("page_agent.call")
             resp = await self._llm().generate_json(
                 prompt=_PAGE_PROMPT + "\n\nDOM SNIPPET:\n" + dom,
                 image_bytes=screenshot,
@@ -191,6 +222,8 @@ class PageAgent:
             + "\n\nDOM SNIPPET:\n" + dom
         )
         try:
+            from ..llm import telemetry as _tele
+            _tele.set_label("page_agent.call")
             resp = await self._llm().generate_json(
                 prompt=prompt,
                 image_bytes=screenshot,

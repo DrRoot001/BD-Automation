@@ -5,6 +5,7 @@ from uuid import UUID
 
 class CandidateCreate(BaseModel):
     id: Optional[UUID] = None
+    user_id: Optional[UUID] = None
     name: str
     email: str
     phone: Optional[str] = None

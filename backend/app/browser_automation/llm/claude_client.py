@@ -29,6 +29,8 @@ from typing import Any, List, Optional
 
 import httpx
 
+from . import telemetry
+
 logger = logging.getLogger(__name__)
 
 
@@ -47,7 +49,14 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 # Old default (600) truncated Gemini's JSON mid-response on multi-field forms.
 # Gemini's free tier gives generous quota — raising the cap is safe.
 _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "1000"))
+# Lever 4 (cost optimization): AgentLoop vision turns return a single-action
+# JSON object. Bare JSON is ~70 tokens, BUT reasoning-capable models (Gemini
+# 2.5 Flash, Opus 4.x) spend hidden "thinking" tokens that COUNT against
+# max_output_tokens. The old cap of 200 was being burned entirely on
+# reasoning, leaving the JSON truncated mid-string (`{"kind":"fill_field"`).
+# 800 gives reasoning headroom without meaningful cost — only generated
+# tokens are billed, not the cap.
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
@@ -58,14 +67,33 @@ _GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
 
 
 def _resolve_api_keys() -> list[str]:
-    """Return all configured API keys, deduplicated, non-empty, in priority order."""
-    candidates = [
-        os.getenv("ANTHROPIC_API_KEY", ""),
-        os.getenv("ANTHROPIC_API_KEY_2", ""),
-        os.getenv("CLAUDE_API_KEY", ""),
-        os.getenv("OPENROUTER_API_KEY", ""),
-        os.getenv("GEMINI_API_KEY", ""),
+    """Return all configured API keys, deduplicated, non-empty, in priority order.
+
+    Multiple Groq keys (GROQ_API_KEY, GROQ_API_KEY_2, GROQ_API_KEY_3) are each
+    honored. Groq's free tier rate-limits PER ACCOUNT (30k TPM for Llama 4
+    Scout), so keys from different Groq accounts give independent windows —
+    when one key hits its TPM cap mid-form, the chain rolls to the next and
+    keeps the agent moving instead of stalling on a 429.
+    """
+    # Priority order. Anthropic first (best model when funded). Gemini is placed
+    # AHEAD of Groq/OpenRouter because it's a capable vision model with a
+    # generous free tier (high RPM/TPM) — when Anthropic has no credits it
+    # becomes the reliable primary, whereas Groq's free tier (~12k TPM) gets
+    # exhausted mid-run and 429s, and OpenRouter's free tier caps prompt tokens.
+    # An explicit LLM_KEY_PRIORITY env (comma-separated env-var names) overrides.
+    default_order = [
+        "GEMINI_API_KEY",
+        "GEMINI_API_KEY_2",
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_API_KEY_2",
+        "CLAUDE_API_KEY",
+        "GROQ_API_KEY",
+        "GROQ_API_KEY_2",
+        "GROQ_API_KEY_3",
+        "OPENROUTER_API_KEY",
     ]
+    order = [n.strip() for n in os.getenv("LLM_KEY_PRIORITY", "").split(",") if n.strip()] or default_order
+    candidates = [os.getenv(name, "") for name in order]
     seen: set[str] = set()
     result = []
     for k in candidates:
@@ -86,17 +114,15 @@ def _detect_provider(key: str) -> str:
 
     - ``sk-ant-*`` → native Anthropic
     - ``sk-or-*``  → OpenRouter (routes to any model via OpenAI-compat API)
+    - ``gsk_*``    → Groq (OpenAI-compatible chat-completions API)
     - everything else (``AIza*``, ``AQ.Ab*``, etc.) → native Gemini
-
-    Google AI Studio has shipped multiple key formats (``AIza...`` classic,
-    ``AQ.Ab...`` newer). Rather than chase prefixes, we treat any non-Anthropic /
-    non-OpenRouter key as Gemini — matches operator intent when they drop a
-    Google key into ``GEMINI_API_KEY``.
     """
     if key.startswith("sk-ant-"):
         return "anthropic"
     if key.startswith("sk-or-"):
         return "openrouter"
+    if key.startswith("gsk_"):
+        return "groq"
     return "gemini"
 
 
@@ -141,6 +167,18 @@ class ClaudeClient:
         except Exception as exc:
             logger.error(f"[Claude] Anthropic SDK import failed: {exc}")
             return None
+
+    def effective_provider(self) -> str:
+        """The provider that will actually serve the NEXT call — i.e. the
+        first key still in rotation. Dead keys (exhausted Anthropic, bad
+        keys) get removed from `self._keys` as they fail, so this reflects
+        reality, not the original primary. Callers use it to size payloads:
+        when the live provider is Groq we ship smaller screenshots / resume
+        blocks to fit the 30k TPM cap.
+        """
+        for k in self._keys:
+            return _detect_provider(k)
+        return self.provider
 
     def _ensure(self) -> None:
         if not self.api_key:
@@ -235,7 +273,17 @@ class ClaudeClient:
             ],
         }
         if system:
-            kwargs["system"] = system
+            # Cache the system prompt on Anthropic. AgentLoop builds it once at
+            # session start and re-uses it for every turn — cache hits charge
+            # 0.1x normal input cost, saving ~90% on the 900+ token identity card.
+            if len(system) >= 1024:
+                kwargs["system"] = [{
+                    "type": "text",
+                    "text": system,
+                    "cache_control": {"type": "ephemeral"},
+                }]
+            else:
+                kwargs["system"] = system
         try:
             resp = await asyncio.wait_for(
                 self._anthropic.messages.create(**kwargs), timeout=timeout_s
@@ -245,7 +293,27 @@ class ClaudeClient:
         except Exception as exc:
             raise LLMUnavailable(f"Claude call failed: {exc}") from exc
         blocks = getattr(resp, "content", None) or []
-        return "".join(getattr(b, "text", "") or "" for b in blocks).strip()
+        text = "".join(getattr(b, "text", "") or "" for b in blocks).strip()
+        usage = getattr(resp, "usage", None)
+        # Anthropic returns cache_read_input_tokens / cache_creation_input_tokens
+        # when prompt caching is active. We add those to the input total so the
+        # telemetry reflects the *effective* tokens billed.
+        in_tok = (getattr(usage, "input_tokens", 0) or 0)
+        cache_read = getattr(usage, "cache_read_input_tokens", 0) or 0
+        cache_create = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        if not in_tok:
+            in_tok = telemetry.estimate_from_text(prompt)
+        telemetry.record(
+            provider="anthropic", model=model,
+            input_tokens=in_tok + cache_create + cache_read,
+            output_tokens=getattr(usage, "output_tokens", 0) or telemetry.estimate_from_text(text),
+            has_image=bool(image_bytes),
+        )
+        if cache_read or cache_create:
+            logger.info(
+                f"[Tokens] anthropic cache: read={cache_read} create={cache_create} fresh={in_tok}"
+            )
+        return text
 
     async def _call_openrouter(
         self,
@@ -300,12 +368,114 @@ class ClaudeClient:
             msg = (choices[0] if choices else {}).get("message") or {}
             content = msg.get("content")
             if isinstance(content, list):
-                return "".join(
+                text = "".join(
                     (c or {}).get("text", "") for c in content if isinstance(c, dict)
                 ).strip()
-            return str(content or "").strip()
+            else:
+                text = str(content or "").strip()
+            usage = body.get("usage") or {}
+            telemetry.record(
+                provider="openrouter", model=model,
+                input_tokens=int(usage.get("prompt_tokens") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("completion_tokens") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
         except Exception as exc:
             raise LLMUnavailable(f"OpenRouter response parse failed: {exc}") from exc
+
+    async def _call_groq(
+        self,
+        prompt: str,
+        image_bytes: Optional[bytes],
+        temperature: float,
+        timeout_s: float,
+        system: Optional[str],
+    ) -> str:
+        """Groq chat-completions API. OpenAI-compatible; only the base URL and
+        model names differ. Vision turns route to Llama 4 vision; text turns to
+        Llama 3.3-70B for higher reasoning quality.
+
+        Token-budget note: Groq free-tier TPM caps are 30k for Llama 4 Scout
+        and 12k for Llama 3.3-70B. We cap max_tokens lower than the default
+        to keep individual turns small (action JSON is ~100 tokens — no need
+        to reserve 800). Combined with the system-prompt-resume trimming
+        in loop.py and respecting the 429 retry-after, this lets a full
+        form-fill session fit inside the free quota.
+        """
+        groq_base = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+        if image_bytes:
+            model = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
+        else:
+            model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+        # Per-provider output cap. Defaults: 350 (vision) / 600 (text). The
+        # action schema's JSON is ~100 tokens; 350 leaves headroom for the
+        # rare longer answer (textarea acknowledgments) without burning a
+        # full 800-token reservation against TPM.
+        _max_vision = int(os.getenv("GROQ_MAX_TOKENS_VISION", "350"))
+        _max_text = int(os.getenv("GROQ_MAX_TOKENS_TEXT", "600"))
+
+        # Build content — same shape as OpenRouter / OpenAI vision.
+        if image_bytes:
+            user_content: Any = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
+                    },
+                },
+            ]
+        else:
+            user_content = prompt
+        messages: list = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user_content})
+        payload = {
+            "model": model,
+            "max_tokens": _max_vision if image_bytes else _max_text,
+            "temperature": temperature,
+            "messages": messages,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                r = await client.post(
+                    f"{groq_base}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+            if r.status_code != 200:
+                raise LLMUnavailable(f"Groq HTTP {r.status_code}: {r.text[:400]}")
+            body = r.json()
+        except LLMUnavailable:
+            raise
+        except Exception as exc:
+            raise LLMUnavailable(f"Groq call failed: {exc}") from exc
+        try:
+            choices = body.get("choices") or []
+            msg = (choices[0] if choices else {}).get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, list):
+                text = "".join(
+                    (c or {}).get("text", "") for c in content if isinstance(c, dict)
+                ).strip()
+            else:
+                text = str(content or "").strip()
+            usage = body.get("usage") or {}
+            telemetry.record(
+                provider="groq", model=model,
+                input_tokens=int(usage.get("prompt_tokens") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("completion_tokens") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
+        except Exception as exc:
+            raise LLMUnavailable(f"Groq response parse failed: {exc}") from exc
 
     async def _call_gemini(
         self,
@@ -353,7 +523,15 @@ class ClaudeClient:
                 raise LLMUnavailable(f"Gemini returned no candidates: {body}")
             content = cands[0].get("content") or {}
             parts_out = content.get("parts") or []
-            return "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+            text = "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+            usage = body.get("usageMetadata") or {}
+            telemetry.record(
+                provider="gemini", model=model,
+                input_tokens=int(usage.get("promptTokenCount") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("candidatesTokenCount") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
         except LLMUnavailable:
             raise
         except Exception as exc:
@@ -369,7 +547,12 @@ class ClaudeClient:
     ) -> str:
         self._ensure()
         last_exc: Exception = LLMUnavailable("No keys to try")
-        for key in list(self._keys):
+        # Track the shortest rate-limit retry-after we saw across all keys.
+        # We only sleep on it AFTER trying every other key — if a different
+        # key/provider can serve right now, rolling to it beats sleeping.
+        pending_retry_after: Optional[float] = None
+        keys_snapshot = list(self._keys)
+        for _idx, key in enumerate(keys_snapshot):
             provider = _detect_provider(key)
             try:
                 if provider == "openrouter":
@@ -377,6 +560,12 @@ class ClaudeClient:
                     orig_key, self.api_key = self.api_key, key
                     try:
                         return await self._call_openrouter(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                elif provider == "groq":
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_groq(prompt, image_bytes, temperature, timeout_s, system)
                     finally:
                         self.api_key = orig_key
                 elif provider == "gemini":
@@ -395,12 +584,53 @@ class ClaudeClient:
                     finally:
                         self._anthropic = orig_client
             except LLMUnavailable as exc:
-                if "402" in str(exc) or "Payment Required" in str(exc):
-                    logger.warning(f"[Claude] key prefix={key[:7]!r} returned 402. Removing from future attempts.")
+                msg = str(exc)
+                # Permanently drop keys whose failure is NOT transient:
+                #  * 402 Payment Required
+                #  * "credit balance is too low" (Anthropic, returned as 400)
+                #  * 401 / invalid api key
+                # Without this, an exhausted Anthropic key gets retried on
+                # EVERY step (5 dead keys × 20 steps = 100 wasted calls), which
+                # also delays reaching the one working provider (Groq) and eats
+                # into its TPM window via wall-clock churn.
+                _permanent = (
+                    "402" in msg
+                    or "Payment Required" in msg
+                    or "credit balance is too low" in msg
+                    or "invalid_api_key" in msg
+                    or "401" in msg
+                )
+                if _permanent:
+                    logger.warning(
+                        f"[Claude] key prefix={key[:7]!r} permanently unavailable "
+                        f"({msg[:60]!r}). Removing from session rotation."
+                    )
                     if key in self._keys:
                         self._keys.remove(key)
+                # Token-per-minute rate-limit: capture the retry-after hint but
+                # DON'T sleep yet. With multiple keys (e.g. two Groq accounts),
+                # rolling to the next key serves the call immediately instead of
+                # waiting out one key's TPM window. We only sleep at the end if
+                # every key was rate-limited and none could serve.
+                if "429" in msg or "rate_limit" in msg.lower():
+                    import re as _re_rl
+                    m = _re_rl.search(r"try again in (\d+(?:\.\d+)?)s", msg, _re_rl.I)
+                    if m:
+                        wait = min(float(m.group(1)), 12.0)
+                        if pending_retry_after is None or wait < pending_retry_after:
+                            pending_retry_after = wait
                 logger.warning(f"[Claude] key prefix={key[:7]!r} failed: {exc} — trying next key")
                 last_exc = exc
+        # Every key failed this pass. If at least one was a transient rate
+        # limit, sleep the shortest retry-after so the CALLER's retry loop
+        # has a fresh window to land in. (Caller re-invokes _call on its own.)
+        if pending_retry_after:
+            logger.info(
+                f"[Claude] all keys exhausted this pass; sleeping "
+                f"{pending_retry_after:.1f}s per shortest retry-after hint "
+                "before returning to caller"
+            )
+            await asyncio.sleep(pending_retry_after)
         raise last_exc
 
     async def generate_json(
@@ -421,9 +651,66 @@ class ClaudeClient:
         cleaned = self._strip_json_fences(text)
         try:
             return json.loads(cleaned)
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError:
+            # The model (especially reasoning-heavy ones like Opus) sometimes
+            # prefixes the action with prose ("I need to analyze... {json}").
+            # Rather than fail the whole turn, extract the LAST balanced
+            # top-level {...} object from the text and parse that. The action
+            # JSON is almost always the final object the model emits.
+            extracted = self._extract_json_object(text)
+            if extracted is not None:
+                try:
+                    obj = json.loads(extracted)
+                    logger.info(
+                        "[Claude] recovered JSON object from prose-wrapped response"
+                    )
+                    return obj
+                except json.JSONDecodeError:
+                    pass
             logger.warning(f"[Claude] JSON parse failed; raw head={text[:200]!r}")
-            raise LLMUnavailable(f"Claude returned non-JSON: {exc}") from exc
+            raise LLMUnavailable(
+                f"Claude returned non-JSON: {text[:80]!r}"
+            )
+
+    @staticmethod
+    def _extract_json_object(text: str) -> Optional[str]:
+        """Find the last balanced {...} object in free text.
+
+        Scans for brace pairs respecting string literals/escapes so a model
+        that 'thinks out loud' before emitting its action JSON still yields a
+        parseable object. Returns the substring, or None if no balanced
+        object is found.
+        """
+        if not text:
+            return None
+        candidates = []
+        depth = 0
+        start = -1
+        in_str = False
+        esc = False
+        for i, ch in enumerate(text):
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+            elif ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                if depth > 0:
+                    depth -= 1
+                    if depth == 0 and start >= 0:
+                        candidates.append(text[start:i + 1])
+                        start = -1
+        # Prefer the last balanced object (the action usually comes last).
+        return candidates[-1] if candidates else None
 
     async def generate_text(
         self,

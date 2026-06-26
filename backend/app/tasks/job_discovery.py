@@ -1,7 +1,7 @@
-"""Module 2 → Module 1 integration: Job Discovery task.
+"""Module 2 → Module 1 integration: Job Discovery tasks.
 
-Discovers USA-only jobs from Greenhouse (and other adapters) and stores them
-in the central database via the Module 1 REST API.
+Discovers USA-only jobs from Greenhouse (and other adapters) or using Node scrapers,
+and stores them in the central database via the Module 1 REST API.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from typing import List
 import httpx
 
 from app.celery_app import celery_app
+from app.module2.run_scrape import run_all as run_node_scraper_all
 
 # ── Companies to scrape from Greenhouse ──────────────────────────────────────
 # Expand this list as needed.
@@ -117,10 +118,17 @@ async def _scrape_and_store() -> dict:
 
 @celery_app.task(name="task:discover_jobs_all_platforms", bind=True, max_retries=1)
 def discover_jobs_all_platforms(self):
-    """Celery task: scrape USA-only jobs from all configured platforms and store them."""
+    """Celery task: scrape USA-only jobs from all configured platforms (Python adapters) and store them."""
     print("[job_discovery] Starting discover_jobs_all_platforms task …")
     try:
         return asyncio.run(_scrape_and_store())
     except Exception as exc:
         print(f"[job_discovery] Task failed: {exc}")
         raise self.retry(exc=exc, countdown=60)
+
+
+@celery_app.task(name="task:discover_jobs_node_scraper")
+def discover_jobs_node_scraper():
+    """Celery task: scrape all configured links (app/module2/links.py) using the Node-based scrapers and post to /api/jobs."""
+    print("[job_discovery] Starting discover_jobs_node_scraper task …")
+    return run_node_scraper_all()

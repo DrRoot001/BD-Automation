@@ -2,80 +2,86 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import { Loader2 } from 'lucide-react'
+import { loginAction } from '@/app/actions/auth'
 
 export default function LoginPage() {
-  const router = useRouter()
   const [email, setEmail] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const router = useRouter()
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!email.trim()) return
+    setLoading(true)
+    setError(null)
 
-    setIsLoading(true)
-    setError('')
+    const result = await loginAction(email, password)
 
-    try {
-      const res = await fetch('/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), password: '' }),
-      })
+    if (result.error) {
+      setError(result.error)
+      setLoading(false)
+      return
+    }
 
-      if (!res.ok) {
-        setError('Login failed. Please try again.')
-        return
-      }
-
-      const data = await res.json()
-      localStorage.setItem('auth_token', data.access_token)
-      router.replace('/dashboard')
-    } catch {
-      setError('Could not reach the server. Is the backend running?')
-    } finally {
-      setIsLoading(false)
+    if (result.redirect) {
+      router.push(result.redirect)
+      router.refresh()
     }
   }
 
   return (
-    <div className="w-full max-w-sm">
-      <div className="bg-bg-secondary border border-bg-border rounded-2xl p-8 shadow-card">
-        <div className="flex items-center gap-3 mb-8">
-          <div className="w-9 h-9 rounded-lg bg-accent flex items-center justify-center text-white text-sm font-bold shadow-accent">
-            BD
-          </div>
-          <span className="font-semibold text-text-primary text-lg">BD Automator</span>
+    <div className="min-h-screen flex items-center justify-center bg-bg-primary p-4">
+      <div className="w-full max-w-md bg-bg-secondary border border-bg-border rounded-xl shadow-2xl p-8">
+        <div className="text-center mb-8">
+          <h1 className="text-2xl font-semibold text-text-primary tracking-tight">Welcome Back</h1>
+          <p className="text-sm text-text-secondary mt-2">Sign in to your BD Automator account</p>
         </div>
 
-        <h1 className="text-base font-semibold text-text-primary mb-1">Sign in</h1>
-        <p className="text-xs text-text-muted mb-6">Enter your email to access the dashboard.</p>
+        {error && (
+          <div className="mb-6 p-4 bg-danger/10 border border-danger/20 rounded-lg text-sm text-danger">
+            {error}
+          </div>
+        )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleLogin} className="space-y-6">
           <div>
-            <label className="block text-xs font-medium text-text-secondary mb-1.5">
-              Email address
+            <label className="block text-sm font-medium text-text-secondary mb-2" htmlFor="email">
+              Email Address
             </label>
             <input
+              id="email"
               type="email"
+              required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
+              className="w-full px-4 py-2.5 bg-bg-primary border border-bg-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
               placeholder="you@example.com"
-              required
-              className="w-full bg-bg-primary border border-bg-border rounded-lg px-3 py-2.5 text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:border-accent transition-colors"
             />
           </div>
 
-          {error && (
-            <p className="text-danger text-xs">{error}</p>
-          )}
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-2" htmlFor="password">
+              Password
+            </label>
+            <input
+              id="password"
+              type="password"
+              required
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              className="w-full px-4 py-2.5 bg-bg-primary border border-bg-border rounded-lg text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-accent focus:border-transparent transition-all"
+              placeholder="••••••••"
+            />
+          </div>
 
           <button
             type="submit"
-            disabled={isLoading || !email.trim()}
-            className="w-full bg-accent text-white py-2.5 rounded-lg text-sm font-medium hover:bg-accent/90 disabled:opacity-50 transition-colors"
+            disabled={loading}
+            className="w-full py-2.5 px-4 bg-accent hover:bg-accent-hover text-white rounded-lg font-medium transition-colors flex items-center justify-center disabled:opacity-50 disabled:cursor-not-allowed mt-2"
           >
-            {isLoading ? 'Signing in...' : 'Sign in'}
+            {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Sign In'}
           </button>
         </form>
       </div>

@@ -60,6 +60,14 @@ TEST_URLS = {
     "ashby": "https://jobs.ashbyhq.com/openai/02b5ddbc-2d05-470a-9d63-f76a8b9e7c61",
     "workday": "https://nvidia.wd5.myworkdayjobs.com/en-US/NVIDIAExternalCareerSite/job/US-CA-Santa-Clara/Software-Engineer_JR1234567",
     "linkedin": "https://www.linkedin.com/jobs/view/3801234567",
+    # Indeed: pass any real /viewjob?jk=<key> URL via INDEED_TEST_URL env to
+    # exercise the branch classifier without hardcoding a posting that will
+    # rot in days. If unset, the script skips Indeed.
+    **(
+        {"indeed": os.environ["INDEED_TEST_URL"]}
+        if os.getenv("INDEED_TEST_URL")
+        else {}
+    ),
 }
 
 

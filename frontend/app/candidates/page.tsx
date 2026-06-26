@@ -27,9 +27,9 @@ export default function CandidatesPage() {
         </div>
 
         {isLoading ? (
-          <div className="space-y-4">
+          <div className="space-y-2">
             {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="h-16 bg-bg-secondary rounded-xl animate-pulse" />
+              <div key={i} className="skeleton h-14 rounded-xl" />
             ))}
           </div>
         ) : isError ? (
@@ -50,42 +50,58 @@ export default function CandidatesPage() {
             </Link>
           </div>
         ) : (
-          <div className="bg-bg-secondary border border-bg-border rounded-xl overflow-hidden shadow-card">
-            <table className="w-full text-left text-sm text-text-secondary">
-              <thead className="bg-bg-secondary/50 border-b border-bg-border text-xs uppercase text-text-muted">
-                <tr>
-                  <th className="px-6 py-3">Name</th>
-                  <th className="px-6 py-3">Email</th>
-                  <th className="px-6 py-3">Location</th>
-                  <th className="px-6 py-3">Experience</th>
-                  <th className="px-6 py-3 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {candidates.map((cand) => (
-                  <tr key={cand.id} className="border-b border-bg-border last:border-0 hover:bg-bg-hover transition-colors">
-                    <td className="px-6 py-4 font-medium text-text-primary">{cand.name}</td>
-                    <td className="px-6 py-4">{cand.email}</td>
-                    <td className="px-6 py-4">{cand.location || '-'}</td>
-                    <td className="px-6 py-4">{cand.years_exp ? `${cand.years_exp} yrs` : '-'}</td>
-                    <td className="px-6 py-4 text-right space-x-3">
-                      <Link
-                        href={`/candidates/${cand.id}`}
-                        className="text-text-secondary hover:text-text-primary font-medium text-xs transition-colors"
-                      >
-                        View Details
-                      </Link>
-                      <Link
-                        href={`/candidates/${cand.id}?tab=auto-apply`}
-                        className="bg-accent/10 text-accent hover:bg-accent/20 px-3 py-1.5 rounded text-xs font-medium transition-colors"
-                      >
-                        Auto Apply
-                      </Link>
-                    </td>
+          <div className="card overflow-hidden">
+            {/* Mobile cards */}
+            <div className="sm:hidden divide-y divide-bg-border">
+              {candidates.map((cand) => (
+                <div key={cand.id} className="p-4 hover:bg-bg-hover transition-colors">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="font-medium text-text-primary text-sm truncate">{cand.name}</p>
+                      <p className="text-xs text-text-muted truncate mt-0.5">{cand.email}</p>
+                      <p className="text-xs text-text-muted mt-0.5">
+                        {cand.location || 'No location'} · {cand.years_exp ? `${cand.years_exp} yrs exp` : 'Exp not set'}
+                      </p>
+                    </div>
+                    <Link href={`/candidates/${cand.id}`} className="btn-secondary text-xs py-1 px-2.5 whitespace-nowrap shrink-0">
+                      View
+                    </Link>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Desktop table */}
+            <div className="hidden sm:block overflow-x-auto">
+              <table className="w-full text-left text-sm text-text-secondary">
+                <thead className="border-b border-bg-border text-xs uppercase text-text-muted">
+                  <tr>
+                    <th className="px-6 py-3">Name</th>
+                    <th className="px-6 py-3 hidden md:table-cell">Email</th>
+                    <th className="px-6 py-3 hidden lg:table-cell">Location</th>
+                    <th className="px-6 py-3 hidden md:table-cell">Experience</th>
+                    <th className="px-6 py-3 text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {candidates.map((cand) => (
+                    <tr key={cand.id} className="border-b border-bg-border last:border-0 hover:bg-bg-hover transition-colors">
+                      <td className="px-6 py-4 font-medium text-text-primary">{cand.name}</td>
+                      <td className="px-6 py-4 hidden md:table-cell">{cand.email}</td>
+                      <td className="px-6 py-4 hidden lg:table-cell">{cand.location || '—'}</td>
+                      <td className="px-6 py-4 hidden md:table-cell">{cand.years_exp ? `${cand.years_exp} yrs` : '—'}</td>
+                      <td className="px-6 py-4 text-right space-x-3">
+                        <Link href={`/candidates/${cand.id}`} className="text-text-secondary hover:text-text-primary font-medium text-xs transition-colors">
+                          View Details
+                        </Link>
+                        <Link href={`/candidates/${cand.id}`} className="bg-accent/10 text-accent hover:bg-accent/20 px-3 py-1.5 rounded text-xs font-medium transition-colors">
+                          Auto Apply
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         )}
       </div>
