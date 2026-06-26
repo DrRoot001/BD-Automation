@@ -84,6 +84,7 @@ async def tailor_resume(
     current_ats_score = ats_score_before
     current_missing_keywords = ats_score_before_obj.missing_keywords
     
+    # Constructing the initial payload for the LLM
     resume_json = {
         "basics": {
             "name": candidate_profile.get("name", "Candidate"),
@@ -109,7 +110,8 @@ async def tailor_resume(
         "education": [
             {
                 "institution": edu.institution,
-                "degree": edu.degree,
+                # FIX: Combining degree and field here so it isn't dropped before going to the LLM
+                "degree": f"{edu.degree} in {edu.field}" if edu.field else edu.degree,
                 "date": str(edu.graduation_year) if edu.graduation_year else None
             } for edu in resume.sections.education
         ],
@@ -185,7 +187,7 @@ async def tailor_resume(
             temp_edu.append(EducationEntry(
                 institution=edu.get("institution", ""),
                 degree=edu.get("degree", ""),
-                field="",
+                field="", 
                 graduation_year=int(digits[0]) if digits else None
             ))
             
@@ -234,7 +236,7 @@ async def tailor_resume(
         digits = re.findall(r'\d{4}', str(date_str))
         final_education.append(EducationEntry(
             institution=edu.get("institution", "Institution"),
-            degree=edu.get("degree", ""),
+            degree=edu.get("degree", ""), 
             field="",
             graduation_year=int(digits[0]) if digits else None
         ))
@@ -265,7 +267,7 @@ async def tailor_resume(
         experience=pdf_experience,
         education=pdf_education,
         certifications=final_resume_json.get("certifications", []),
-        projects=pdf_projects  # Used for rendering, discarded from return payload
+        projects=pdf_projects 
     )
 
     return TailoredResume(

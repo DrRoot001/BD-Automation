@@ -35,7 +35,7 @@ Output ONLY a valid JSON object — no markdown, no preamble — in this schema:
 
 STRICT RULES:
 1. ONE PARAGRAPH ONLY: You MUST output exactly ONE string inside the "paragraphs" array. Combine your opening, achievements, and call to action into a single cohesive block of text.
-2. WORD COUNT (CRITICAL): The total word count of this single paragraph MUST be strictly between 120+ words. Count carefully before outputting.
+2. WORD COUNT (CRITICAL): The total word count of this single paragraph MUST be strictly less than 150 words. Count carefully before outputting.
 3. Content: State your expertise, integrate 2-3 specific numeric achievements from the resume that map to the job, and end with a strong call to action.
 4. Tone: Confident, direct, zero filler phrases. Mirror keywords from the job description naturally.
 """
