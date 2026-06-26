@@ -108,5 +108,7 @@ scratch/
 test_m4_evidence_*.json
 test_m4_evidence_*.png
 test_capsolver_evidence.png
-test_modules_1_4.log
 dice_test.log
+
+# Ignore node_modules globally
+node_modules/
