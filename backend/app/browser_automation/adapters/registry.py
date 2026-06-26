@@ -8,6 +8,7 @@ from .indeed import IndeedAdapter
 from .lever import LeverAdapter
 from .linkedin import LinkedInEasyApplyAdapter
 from .remoterocketship import RemoteRocketshipAdapter
+from .talent import TalentAdapter
 from .workday import WorkdayAdapter
 
 
@@ -21,6 +22,7 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "icims": ICIMSAdapter,
     "indeed": IndeedAdapter,
     "dice": DiceAdapter,
+    "talent": TalentAdapter,
     "generic": GenericFormAdapter,
 }
 
@@ -52,4 +54,6 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
             cls = IndeedAdapter
         elif "dice.com" in key or "dice" in normalized:
             cls = DiceAdapter
+        elif "talent.com" in key or "talent" in normalized:
+            cls = TalentAdapter
     return (cls or GenericFormAdapter)()
