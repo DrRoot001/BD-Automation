@@ -16,6 +16,12 @@ from module3.utils.storage import safe_filename
 
 logger = logging.getLogger("cover_letter_generator")
 
+def _first_non_blank(*values) -> str:
+    for value in values:
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
 class CoverLetter(BaseModel):
     candidate_id: str
     job_id: str
@@ -98,13 +104,13 @@ async def generate_cover_letter(
     letter_paragraphs = cl_json.get("paragraphs", [])
     letter_content = "\n\n".join(letter_paragraphs)
     
-    candidate_name = candidate_profile.get("name", "Candidate")
+    candidate_name = _first_non_blank(candidate_profile.get("name"), "Candidate")
     pdf_filename = f"{safe_filename(candidate_name, default='candidate', extension='')}_cover_letter.pdf"
     output_pdf_path = os.path.join(output_pdf_dir, pdf_filename)
     
-    candidate_location = candidate_profile.get("location", "US")
-    candidate_email = candidate_profile.get("email", "email@example.com")
-    candidate_phone = candidate_profile.get("phone", "")
+    candidate_location = _first_non_blank(candidate_profile.get("location"), "US")
+    candidate_email = _first_non_blank(candidate_profile.get("email"), getattr(resume.sections, "email", None), "email@example.com")
+    candidate_phone = _first_non_blank(candidate_profile.get("phone"), getattr(resume.sections, "phone", None))
     
     candidate_info = f"{candidate_location}  |  {candidate_email}"
     if candidate_phone:

@@ -19,6 +19,12 @@ from module3.utils.storage import safe_filename
 
 logger = logging.getLogger("resume_tailor")
 
+def _first_non_blank(*values) -> str:
+    for value in values:
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
 class TailoredResume(BaseModel):
     candidate_id: str
     job_id: str
@@ -87,12 +93,16 @@ async def tailor_resume(
     # Constructing the initial payload for the LLM
     resume_json = {
         "basics": {
-            "name": candidate_profile.get("name", "Candidate"),
+            "name": _first_non_blank(candidate_profile.get("name"), "Candidate"),
             "headline": "",
-            "email": candidate_profile.get("email", ""),
-            "phone": candidate_profile.get("phone", ""),
-            "location": candidate_profile.get("location", ""),
-            "linkedin": candidate_profile.get("linkedin_url", ""),
+            "email": _first_non_blank(candidate_profile.get("email"), getattr(resume.sections, "email", None)),
+            "phone": _first_non_blank(candidate_profile.get("phone"), getattr(resume.sections, "phone", None)),
+            "location": _first_non_blank(candidate_profile.get("location")),
+            "linkedin": _first_non_blank(
+                candidate_profile.get("linkedin_url"),
+                getattr(resume.sections, "linkedin_url", None),
+                getattr(resume.sections, "website", None),
+            ),
             "github_portfolio": ""
         },
         "summary": resume.sections.summary,
