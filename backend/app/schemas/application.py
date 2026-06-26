@@ -23,6 +23,14 @@ class ApplicationStatus(str, Enum):
     OFFER = "OFFER"
     FAILED = "FAILED"
     BLOCKED = "BLOCKED"
+    GHOSTED = "GHOSTED"
+    WITHDRAWN = "WITHDRAWN"
+
+class FailureReason(str, Enum):
+    INFRA_ERROR = "INFRA_ERROR"
+    QUALIFICATION_MISMATCH = "QUALIFICATION_MISMATCH"
+    BOT_DETECTED = "BOT_DETECTED"
+    FORM_INCOMPLETE = "FORM_INCOMPLETE"
 
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus
@@ -32,6 +40,7 @@ class StatusUpdateRequest(BaseModel):
     fit_score: Optional[float] = None
     ats_score: Optional[float] = None
     combined_score: Optional[float] = None
+    failure_reason: Optional[FailureReason] = None
 
 class ApplicationCreate(BaseModel):
     candidate_id: UUID
@@ -57,6 +66,7 @@ class ApplicationResponse(BaseModel):
     screenshot_url: Optional[str] = None
     submitted_at: Optional[datetime] = None
     error_message: Optional[str] = None
+    failure_reason: Optional[FailureReason] = None
     retry_count: Optional[int] = 0
     created_at: datetime
     updated_at: Optional[datetime] = None

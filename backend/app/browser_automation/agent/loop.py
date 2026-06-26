@@ -4960,20 +4960,59 @@ class AgentLoop:
                         if a.kind == action.kind and a.selector == action.selector
                     ]
                     if len(same_action_run) >= 4:
-                        logger.warning(
-                            f"[AgentLoop] step={step} REPETITION GUARD: action "
-                            f"({action.kind}, {action.selector!r}) repeated "
-                            f"{len(same_action_run) + 1} times — aborting STUCK to "
-                            "prevent runaway token burn."
-                        )
-                        actions.append(action)
-                        return LoopResult(
-                            success=False,
-                            status="STUCK",
-                            error=f"Looped on {action.kind}({action.selector!r}) {len(same_action_run) + 1}x",
-                            steps_taken=step,
-                            actions=actions,
-                        )
+                        # Before declaring STUCK on fill_field, check the actual
+                        # DOM value. React/SPA forms sometimes don't reflect the
+                        # memory pre-fill (native event setter) visually, causing
+                        # the LLM to keep re-issuing the same fill. Two cases:
+                        #  1. DOM already has correct value → LLM is confused;
+                        #     just skip the action and continue.
+                        #  2. DOM has wrong/empty value → force Playwright fill+Tab
+                        #     to commit it properly to the SPA state.
+                        if action.kind == "fill_field" and action.selector and action.value:
+                            try:
+                                target_val = str(action.value)
+                                loc = (frame or page).locator(action.selector).first
+                                if await loc.count() > 0:
+                                    current_val = await loc.evaluate("el => el.value || ''")
+                                    if current_val.strip() == target_val.strip():
+                                        # Value is already there — LLM is just confused
+                                        logger.warning(
+                                            f"[AgentLoop] step={step} REPETITION GUARD: "
+                                            f"{action.selector!r} already has correct value "
+                                            f"'{current_val[:40]}' — skipping redundant fill."
+                                        )
+                                        actions.append(action)
+                                        continue
+                                    else:
+                                        # Value is wrong — force-fill to commit to SPA
+                                        logger.warning(
+                                            f"[AgentLoop] step={step} REPETITION GUARD rescue: "
+                                            f"force-filling {action.selector!r} = '{target_val[:40]}' "
+                                            f"(DOM had '{current_val[:40]}'). SPA did not commit pre-fill."
+                                        )
+                                        await loc.click(timeout=3000)
+                                        await loc.fill(target_val, timeout=3000)
+                                        await page.keyboard.press("Tab")
+                                        await asyncio.sleep(0.5)
+                                        same_action_run = []  # reset — don't abort
+                            except Exception as _rg_exc:
+                                logger.debug(f"[AgentLoop] REPETITION GUARD rescue failed: {_rg_exc}")
+
+                        if len(same_action_run) >= 4:
+                            logger.warning(
+                                f"[AgentLoop] step={step} REPETITION GUARD: action "
+                                f"({action.kind}, {action.selector!r}) repeated "
+                                f"{len(same_action_run) + 1} times — aborting STUCK to "
+                                "prevent runaway token burn."
+                            )
+                            actions.append(action)
+                            return LoopResult(
+                                success=False,
+                                status="STUCK",
+                                error=f"Looped on {action.kind}({action.selector!r}) {len(same_action_run) + 1}x",
+                                steps_taken=step,
+                                actions=actions,
+                            )
 
                 actions.append(action)
 

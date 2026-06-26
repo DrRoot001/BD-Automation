@@ -415,6 +415,11 @@ class ApplicationExecutor:
                 # We call M3's prepare-package endpoint ONLY to obtain answers to any
                 # screening questions found in the form that weren't pre-answered.
                 # We NEVER overwrite resume_url or cover_letter_url if they are already set.
+                #
+                # IMPORTANT: We do NOT check should_apply here. The fit-score gate already
+                # ran in M3 upstream (orchestrator). By the time we are executing in M4 the
+                # application is already in QUEUED/MATCHED status — re-checking the gate
+                # here would cause M4 to abandon applications that were intentionally queued.
                 screening_answers: Dict[str, str] = dict(package.screening_answers or {})
 
                 exclude_kw = {"first name", "last name", "email", "phone", "resume", "cover letter", "cv"}
@@ -445,7 +450,7 @@ class ApplicationExecutor:
                             m3 = resp.json()
                             logger.info(f"[M4] M3 prepare-package answered {len(open_questions)} question(s)")
 
-                            # Only adopt URLs from M3 if we don't already have local paths
+                            # Only adopt cover letter URL from M3 if we don't already have one
                             if not _temp_cover and m3.get("cover_letter_pdf_url"):
                                 _temp_cover = await _resolve_file_to_local_path(
                                     m3["cover_letter_pdf_url"], ".pdf"
@@ -456,19 +461,14 @@ class ApplicationExecutor:
                                 if q not in screening_answers:
                                     screening_answers[q] = a
 
+                            # NOTE: should_apply is intentionally NOT checked here.
+                            # The fit-gate already ran in M3. If we are here the job
+                            # was already queued — we must proceed regardless of score.
                             if not m3.get("should_apply", True):
-                                logger.warning(f"[M4] M3 returned should_apply=False; abandoning")
-                                await transition_status(package.application_id, "ANALYZED",
-                                                        {"reason": "score_below_threshold"})
-                                if context_mgr and context:
-                                    await context_mgr.destroy_context(context)
-                                _cleanup_temp(_temp_resume, _temp_cover)
-                                return ApplicationResult(
-                                    application_id=package.application_id,
-                                    status="FAILED",
-                                    error_message="Abandoned: score below threshold",
-                                    execution_time_seconds=_elapsed(),
-                                    retry_count=retry_count,
+                                logger.info(
+                                    "[M4] M3 prepare-package returned should_apply=False "
+                                    "(score below gate threshold) — continuing anyway since "
+                                    "application was already queued by upstream M3 pipeline."
                                 )
                         else:
                             logger.warning(f"[M4] M3 prepare-package returned {resp.status_code}: {resp.text[:200]}")

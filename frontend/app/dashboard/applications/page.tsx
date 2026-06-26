@@ -10,6 +10,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Skeleton } from '@/components/shared/Skeleton'
 import { formatDistanceToNow } from '@/lib/utils'
 import { ApplicationDrawer } from '@/components/dashboard/ApplicationDrawer'
+import { useWebSocket } from '@/hooks/useWebSocket'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -30,6 +31,9 @@ function isCompleted(status: string) {
 export default function ApplicationsPage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
   const [searchTerm, setSearchTerm] = useState('')
+
+  // Connect WebSocket to get real-time cache invalidations
+  useWebSocket()
 
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({
@@ -183,7 +187,7 @@ export default function ApplicationsPage() {
                         </span>
                       </td>
                       <td className="px-6 py-4">
-                        <StatusBadge status={isCompleted(app.status) ? app.status : 'FAILED'} />
+                        <StatusBadge status={app.status} />
                       </td>
                       <td className="px-6 py-4">
                         {app.fit_score != null && app.ats_score != null ? (() => {

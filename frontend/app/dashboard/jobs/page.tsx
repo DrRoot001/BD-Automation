@@ -8,12 +8,16 @@ import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { JobCard } from '@/components/dashboard/JobCard'
 import { Skeleton } from '@/components/shared/Skeleton'
 import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useWebSocket } from '@/hooks/useWebSocket'
 
 const PAGE_SIZE = 12
 
 export default function JobsFeedPage() {
   const [page, setPage] = useState(0)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
+
+  // Connect WebSocket to get real-time cache invalidations
+  useWebSocket()
 
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({
@@ -38,8 +42,10 @@ export default function JobsFeedPage() {
     staleTime: 60 * 1000,
   })
 
-  // Cross-reference map: Job ID -> boolean
-  const appliedJobIds = new Set(applications?.map(app => app.job_id)) 
+  // Cross-reference map: Job ID -> Status
+  const appliedJobsMap = new Map<string, string>(
+    applications?.map(app => [app.job_id, app.status]) ?? []
+  )
 
   const handleApply = (jobId: string) => {
     console.log("Apply triggered for job:", jobId)
@@ -145,7 +151,7 @@ export default function JobsFeedPage() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {jobs.map((job) => {
-            const isApplied = selectedCandidateId ? appliedJobIds.has(job.id) : false
+            const applicationStatus = selectedCandidateId ? appliedJobsMap.get(job.id) : undefined
             return (
               <JobCard 
                 key={job.id} 
@@ -153,7 +159,7 @@ export default function JobsFeedPage() {
                 onApply={handleApply}
                 onDismiss={handleDismiss}
                 onClick={handleCardClick}
-                isApplied={isApplied}
+                applicationStatus={applicationStatus}
               />
             )
           })}

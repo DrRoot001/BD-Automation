@@ -267,4 +267,13 @@ export const api = {
 
   exchangeGoogleCode: (candidateId: string, code: string) =>
     postJSON<any>(`/candidates/${candidateId}/google/callback`, { code }),
+
+  runMatching: (candidateId: string) =>
+    postJSON<any>(`/candidates/${candidateId}/run-matching`, {}),
+
+  triggerJobDiscovery: () =>
+    postJSON<any>('/jobs/discover', {}),
+
+  getDiscoveryStatus: () =>
+    fetchJSON<any>('/jobs/discover/status'),
 }

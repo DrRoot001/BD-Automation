@@ -1,0 +1,420 @@
+import os
+import logging
+import json
+from datetime import datetime, timezone, timedelta
+from typing import List, Dict, Any, Optional
+from sqlalchemy import select, func
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
+
+from app.models.candidate import Candidate
+from app.models.job import Job
+from app.models.resume import Resume
+from app.models.application import Application
+from app.config import get_settings
+from app.services.llm_cache import get_cached_score, cache_score
+from module3.parser.resume_parser import ResumeData, ResumeSection
+from module2.normalization.schemas import NormalizedJob
+from module3.scoring.fit_scorer import score_job_fit
+from module3.orchestrator import orchestrate_application_package
+from app.tasks.browser_automation import execute_application
+
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
+async def run_matching_for_candidate(
+    candidate_id: UUID,
+    session: AsyncSession,
+    is_beat_task: bool = False,
+    target_job_ids: Optional[List[str]] = None,
+    manual_limit: Optional[int] = None,
+) -> Dict[str, Any]:
+    """
+    Executes the daily matching and auto-apply flow for a specific candidate.
+    
+    1. Fetches candidate details and base resume with pgvector embedding.
+    2. Enforces the configurable daily cap.
+    3. Finds duplicate-free jobs created in the last 24 hours passing pgvector similarity threshold.
+    4. Filters out already-applied/non-retryable jobs.
+    5. Scores candidate job fit using the LLM.
+    6. For fits >= 70, tailors resume/CL/answers and enqueues browser execution.
+    """
+    candidate = await session.get(Candidate, candidate_id)
+    if not candidate:
+        logger.error(f"[Matching] Candidate {candidate_id} not found.")
+        return {"error": "candidate_not_found"}
+
+    if getattr(candidate, "automation_paused", 0) == 1:
+        logger.info(f"[Matching] Automation is PAUSED for candidate {candidate.name} ({candidate_id}). Skipping.")
+        return {
+            "candidate_id": str(candidate_id),
+            "jobs_scanned": 0,
+            "pgvector_passed": 0,
+            "llm_passed": 0,
+            "enqueued_count": 0,
+            "details": [],
+            "skipped": [{"reason": "automation_paused"}]
+        }
+
+    candidate_dict = {
+        "id": str(candidate.id),
+        "name": candidate.name,
+        "email": candidate.email,
+        "phone": candidate.phone,
+        "location": candidate.location,
+        "work_auth": candidate.work_auth,
+        "tech_stack": candidate.tech_stack,
+        "years_exp": candidate.years_exp,
+        "linkedin_url": candidate.linkedin_url
+    }
+
+    # 2. Fetch base resume (order by version desc and pick the latest if multiple exist)
+    resume_stmt = (
+        select(Resume)
+        .where(Resume.candidate_id == candidate_id, Resume.is_base == True)
+        .order_by(Resume.version.desc())
+        .limit(1)
+    )
+    base_resume = (await session.execute(resume_stmt)).scalars().first()
+    if not base_resume:
+        logger.warning(f"[Matching] Candidate {candidate.name} ({candidate_id}) has no base resume. Skipping.")
+        return {"error": "no_base_resume"}
+
+    if base_resume.parsed_json is None or base_resume.embedding is None:
+        logger.info(f"[Matching] Base resume for Candidate {candidate.name} ({candidate_id}) is missing parsed_json or embedding. Attempting self-heal...")
+        try:
+            from app.routers.resumes import _generate_resume_embedding_from_json
+
+            # If parsed_json already exists, only re-generate the embedding (skip PDF re-parsing).
+            # This avoids crashing on corrupt/small PDFs when the JSON data is already good.
+            if base_resume.parsed_json is not None:
+                logger.info(f"[Matching] parsed_json is present — generating embedding from existing JSON (skipping PDF re-parse).")
+                base_resume.embedding = _generate_resume_embedding_from_json(base_resume.parsed_json)
+            else:
+                # parsed_json is missing — try to parse the PDF first
+                pdf_parsed = False
+                try:
+                    from module3.parser.resume_parser import parse_resume
+                    logger.info(f"[Matching] parsed_json is missing — parsing PDF from {base_resume.file_url[:60]}...")
+                    parsed_resume = await parse_resume(base_resume.file_url, candidate_id=str(candidate_id), resume_id=str(base_resume.id))
+                    base_resume.parsed_json = parsed_resume.sections.model_dump()
+                    pdf_parsed = True
+                except Exception as pdf_err:
+                    logger.warning(f"[Matching] PDF parse failed for {candidate.name}: {pdf_err}. Synthesizing parsed_json from candidate profile...")
+                    # Fallback: build a minimal parsed_json from the candidate's profile fields
+                    # so that the embedding can still be generated and the pipeline can proceed.
+                    tech = candidate_dict.get("tech_stack") or []
+                    base_resume.parsed_json = {
+                        "summary": f"{candidate.name} with {candidate_dict.get('years_exp', 0)} years of experience.",
+                        "skills": tech,
+                        "keywords": tech,
+                        "experience": [],
+                        "education": [],
+                        "certifications": [],
+                    }
+                    logger.info(f"[Matching] Synthesized parsed_json from candidate profile for {candidate.name}.")
+
+                base_resume.embedding = _generate_resume_embedding_from_json(base_resume.parsed_json)
+
+            session.add(base_resume)
+            await session.commit()
+            await session.refresh(base_resume)
+            logger.info(f"[Matching] Successfully self-healed base resume for Candidate {candidate.name} ({candidate_id}).")
+        except Exception as parse_err:
+            logger.error(f"[Matching] Self-heal failed for Candidate {candidate.name} ({candidate_id}): {parse_err}", exc_info=True)
+            return {"error": "resume_parsing_failed"}
+
+    if base_resume.embedding is None:
+        logger.warning(f"[Matching] Candidate {candidate.name} ({candidate_id}) has base resume but no embedding after self-heal. Skipping.")
+        return {"error": "no_resume_embedding"}
+
+    active_statuses = {
+        "QUEUED", "SUBMITTED", "CONFIRMED", "APPLICATION_STARTED", "FORM_COMPLETED",
+        "INTERVIEW_R1", "INTERVIEW_R2", "INTERVIEW_R3", "INTERVIEW_R4", "OFFER",
+        "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED"
+    }
+
+    # 3. Calculate remaining daily limit
+    # manual_limit overrides the daily cap (used when BD user manually clicks "Run Now")
+    if manual_limit is not None:
+        remaining_slots = manual_limit
+        logger.info(f"[Matching] Candidate {candidate.name}: manual run with limit={manual_limit} (bypassing daily cap).")
+    else:
+        max_daily = getattr(candidate, "max_daily_apps_override", None)
+        if max_daily is None:
+            max_daily = settings.max_daily_applications_per_candidate
+            
+        time_24h_ago = datetime.now(timezone.utc) - timedelta(hours=24)
+        
+        app_stmt = select(Application).where(
+            Application.candidate_id == candidate_id,
+            Application.created_at >= time_24h_ago
+        )
+        apps = (await session.execute(app_stmt)).scalars().all()
+        
+        already_applied_today = sum(1 for app in apps if app.status in active_statuses)
+        remaining_slots = max(0, max_daily - already_applied_today)
+        
+        logger.info(f"[Matching] Candidate {candidate.name}: applied today={already_applied_today}, remaining={remaining_slots}")
+
+    # Build maps of existing apps to check retry/skip conditions
+    skipped_jobs = set()
+    retryable_apps = {}
+    
+    all_apps_stmt = select(Application).where(Application.candidate_id == candidate_id)
+    all_apps = (await session.execute(all_apps_stmt)).scalars().all()
+    
+    for app in all_apps:
+        status_val = app.status
+        if status_val in active_statuses or status_val == "REJECTED":
+            skipped_jobs.add(app.job_id)
+        elif status_val in ("FAILED", "BLOCKED"):
+            reason = app.failure_reason
+            retries = app.retry_count or 0
+            if reason == "QUALIFICATION_MISMATCH":
+                skipped_jobs.add(app.job_id)
+            elif reason == "BOT_DETECTED" and retries >= 1:
+                skipped_jobs.add(app.job_id)
+            else:
+                retryable_apps[app.job_id] = app
+        else:
+            skipped_jobs.add(app.job_id)
+
+    # 4. Fetch jobs added in lookback window (defaults to 24h, 72h on Mondays) that are not duplicates and pass pgvector distance < 0.35
+    if target_job_ids:
+        # If specific target jobs were requested (e.g. from dynamic_apply), skip pgvector and time filters.
+        from uuid import UUID as _UUID
+        valid_uuids = []
+        for jid in target_job_ids:
+            try:
+                valid_uuids.append(_UUID(jid))
+            except Exception:
+                pass
+        
+        if not valid_uuids:
+            logger.warning(f"[Matching] target_job_ids provided but no valid UUIDs found.")
+            return {"error": "invalid_target_job_ids"}
+            
+        jobs_stmt = select(Job).where(Job.id.in_(valid_uuids))
+    else:
+        weekday = datetime.now(timezone.utc).weekday()
+        lookback_hours = settings.job_matching_monday_lookback_hours if weekday == 0 else settings.job_matching_lookback_hours
+        time_job_lookback = datetime.now(timezone.utc) - timedelta(hours=lookback_hours)
+
+        jobs_stmt = select(Job).where(
+            Job.created_at >= time_job_lookback,
+            Job.is_duplicate == False,
+            Job.embedding.isnot(None),
+            Job.embedding.cosine_distance(base_resume.embedding) < 0.35
+        )
+    jobs = (await session.execute(jobs_stmt)).scalars().all()
+    pgvector_passed_count = len(jobs)
+    
+    if target_job_ids:
+        logger.info(f"[Matching] Candidate {candidate.name}: executing on {pgvector_passed_count} target jobs.")
+    else:
+        logger.info(f"[Matching] Candidate {candidate.name}: found {pgvector_passed_count} jobs passing pgvector similarity.")
+
+    # 5. Process shortlist
+    enqueued = []
+    skipped_details = []
+    details = []
+    
+    try:
+        sections = ResumeSection(**base_resume.parsed_json)
+        resume_data = ResumeData(
+            candidate_id=str(candidate_id),
+            resume_id=str(base_resume.id),
+            file_url=base_resume.file_url or "",
+            sections=sections,
+            raw_text="[Loaded from DB]"
+        )
+    except Exception as e:
+        logger.error(f"[Matching] Failed to load ResumeData for {candidate.name}: {e}")
+        return {"error": "resume_data_load_failed"}
+
+    # Derive api_base_url
+    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api").rstrip("/")
+    api_base_url = api_base[:-4] if api_base.endswith("/api") else api_base
+
+    for job in jobs:
+        if job.id in skipped_jobs:
+            logger.info(f"[Matching] Skipping job {job.title} at {job.company}: already applied and not eligible for retry.")
+            continue
+            
+        if remaining_slots <= 0:
+            logger.info(f"[Matching] Daily application cap ({max_daily}) reached for {candidate.name}. Skipping LLM evaluation.")
+            skipped_details.append({
+                "job_title": job.title,
+                "company": job.company,
+                "reason": "daily_limit_reached"
+            })
+            continue
+
+        # Format skills
+        skills = job.skills
+        if isinstance(skills, str):
+            try:
+                skills = json.loads(skills)
+            except Exception:
+                skills = []
+        elif not skills:
+            skills = []
+            
+        job_obj = NormalizedJob(
+            title=job.title or "",
+            company=job.company or "",
+            location=job.location or "Remote",
+            url=job.source_url or "",
+            description=job.description or "",
+            source=job.source or "greenhouse",
+            skills=skills,
+            salary_min=job.salary_min,
+            salary_max=job.salary_max,
+            pay_period=job.pay_period or "yearly",
+            job_type=job.job_type or "full-time",
+            canonical_url=job.canonical_url or "",
+            embedding=job.embedding,
+            source_url=job.source_url or ""
+        )
+        job_obj.job_id = str(job.id)
+
+        # LLM Score Match — check Redis cache first to avoid redundant Gemini calls
+        try:
+            cid_str = str(candidate_id)
+            jid_str = str(job.id)
+
+            # ── Cache hit: skip LLM call ───────────────────────────────────
+            cached = await get_cached_score(cid_str, jid_str)
+            if cached:
+                logger.info(
+                    "[Matching] Cache HIT for job %s at %s — skipping LLM call",
+                    job.title, job.company
+                )
+                score = cached.get("combined_score", 0)
+                passed_llm = cached.get("should_apply", False)
+                reason = cached.get("reasoning", "")
+            else:
+                # ── Cache miss: call Gemini ───────────────────────────────
+                logger.info(
+                    "[Matching] Evaluating LLM fit score for job: %s at %s...",
+                    job.title, job.company
+                )
+                match_result = await score_job_fit(candidate_dict, resume_data, job_obj)
+                score = match_result.combined_score
+                passed_llm = match_result.should_apply
+                reason = match_result.reasoning
+                # Store in cache for 24h — avoids re-evaluation on 72h Monday lookback
+                await cache_score(cid_str, jid_str, {
+                    "combined_score": float(score),
+                    "fit_score": float(match_result.fit_score),
+                    "ats_score": float(match_result.ats_score),
+                    "should_apply": passed_llm,
+                    "reasoning": reason,
+                })
+        except Exception as e:
+            logger.error("[Matching] Error during LLM score_job_fit for job %s: %s", job.id, e)
+            continue
+
+        if passed_llm:
+            try:
+                logger.info(f"[Matching] Job {job.title} passed threshold with score {score}. Preparing package...")
+                
+                existing_app = retryable_apps.get(job.id)
+                app_id = None
+                if existing_app:
+                    app_id = existing_app.id
+                    logger.info(f"[Matching] Reusing existing failed application: {app_id}")
+                    existing_app.status = "FOUND"
+                    existing_app.retry_count = 0
+                    session.add(existing_app)
+                    await session.commit()
+                
+                # Job already passed the LLM gate above (score >= 70).
+                # Use orchestrate_application_package with skip_gate=True so the
+                # gate is NOT run a second time — LLM non-determinism can lower the
+                # score on a re-call and silently skip resume tailoring + cover letter.
+                result = await orchestrate_application_package(
+                    candidate_id=str(candidate_id),
+                    job_id=str(job.id),
+                    base_resume_pdf_path=None,   # use DB record
+                    screening_questions=[],
+                    api_base_url=api_base_url,
+                    skip_gate=True,              # already gated above
+                )
+                
+                # orchestrate_application_package returns status="QUEUED" on success
+                if result.get("status") == "QUEUED":
+                    if not app_id:
+                        app_stmt = select(Application).where(
+                            Application.candidate_id == candidate_id,
+                            Application.job_id == job.id
+                        )
+                        app_rec_result = await session.execute(app_stmt)
+                        app_rec = app_rec_result.scalar_one()
+                        app_id = app_rec.id
+                    
+                    package = {
+                        "application_id": str(app_id),
+                        "candidate_id": str(candidate_id),
+                        "job_id": str(job.id),
+                        "job_url": job.source_url or "",
+                        "platform": (job.source or "").lower(),
+                        "ats_type": job.job_type or "",
+                        "resume_url": result.get("resume_pdf_url") or "",
+                        "cover_letter_url": result.get("cover_letter_url") or "",
+                        "screening_answers": result.get("screening_answers") or {}
+                    }
+                    
+                    execute_application.apply_async(args=[package], queue="queue:application_execution")
+                    enqueued.append({
+                        "job_title": job.title,
+                        "company": job.company,
+                        "score": score,
+                        "status": "QUEUED"
+                    })
+                    remaining_slots -= 1
+                    
+                    logger.info(f"[Matching] Enqueued execute_application for application: {app_id}")
+                else:
+                    logger.info(f"[Matching] orchestrate_application_package returned status={result.get('status')} for job {job.id}")
+                    skipped_details.append({
+                        "job_title": job.title,
+                        "company": job.company,
+                        "score": score,
+                        "reason": "package_prep_failed"
+                    })
+            except Exception as e:
+                logger.error(f"[Matching] Failed to prepare/enqueue application for job {job.id}: {e}")
+                skipped_details.append({
+                    "job_title": job.title,
+                    "company": job.company,
+                    "score": score,
+                    "reason": f"error: {str(e)}"
+                })
+        else:
+            logger.info(f"[Matching] Job {job.title} at {job.company} did not pass threshold (score: {score}).")
+            skipped_details.append({
+                "job_title": job.title,
+                "company": job.company,
+                "score": score,
+                "reason": "below_threshold"
+            })
+            
+        details.append({
+            "job_title": job.title,
+            "company": job.company,
+            "score": score,
+            "passed": passed_llm,
+            "reasoning": reason
+        })
+
+    return {
+        "candidate_id": str(candidate_id),
+        "jobs_scanned": len(jobs),
+        "pgvector_passed": pgvector_passed_count,
+        "llm_passed": len(enqueued),
+        "enqueued_count": len(enqueued),
+        "details": details,
+        "skipped": skipped_details
+    }

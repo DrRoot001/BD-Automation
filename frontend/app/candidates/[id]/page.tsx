@@ -16,25 +16,11 @@ import { resolveFileUrl } from '@/components/utils'
 function ViewResumeButton({ resumeId, fileUrl }: { resumeId: string; fileUrl?: string }) {
   const [loading, setLoading] = useState(false)
 
-  const handleView = async () => {
-    setLoading(true)
-    try {
-      const res = await fetch(`/api/resumes/${resumeId}/view`)
-      if (res.redirected) {
-        // Backend issued a redirect — open the final URL
-        window.open(res.url, '_blank', 'noopener,noreferrer')
-        return
-      }
-      const data = await res.json().catch(() => null)
-      const url = data?.url ?? resolveFileUrl(fileUrl)
-      if (url) window.open(url, '_blank', 'noopener,noreferrer')
-    } catch {
-      // Fallback: try to open the file_url directly
-      const url = resolveFileUrl(fileUrl)
-      if (url) window.open(url, '_blank', 'noopener,noreferrer')
-    } finally {
-      setLoading(false)
-    }
+  const handleView = () => {
+    // Open the backend view endpoint directly in a new tab.
+    // The browser handles the 302 redirect transparently, 
+    // bypassing CORS and async popup-blocker restrictions.
+    window.open(`/api/resumes/${resumeId}/view`, '_blank', 'noopener,noreferrer')
   }
 
   return (

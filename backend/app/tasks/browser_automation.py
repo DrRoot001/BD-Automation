@@ -2,6 +2,7 @@ import asyncio
 import os
 import json
 import datetime
+from typing import Optional
 import httpx
 import logging
 from celery.exceptions import Retry
@@ -27,7 +28,8 @@ async def publish_event(event_name: str, payload: dict) -> None:
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     kwargs = {}
     if "rediss://" in redis_url:
-        kwargs["ssl_cert_reqs"] = "none"
+        import ssl as _ssl
+        kwargs["ssl_cert_reqs"] = _ssl.CERT_NONE
     redis_client = aioredis.from_url(redis_url, **kwargs)
     try:
         clean_name = event_name
@@ -74,15 +76,32 @@ async def publish_application_failed(
     application_id: str,
     error: str,
     retry_eligible: bool,
+    failure_reason: Optional[str] = None,
 ) -> None:
-    """Publish an *application.failed* event."""
+    """Publish an *application.failed* event and transition DB status."""
     await publish_event(
         "event:application.failed",
         {
             "application_id": application_id,
             "error":          error,
             "retry_eligible": retry_eligible,
+            "failure_reason": failure_reason,
         },
+    )
+    
+    # Transition the status in the database to FAILED or BLOCKED
+    from app.browser_automation.services.state_machine import transition_status
+    status_to_set = "BLOCKED" if failure_reason == "BOT_DETECTED" or "blocked" in error.lower() else "FAILED"
+    
+    metadata = {
+        "error": error,
+        "retry_eligible": retry_eligible
+    }
+    await transition_status(
+        application_id=application_id,
+        new_status=status_to_set,
+        metadata=metadata,
+        failure_reason=failure_reason
     )
 
 
@@ -297,7 +316,8 @@ def execute_application(self, package_dict: dict):
             asyncio.run(publish_application_failed(
                 application_id=package_dict.get("application_id", ""),
                 error=result.error_message or "Blocked by bot detection",
-                retry_eligible=False
+                retry_eligible=False,
+                failure_reason="BOT_DETECTED"
             ))
         elif result.status in ["FAILED", "CAPTCHA_FAILED"]:
             logger.info(f"Automation execution completed: {result.status}")
@@ -308,10 +328,24 @@ def execute_application(self, package_dict: dict):
         raise
     except Exception as exc:
         if self.request.retries >= self.max_retries:
+            err_msg = str(exc)
+            
+            # Determine appropriate failure reason
+            failure_reason = "INFRA_ERROR"
+            if "form fill incomplete" in err_msg.lower() or "one or more required fields" in err_msg.lower():
+                failure_reason = "FORM_INCOMPLETE"
+            elif "captcha" in err_msg.lower():
+                failure_reason = "BOT_DETECTED"
+            elif "blocked" in err_msg.lower():
+                failure_reason = "BOT_DETECTED"
+            elif "qualification" in err_msg.lower() or "mismatch" in err_msg.lower():
+                failure_reason = "QUALIFICATION_MISMATCH"
+                
             asyncio.run(publish_application_failed(
                 application_id=package_dict.get("application_id", ""),
-                error=str(exc),
-                retry_eligible=False
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason=failure_reason
             ))
         raise self.retry(exc=exc)
 

@@ -4,11 +4,75 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { KPICard } from '@/components/dashboard/KPICard'
-import { Search, Send, Target, Award, Briefcase, Clock } from 'lucide-react'
+import { Search, Send, Target, Award, Briefcase, Clock, Sparkles, RefreshCw, Play, CheckCircle, AlertCircle, X } from 'lucide-react'
 import { formatDistanceToNow } from '@/lib/utils'
 
 export default function AdminPage() {
   const [search, setSearch] = useState('')
+  const [selectedCandidateId, setSelectedCandidateId] = useState('')
+  const [isMatchingRunning, setIsMatchingRunning] = useState(false)
+  const [matchingResult, setMatchingResult] = useState<any>(null)
+  const [matchingError, setMatchingError] = useState<string | null>(null)
+  const [showModal, setShowModal] = useState(false)
+  
+  const [isDiscoveryRunning, setIsDiscoveryRunning] = useState(false)
+  const [discoveryStatus, setDiscoveryStatus] = useState<any>(null)
+
+  const { data: candidates, isLoading: candidatesLoading } = useQuery({
+    queryKey: ['admin-candidates'],
+    queryFn: () => api.getCandidates(),
+  })
+
+  // Poll discovery status
+  useQuery({
+    queryKey: ['admin-discovery-status'],
+    queryFn: async () => {
+      const res = await api.getDiscoveryStatus()
+      if (res.running) {
+        setIsDiscoveryRunning(true)
+      } else {
+        setIsDiscoveryRunning(false)
+        if (res.last_result && isDiscoveryRunning) {
+          setDiscoveryStatus(res.last_result)
+        }
+      }
+      return res
+    },
+    refetchInterval: isDiscoveryRunning ? 3000 : 15000,
+  })
+
+  const handleRunDiscovery = async () => {
+    setIsDiscoveryRunning(true)
+    setDiscoveryStatus(null)
+    setMatchingError(null)
+    try {
+      await api.triggerJobDiscovery()
+    } catch (err: any) {
+      console.error(err)
+      setIsDiscoveryRunning(false)
+      const detail = err.response?.data?.detail
+      setMatchingError(typeof detail === 'string' ? detail : 'Failed to start job discovery')
+    }
+  }
+
+  const handleRunMatching = async () => {
+    if (!selectedCandidateId) return
+    setIsMatchingRunning(true)
+    setMatchingError(null)
+    setMatchingResult(null)
+    try {
+      const res = await api.runMatching(selectedCandidateId)
+      setMatchingResult(res)
+      setShowModal(true)
+    } catch (err: any) {
+      console.error(err)
+      const detail = err.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : detail?.message || err.message || 'An unexpected error occurred.'
+      setMatchingError(msg)
+    } finally {
+      setIsMatchingRunning(false)
+    }
+  }
 
   const { data: kpis, isLoading: kpisLoading } = useQuery({
     queryKey: ['admin-kpis'],
@@ -61,10 +125,105 @@ export default function AdminPage() {
   return (
     <div className="space-y-8 animate-in fade-in duration-500 max-w-7xl mx-auto">
       {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-text-primary tracking-tight">Admin Console Overview</h1>
-        <p className="text-sm text-text-muted mt-1">Cross-platform statistics, BD user activities, and daily applied jobs.</p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-bg-border pb-6">
+        <div>
+          <h1 className="text-2xl font-bold text-text-primary tracking-tight">Admin Console Overview</h1>
+          <p className="text-sm text-text-muted mt-1">Cross-platform statistics, BD user activities, and daily applied jobs.</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Job Discovery Trigger */}
+          <div className="flex items-center gap-3 bg-bg-secondary border border-bg-border p-3 rounded-xl shadow-sm">
+            <div className="text-xs font-semibold text-text-muted">Job Discovery:</div>
+            <button
+              onClick={handleRunDiscovery}
+              disabled={isDiscoveryRunning}
+              className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-sm rounded-lg transition-colors shadow-sm"
+            >
+              {isDiscoveryRunning ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Running...
+                </>
+              ) : (
+                <>
+                  <Search className="w-4 h-4" />
+                  Run Discovery
+                </>
+              )}
+            </button>
+          </div>
+
+          {/* Manual Matching Trigger Control Panel */}
+          <div className="flex items-center gap-3 bg-bg-secondary border border-bg-border p-3 rounded-xl shadow-sm">
+            <div className="text-xs font-semibold text-text-muted mr-1">Manual Matching:</div>
+            <select
+              value={selectedCandidateId}
+              onChange={(e) => setSelectedCandidateId(e.target.value)}
+              disabled={isMatchingRunning || candidatesLoading}
+              className="px-3 py-1.5 bg-bg-primary border border-bg-border rounded-lg text-sm text-text-primary focus:outline-none focus:border-accent min-w-[200px]"
+            >
+              <option value="">Select Candidate...</option>
+              {candidates?.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={handleRunMatching}
+              disabled={!selectedCandidateId || isMatchingRunning}
+              className="flex items-center gap-2 px-4 py-1.5 bg-accent hover:bg-accent-hover disabled:opacity-50 text-white font-medium text-sm rounded-lg transition-colors shadow-sm"
+            >
+              {isMatchingRunning ? (
+                <>
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                  Matching...
+                </>
+              ) : (
+                <>
+                  <Play className="w-4 h-4 fill-current" />
+                  Run Match
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
+
+      {matchingError && (
+        <div className="flex items-center gap-3 bg-red-500/10 border border-red-500/20 p-4 rounded-xl text-sm text-red-500 animate-in slide-in-from-top duration-300">
+          <AlertCircle className="w-5 h-5 shrink-0" />
+          <div className="flex-1 font-medium">{matchingError}</div>
+          <button onClick={() => setMatchingError(null)} className="hover:text-red-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {discoveryStatus && (
+        <div className={`flex items-start gap-3 p-4 rounded-xl text-sm animate-in slide-in-from-top duration-300 ${
+          discoveryStatus.status === 'completed' ? 'bg-green-500/10 border border-green-500/20 text-green-500' : 'bg-red-500/10 border border-red-500/20 text-red-500'
+        }`}>
+          {discoveryStatus.status === 'completed' ? <CheckCircle className="w-5 h-5 shrink-0 mt-0.5" /> : <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />}
+          <div className="flex-1 space-y-1">
+            <div className="font-semibold">Discovery {discoveryStatus.status}</div>
+            {discoveryStatus.status === 'completed' && (
+              <div className="text-xs opacity-90">
+                Discovered: {discoveryStatus.total_discovered} | Saved: {discoveryStatus.total_saved}
+              </div>
+            )}
+            {discoveryStatus.errors && discoveryStatus.errors.length > 0 && (
+              <div className="text-xs opacity-80 mt-2">
+                Errors: {discoveryStatus.errors.join(', ')}
+              </div>
+            )}
+          </div>
+          <button onClick={() => setDiscoveryStatus(null)} className="hover:opacity-70">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* KPI Cards */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -239,6 +398,105 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+
+      {showModal && matchingResult && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-bg-secondary border border-bg-border rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-200">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-bg-border p-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-accent" />
+                <h3 className="text-lg font-bold text-text-primary">Matching Run Results</h3>
+              </div>
+              <button
+                onClick={() => setShowModal(false)}
+                className="text-text-muted hover:text-text-primary rounded-lg p-1 hover:bg-bg-hover transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* Stats Summary Grid */}
+              <div className="grid grid-cols-4 gap-4 text-center">
+                <div className="bg-bg-primary border border-bg-border p-3 rounded-lg">
+                  <div className="text-2xl font-bold text-text-primary">{matchingResult.jobs_scanned}</div>
+                  <div className="text-[10px] uppercase font-semibold tracking-wider text-text-muted mt-1">Jobs Checked</div>
+                </div>
+                <div className="bg-bg-primary border border-bg-border p-3 rounded-lg">
+                  <div className="text-2xl font-bold text-text-primary">{matchingResult.pgvector_passed}</div>
+                  <div className="text-[10px] uppercase font-semibold tracking-wider text-text-muted mt-1">Vector Similarity Passed</div>
+                </div>
+                <div className="bg-bg-primary border border-bg-border p-3 rounded-lg">
+                  <div className="text-2xl font-bold text-green-500">{matchingResult.llm_passed}</div>
+                  <div className="text-[10px] uppercase font-semibold tracking-wider text-text-muted mt-1">LLM Passed (&gt;=70)</div>
+                </div>
+                <div className="bg-bg-primary border border-bg-border p-3 rounded-lg">
+                  <div className="text-2xl font-bold text-accent">{matchingResult.enqueued_count}</div>
+                  <div className="text-[10px] uppercase font-semibold tracking-wider text-text-muted mt-1">Applications Enqueued</div>
+                </div>
+              </div>
+
+              {/* Scanned Jobs List */}
+              <div className="space-y-3">
+                <h4 className="font-semibold text-text-primary text-sm">Detailed Evaluations</h4>
+                <div className="border border-bg-border rounded-lg overflow-hidden max-h-[300px] overflow-y-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-bg-primary/50 text-text-muted uppercase tracking-wider border-b border-bg-border font-medium">
+                      <tr>
+                        <th className="px-4 py-2">Job & Company</th>
+                        <th className="px-4 py-2 font-medium">Fit Score</th>
+                        <th className="px-4 py-2 text-right">Result</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-bg-border">
+                      {matchingResult.details?.length === 0 ? (
+                        <tr>
+                          <td colSpan={3} className="px-4 py-8 text-center text-text-muted">
+                            No jobs passed pgvector similarity for LLM evaluation.
+                          </td>
+                        </tr>
+                      ) : (
+                        matchingResult.details.map((detail: any, index: number) => (
+                          <tr key={index} className="hover:bg-bg-hover transition-colors">
+                            <td className="px-4 py-2">
+                              <div className="font-semibold text-text-primary">{detail.job_title}</div>
+                              <div className="text-[10px] text-text-muted">{detail.company}</div>
+                            </td>
+                            <td className="px-4 py-2 font-medium">
+                              <span className={detail.score >= 70 ? 'text-green-500 font-bold' : detail.score >= 40 ? 'text-yellow-500' : 'text-text-muted'}>
+                                {Math.round(detail.score)}%
+                              </span>
+                            </td>
+                            <td className="px-4 py-2 text-right">
+                              <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-semibold ${
+                                detail.passed ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-red-500/10 text-red-500 border border-red-500/20'
+                              }`}>
+                                {detail.passed ? 'QUEUED' : 'REJECTED'}
+                              </span>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-bg-border p-4 flex justify-end">
+              <button
+                onClick={() => setShowModal(false)}
+                className="px-4 py-2 bg-bg-primary hover:bg-bg-hover border border-bg-border rounded-lg text-sm text-text-primary transition-colors font-medium"
+              >
+                Close Summary
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

@@ -10,9 +10,12 @@ from app.database import get_db
 from app.redis_client import redis_client
 from app.models.application import Application
 from app.models.application_history import ApplicationHistory
-from app.schemas.application import StatusUpdateRequest, ApplicationResponse, ApplicationCreate
+from app.models.candidate import Candidate
+from app.schemas.application import StatusUpdateRequest, ApplicationResponse, ApplicationCreate, ApplicationStatus
 from app.services.state_machine import validate_transition, InvalidTransitionError
 from app.services.events import publish_event
+from app.routers.auth import get_current_user
+from app.models.user import User, UserRole
 
 
 class ApplicationHistoryResponse(BaseModel):
@@ -71,9 +74,34 @@ async def create_application(
 
 @router.get("", response_model=List[ApplicationResponse])
 async def list_applications(
-    db: AsyncSession = Depends(get_db)
+    candidate_id: Optional[UUID] = None,
+    status: Optional[ApplicationStatus] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    result = await db.execute(select(Application))
+    """List applications.
+
+    - **Admin**: sees all applications (optionally filtered by candidate_id / status).
+    - **BD user**: only sees applications belonging to their own candidates.
+    """
+    query = select(Application)
+
+    # Ownership filter for non-admin users
+    if current_user.role != UserRole.admin:
+        owned_candidates_subq = select(Candidate.id).where(
+            Candidate.user_id == current_user.id
+        )
+        query = query.where(Application.candidate_id.in_(owned_candidates_subq))
+
+    if candidate_id:
+        query = query.where(Application.candidate_id == candidate_id)
+    if status:
+        query = query.where(Application.status == status.value)
+
+    query = query.order_by(Application.created_at.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
     return result.scalars().all()
 
 @router.get("/{application_id}", response_model=ApplicationResponse)
@@ -128,6 +156,8 @@ async def update_status(
     app.status = update.status.value
     if update.status.value == "SUBMITTED":
         app.submitted_at = datetime.utcnow()
+    if update.status.value == "QUEUED":
+        app.retry_count = 0
         
     if update.resume_id is not None:
         app.resume_id = update.resume_id
@@ -139,6 +169,8 @@ async def update_status(
         app.ats_score = update.ats_score
     if update.combined_score is not None:
         app.combined_score = update.combined_score
+    if update.failure_reason is not None:
+        app.failure_reason = update.failure_reason.value if hasattr(update.failure_reason, 'value') else update.failure_reason
 
     # Store screenshot_url and error_message in local DB if present in metadata
     meta = update.metadata or {}
@@ -161,6 +193,7 @@ async def update_status(
     # 5. Publish event for Module 5 WebSocket
     await publish_event("application.status_changed", {
         "application_id": str(application_id),
+        "candidate_id": str(app.candidate_id),
         "from_status": old_status,
         "to_status": update.status.value,
         "timestamp": datetime.utcnow().isoformat()

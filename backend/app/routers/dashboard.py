@@ -122,7 +122,9 @@ async def get_dashboard_candidate_filter(db: AsyncSession, current_user: User, c
             else:
                 return "AND a.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid", {}
         else:
-            return "AND a.candidate_id = ANY(:cids)", {"cids": owned_ids}
+            # Build a safe IN clause using UUID literals — avoids ANY(:list) serialization issues
+            uuid_literals = ", ".join(f"'{cid}'::uuid" for cid in owned_ids)
+            return f"AND a.candidate_id IN ({uuid_literals})", {}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────

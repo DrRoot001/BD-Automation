@@ -112,3 +112,8 @@ dice_test.log
 
 # Ignore node_modules globally
 node_modules/
+
+tsconfig.tsbuildinfo
+**/tsconfig.tsbuildinfo
+debug_*.py
+test_e2e_evidence.json

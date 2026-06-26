@@ -1,5 +1,5 @@
 import uuid
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
@@ -16,11 +16,46 @@ router = APIRouter(prefix="/api/resumes", tags=["resumes"])
 class ResumeUpdate(BaseModel):
     parsed_json: Optional[Dict[str, Any]] = None
     file_url: Optional[str] = None
+    embedding: Optional[List[float]] = None
+
+
+def _generate_resume_embedding_from_json(parsed: dict) -> Optional[List[float]]:
+    if not parsed:
+        return None
+        
+    summary = parsed.get("summary") or ""
+    skills = ", ".join(parsed.get("skills") or [])
+    keywords = ", ".join(parsed.get("keywords") or [])
+    
+    exp_texts = []
+    for exp in parsed.get("experience") or []:
+        title = exp.get("title") or ""
+        company = exp.get("company") or ""
+        desc = exp.get("description") or ""
+        techs = ", ".join(exp.get("technologies") or [])
+        exp_texts.append(f"{title} at {company}: {desc} (Tech: {techs})")
+    experience = "\n".join(exp_texts)
+    
+    text_to_embed = f"Summary: {summary}\nSkills: {skills}\nKeywords: {keywords}\nExperience:\n{experience}"
+    
+    try:
+        from module2.embedding.generator import generate_embedding
+        embeddings = generate_embedding([text_to_embed])
+        if embeddings and len(embeddings) > 0:
+            return embeddings[0]
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to auto-generate resume embedding: {e}")
+    return None
 
 
 @router.post("", response_model=ResumeResponse, status_code=201)
 async def create_resume(resume: ResumeCreate, db: AsyncSession = Depends(get_db)):
-    db_resume = Resume(**resume.model_dump())
+    db_resume = Resume(**resume.model_dump(exclude={"embedding"}))
+    if resume.embedding:
+        db_resume.embedding = resume.embedding
+    elif resume.parsed_json:
+        db_resume.embedding = _generate_resume_embedding_from_json(resume.parsed_json)
     db.add(db_resume)
     await db.commit()
     await db.refresh(db_resume)
@@ -39,6 +74,11 @@ async def update_resume(resume_id: str, update: ResumeUpdate, db: AsyncSession =
         raise HTTPException(status_code=404, detail="Resume not found")
     for field, value in update.model_dump(exclude_none=True).items():
         setattr(db_resume, field, value)
+    
+    # Auto-regenerate embedding if parsed_json is updated and no explicit embedding is passed
+    if "parsed_json" in update.model_dump(exclude_none=True) and update.embedding is None:
+        db_resume.embedding = _generate_resume_embedding_from_json(db_resume.parsed_json)
+        
     await db.commit()
     await db.refresh(db_resume)
     return db_resume
@@ -122,13 +162,13 @@ async def _create_supabase_signed_url(public_url: str, expires_in: int = 3600) -
     return public_url
 
 
-@router.get("/{candidate_id}")
+@router.get("/{candidate_id}", response_model=List[ResumeResponse])
 async def get_resumes(candidate_id: str, is_base: bool = None, db: AsyncSession = Depends(get_db)):
     try:
         candidate_uuid = uuid.UUID(candidate_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid candidate UUID")
-    query = select(Resume).where(Resume.candidate_id == candidate_uuid)
+    query = select(Resume).where(Resume.candidate_id == candidate_uuid).order_by(Resume.version.asc())
     if is_base is not None:
         query = query.where(Resume.is_base == is_base)
     result = await db.execute(query)

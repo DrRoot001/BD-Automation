@@ -1,3 +1,13 @@
+# ── Production additions (Phase 1 hardening) ─────────────────────────────────
+# Rate limiting
+slowapi>=0.1.9
+# Error tracking
+sentry-sdk[fastapi]>=2.0.0
+# Production ASGI server (multi-worker)
+gunicorn>=22.0.0
+# Prometheus metrics
+prometheus-fastapi-instrumentator>=7.0.0
+# ─────────────────────────────────────────────────────────────────────────────
 aiohappyeyeballs==2.4.4
 aiohttp==3.11.11
 aiosignal==1.3.2

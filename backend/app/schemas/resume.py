@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict
 from datetime import datetime
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from uuid import UUID
 
 class ResumeCreate(BaseModel):
@@ -10,6 +10,7 @@ class ResumeCreate(BaseModel):
     parsed_json: Optional[Dict[str, Any]] = None
     is_base: Optional[bool] = False
     tailored_for_job_id: Optional[UUID] = None
+    embedding: Optional[List[float]] = None
 
 class ResumeResponse(ResumeCreate):
     model_config = ConfigDict(from_attributes=True)

@@ -4,9 +4,10 @@ from pydantic import BaseModel
 from httpx import AsyncClient
 import httpx
 import asyncio
-import time
+import json
 from app.database import get_db
 from app.config import get_settings
+from app.redis_client import redis_client
 from sqlalchemy import select
 
 from app.models.user import User, UserRole
@@ -17,9 +18,9 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 settings = get_settings()
 
-# Connection pooling and token caching definitions
+# ── HTTP connection pool ────────────────────────────────────────────────────
+# Shared across requests — avoids opening a new connection per token validation.
 _http_client: AsyncClient | None = None
-_token_cache: dict[str, tuple[float, dict]] = {}  # token -> (expiry_timestamp, payload)
 
 def get_http_client() -> AsyncClient:
     global _http_client
@@ -27,6 +28,42 @@ def get_http_client() -> AsyncClient:
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
         _http_client = AsyncClient(limits=limits, timeout=10.0)
     return _http_client
+
+
+# ── Redis-backed token cache ─────────────────────────────────────────────────
+# Storing validated token payloads in Redis (TTL 120 s) so every uvicorn worker
+# and Celery process shares the same cache — no per-process in-memory dict.
+_TOKEN_CACHE_PREFIX = "auth:token:"
+_TOKEN_CACHE_TTL = 120  # seconds
+
+
+async def _get_cached_payload(token: str) -> dict | None:
+    """Return cached Supabase user payload, or None on miss/error."""
+    try:
+        raw = await redis_client.get(f"{_TOKEN_CACHE_PREFIX}{token[:40]}")
+        return json.loads(raw) if raw else None
+    except Exception:
+        return None
+
+
+async def _cache_payload(token: str, payload: dict) -> None:
+    """Store validated payload in Redis with a short TTL."""
+    try:
+        await redis_client.setex(
+            f"{_TOKEN_CACHE_PREFIX}{token[:40]}",
+            _TOKEN_CACHE_TTL,
+            json.dumps(payload),
+        )
+    except Exception:
+        pass  # Cache miss is acceptable — next request will re-validate
+
+
+async def _evict_cached_token(token: str) -> None:
+    """Remove a token from the cache (on 401 from Supabase)."""
+    try:
+        await redis_client.delete(f"{_TOKEN_CACHE_PREFIX}{token[:40]}")
+    except Exception:
+        pass
 
 
 class TokenResponse(BaseModel):
@@ -89,19 +126,22 @@ async def login(payload: LoginRequest):
 
 
 async def validate_supabase_token(authorization: str | None = Header(None)) -> dict:
+    """Validate a Supabase Bearer token.
+
+    1. Check Redis cache (TTL 120 s) — avoids a Supabase round-trip on every request.
+    2. On cache miss, call Supabase /auth/v1/user with retry logic.
+    3. On success, store payload in Redis for subsequent requests.
+    """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing auth token")
     token = authorization.split(" ", 1)[1]
 
-    # Check cache first
-    now = time.time()
-    if token in _token_cache:
-        expiry, cached_payload = _token_cache[token]
-        if now > expiry:
-            _token_cache.pop(token, None)
-        else:
-            return cached_payload
+    # ── Cache hit ────────────────────────────────────────────────────────────
+    cached = await _get_cached_payload(token)
+    if cached is not None:
+        return cached
 
+    # ── Cache miss — validate with Supabase ──────────────────────────────────
     client = get_http_client()
     max_retries = 2
     resp = None
@@ -116,26 +156,26 @@ async def validate_supabase_token(authorization: str | None = Header(None)) -> d
             )
             if resp.status_code == 200:
                 break
-        except (httpx.ConnectTimeout, httpx.ConnectError) as e:
+        except (httpx.ConnectTimeout, httpx.ConnectError):
             if attempt == max_retries - 1:
                 raise HTTPException(
                     status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-                    detail="Connection to authentication provider timed out. Please try again."
+                    detail="Connection to authentication provider timed out. Please try again.",
                 )
             await asyncio.sleep(0.5)
         except httpx.RequestError as e:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
-                detail=f"Failed to communicate with authentication provider: {str(e)}"
+                detail=f"Failed to communicate with authentication provider: {str(e)}",
             )
 
     if not resp or resp.status_code != 200:
-        _token_cache.pop(token, None)
+        await _evict_cached_token(token)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Supabase token")
 
     payload = resp.json()
-    # Cache verified token for 2 minutes (120 seconds)
-    _token_cache[token] = (now + 120.0, payload)
+    # Store in Redis — shared across all workers
+    await _cache_payload(token, payload)
     return payload
 
 
@@ -182,7 +222,7 @@ async def me(current_user: User = Depends(get_current_user)):
     return {
         "id": str(current_user.id),
         "email": current_user.email,
-        "role": current_user.role,
+        "role": current_user.role.value if hasattr(current_user.role, 'value') else current_user.role,
         "full_name": current_user.full_name,
     }
 
@@ -264,7 +304,7 @@ async def list_users(current_admin: User = Depends(require_admin), db: AsyncSess
             "id": str(u.id),
             "supabase_user_id": u.supabase_user_id,
             "email": u.email,
-            "role": u.role,
+            "role": u.role.value if hasattr(u.role, 'value') else u.role,
             "full_name": u.full_name,
             "created_at": u.created_at.isoformat() if u.created_at else None,
         }
@@ -359,7 +399,7 @@ async def update_user(
         "id": str(user.id),
         "email": user.email,
         "full_name": user.full_name,
-        "role": user.role,
+        "role": user.role.value if hasattr(user.role, 'value') else user.role,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 

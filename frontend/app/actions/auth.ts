@@ -45,6 +45,13 @@ export async function logoutAction() {
   return { success: true }
 }
 
+export async function getWebSocketConnectionDetailsAction() {
+  const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
+  const wsUrl = apiUrl.replace(/^http/, 'ws') + '/ws/updates'
+  const token = cookies().get('auth_token')?.value || null
+  return { wsUrl, token }
+}
+
 export async function getCurrentUserAction() {
   const token = cookies().get('auth_token')?.value
   if (!token) return null

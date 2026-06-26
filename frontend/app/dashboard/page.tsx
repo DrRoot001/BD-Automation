@@ -7,9 +7,13 @@ import { KPICard } from '@/components/dashboard/KPICard'
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
 import { PipelineKanban } from '@/components/dashboard/PipelineKanban'
 import { Send, Target, Award, Briefcase } from 'lucide-react'
+import { useWebSocket } from '@/hooks/useWebSocket'
 
 export default function DashboardPage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
+
+  // Connect WebSocket to get real-time cache invalidations
+  useWebSocket()
 
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({

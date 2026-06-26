@@ -8,10 +8,29 @@ export interface JobCardProps {
   onApply: (jobId: string) => void
   onDismiss: (jobId: string) => void
   onClick: (jobId: string) => void
-  isApplied?: boolean
+  applicationStatus?: string
 }
 
-export function JobCard({ job, onApply, onDismiss, onClick, isApplied }: JobCardProps) {
+const getStatusBadgeClasses = (status: string) => {
+  switch (status.toUpperCase()) {
+    case 'OFFER':
+      return 'bg-success/10 border-success/20 text-success'
+    case 'REJECTED':
+    case 'FAILED':
+      return 'bg-danger/10 border-danger/20 text-danger'
+    case 'SUBMITTED':
+    case 'CONFIRMED':
+      return 'bg-info/10 border-info/20 text-info'
+    case 'QUEUED':
+    case 'APPLICATION_STARTED':
+    case 'FORM_COMPLETED':
+      return 'bg-warning/10 border-warning/20 text-warning'
+    default:
+      return 'bg-bg-secondary border-bg-border text-text-muted'
+  }
+}
+
+export function JobCard({ job, onApply, onDismiss, onClick, applicationStatus }: JobCardProps) {
   const salaryString = formatSalary(job.salary_min, job.salary_max, job.pay_period)
 
   return (
@@ -66,9 +85,9 @@ export function JobCard({ job, onApply, onDismiss, onClick, isApplied }: JobCard
           >
             <XCircle className="w-4 h-4" />
           </button>
-          {isApplied ? (
-            <span className="flex items-center gap-1.5 px-3 py-1.5 bg-success/10 border border-success/20 text-success text-xs font-semibold rounded-md">
-              Applied
+          {applicationStatus ? (
+            <span className={`flex items-center gap-1.5 px-3 py-1.5 border text-xs font-semibold rounded-md uppercase tracking-wider ${getStatusBadgeClasses(applicationStatus)}`}>
+              Applied — {applicationStatus}
             </span>
           ) : (
             <button 

@@ -6,6 +6,8 @@ Run with: python test_adapters_quick.py
 import asyncio
 import sys
 from pathlib import Path
+import pytest
+pytestmark = pytest.mark.asyncio
 
 # Add module2 to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
