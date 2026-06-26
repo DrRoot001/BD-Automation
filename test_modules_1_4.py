@@ -185,8 +185,11 @@ async def get_or_parse_base_resume(candidate_id: str) -> ResumeData:
 
 async def load_candidate() -> Candidate:
     log_header("STEP 1: Fetching Candidate from Database")
+    # Candidate is env-overridable so the full pipeline can be tested against any
+    # onboarded candidate (defaults to Sabih). e.g. PIPELINE_CANDIDATE_EMAIL=...
+    _cand_email = os.getenv("PIPELINE_CANDIDATE_EMAIL", "sabih0364@gmail.com")
     async with AsyncSessionLocal() as session:
-        query = select(Candidate).where(Candidate.email == "sabih0364@gmail.com")
+        query = select(Candidate).where(Candidate.email == _cand_email)
         result = await session.execute(query)
         candidate = result.scalar_one_or_none()
         
@@ -240,26 +243,48 @@ async def is_application_live(url: str) -> bool:
 async def load_jobs(candidate_id: str) -> List[Job]:
     log_header("STEP 2: Fetching Scraped Jobs from Database")
     async with AsyncSessionLocal() as session:
-        from sqlalchemy import exists
-        
+        from sqlalchemy import exists, or_
+
         applied_stmt = select(Application.id).where(
             Application.candidate_id == candidate_id,
             Application.job_id == Job.id
         )
-        
-        # Fetch active jobs (greenhouse / lever — browser automation is built for them).
-        # Restrict to DIRECT ATS URLs (job-boards/boards.greenhouse.io, jobs.lever.co):
-        # company "careers-proxy" URLs (e.g. careers.datadoghq.com?gh_jid=...) pass an
-        # HTTP liveness check but their Greenhouse board is often dead (the "Page not
-        # found" only renders after JS), so they waste M3 tailoring + M4 on a dead form.
-        # Filter out jobs already applied to.
-        query = select(Job).where(
+
+        # Base eligibility: live greenhouse/lever ATS jobs the candidate hasn't
+        # applied to yet. Restrict to DIRECT ATS URLs (job-boards/boards.greenhouse.io,
+        # jobs.lever.co): company "careers-proxy" URLs pass an HTTP liveness check
+        # but their board is often dead, wasting M3 tailoring + M4 on a dead form.
+        # The ~exists(applied) clause is what makes EVERY run pick a NEW job —
+        # once applied (a record is created), a job can't resurface next run.
+        base_filters = [
             Job.source.in_(["greenhouse", "lever"]),
             (Job.source_url.ilike("%greenhouse.io%") | Job.source_url.ilike("%lever.co%")),
-            ~exists(applied_stmt)
-        ).order_by(Job.created_at.desc()).limit(20)
+            ~exists(applied_stmt),
+            # Skip internal diagnostic/test rows that otherwise dominate the
+            # newest-first window (e.g. "Diagnose Greenhouse Post <uuid>").
+            ~Job.title.ilike("%diagnose%"),
+        ]
+
+        # Prefer genuine software-engineering roles so M2 hands M3→M4 a job the
+        # candidate actually fits. Without this, the newest-20 window can be all
+        # non-engineering roles (e.g. "Applied AI Architect"), which the match
+        # gate then correctly abandons — so the pipeline never submits.
+        ENG_KEYWORDS = [
+            "software engineer", "software developer", "engineer", "developer",
+            "frontend", "front end", "front-end", "full stack", "fullstack",
+            "full-stack", "backend", "back end", "web developer",
+        ]
+        eng_filter = or_(*[Job.title.ilike(f"%{k}%") for k in ENG_KEYWORDS])
+
+        # Engineering roles first (newest unapplied — so each run rotates to a
+        # fresh one); fall back to the general pool only if none are left.
+        query = select(Job).where(*base_filters, eng_filter).order_by(Job.created_at.desc()).limit(25)
         result = await session.execute(query)
         jobs = result.scalars().all()
+        if not jobs:
+            query = select(Job).where(*base_filters).order_by(Job.created_at.desc()).limit(20)
+            result = await session.execute(query)
+            jobs = result.scalars().all()
         
         if not jobs:
             log_warn("No Greenhouse or Lever jobs found in database. Scraped jobs list is empty.")

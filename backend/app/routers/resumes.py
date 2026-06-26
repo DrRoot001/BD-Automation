@@ -1,6 +1,7 @@
 import uuid
 from typing import Any, Dict, Optional, List
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -55,7 +56,11 @@ async def create_resume(resume: ResumeCreate, db: AsyncSession = Depends(get_db)
     if resume.embedding:
         db_resume.embedding = resume.embedding
     elif resume.parsed_json:
-        db_resume.embedding = _generate_resume_embedding_from_json(resume.parsed_json)
+        # Run off the event loop: the embedding path can make a blocking
+        # network call (OpenAI) that would otherwise freeze the whole server.
+        db_resume.embedding = await run_in_threadpool(
+            _generate_resume_embedding_from_json, resume.parsed_json
+        )
     db.add(db_resume)
     await db.commit()
     await db.refresh(db_resume)
@@ -77,7 +82,11 @@ async def update_resume(resume_id: str, update: ResumeUpdate, db: AsyncSession =
     
     # Auto-regenerate embedding if parsed_json is updated and no explicit embedding is passed
     if "parsed_json" in update.model_dump(exclude_none=True) and update.embedding is None:
-        db_resume.embedding = _generate_resume_embedding_from_json(db_resume.parsed_json)
+        # Run off the event loop: the embedding path can make a blocking
+        # network call (OpenAI) that would otherwise freeze the whole server.
+        db_resume.embedding = await run_in_threadpool(
+            _generate_resume_embedding_from_json, db_resume.parsed_json
+        )
         
     await db.commit()
     await db.refresh(db_resume)

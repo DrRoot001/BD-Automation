@@ -155,7 +155,18 @@ async def _generate_with_openrouter(api_key, contents, response_schema, temperat
     return None
 
 async def _generate_with_gemini(api_key, contents, response_schema, temperature, max_retries, initial_delay, model, response_mime_type):
-    client = genai.Client(api_key=api_key)
+    # Bound every Gemini call. The genai SDK's generate_content is a blocking
+    # call with NO default timeout, so a single stalled response (which we hit
+    # mid-pipeline) blocks the whole run indefinitely. http_options.timeout is
+    # in milliseconds.
+    try:
+        gemini_timeout_ms = int(os.getenv("GEMINI_TIMEOUT_MS", "90000"))
+    except ValueError:
+        gemini_timeout_ms = 90000
+    client = genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(timeout=gemini_timeout_ms),
+    )
 
     config_args = {}
     if response_schema:
@@ -174,13 +185,19 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
         try:
             loop = asyncio.get_event_loop()
             start_time = time.time()
-            response = await loop.run_in_executor(
-                None,
-                lambda: client.models.generate_content(
-                    model=model,
-                    contents=contents,
-                    config=config
-                )
+            # asyncio backstop: even if the SDK's own timeout fails to fire,
+            # never let the event loop block longer than the configured budget
+            # (+ slack). On timeout this raises and the retry/fallback handles it.
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                        config=config
+                    )
+                ),
+                timeout=(gemini_timeout_ms / 1000.0) + 15.0,
             )
             latency_ms = (time.time() - start_time) * 1000
             
@@ -416,7 +433,17 @@ async def generate_content_with_retry(
     global _working_provider_key
     providers = []
     seen_keys = set()
-    
+
+    # Detect multimodal requests (a list containing non-text items, e.g. PIL images).
+    # Only the Gemini path forwards images to a vision model; the Groq/Anthropic/
+    # OpenRouter paths flatten contents with str(item), which silently destroys
+    # images and yields an empty/all-null parse. Route these to Gemini's vision model.
+    is_multimodal = isinstance(contents, list) and any(
+        not isinstance(c, str) and not hasattr(c, "text") for c in contents
+    )
+    if is_multimodal:
+        model = os.getenv("GEMINI_VISION_MODEL", model)
+
     candidates = [
         ("GROQ_API_KEY", os.getenv("GROQ_API_KEY")),
         ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
@@ -442,6 +469,16 @@ async def generate_content_with_retry(
             providers.append(("anthropic", key))
         else:
             providers.append(("gemini", key))
+
+    if is_multimodal:
+        vision_providers = [p for p in providers if p[0] == "gemini"]
+        if not vision_providers:
+            raise ValueError(
+                "Multimodal request (image-based PDF) requires a vision-capable "
+                "provider, but no Gemini API key (GEMINI_API_KEY) is configured. "
+                "The Groq/Anthropic/OpenRouter text paths cannot process images."
+            )
+        providers = vision_providers
 
     if not providers:
         raise ValueError("No AI API keys (GEMINI_API_KEY, ANTHROPIC_API_KEY, etc.) configured in environment variables.")
