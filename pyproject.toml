@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bd-automator-backend"
+version = "1.0.0"
+description = "BD Automator Backend APIs and Modules"
+authors = [
+    {name = "Sabih", email = "sabih@example.com"},
+]
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["module2*", "module3*", "module4*", "module5*"]
+exclude = ["tests*", "docs*"]

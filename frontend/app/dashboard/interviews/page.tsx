@@ -4,9 +4,13 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { InterviewList } from '@/components/dashboard/InterviewList'
+import { useWebSocket } from '@/hooks/useWebSocket'
 
 export default function InterviewsPage() {
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
+
+  // Connect WebSocket to get real-time cache invalidations
+  useWebSocket()
 
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({

@@ -10,15 +10,17 @@ VALID_TRANSITIONS: dict[str, list[str]] = {
     "QUEUED":              ["APPLICATION_STARTED", "FORM_COMPLETED", "FAILED"],
     "APPLICATION_STARTED": ["FORM_COMPLETED", "QUEUED", "ANALYZED", "FAILED", "BLOCKED"],
     "FORM_COMPLETED":      ["SUBMITTED", "QUEUED", "FAILED"],
-    "SUBMITTED":           ["CONFIRMED", "REJECTED"],
-    "CONFIRMED":           ["INTERVIEW_R1", "REJECTED"],
-    "INTERVIEW_R1":        ["INTERVIEW_R2", "REJECTED"],
-    "INTERVIEW_R2":        ["OFFER", "REJECTED"],
-    # Terminal states — no further transitions allowed
+    "SUBMITTED":           ["CONFIRMED", "REJECTED", "GHOSTED"],
+    "CONFIRMED":           ["INTERVIEW_R1", "REJECTED", "WITHDRAWN"],
+    "INTERVIEW_R1":        ["INTERVIEW_R2", "REJECTED", "WITHDRAWN", "OFFER"],
+    "INTERVIEW_R2":        ["OFFER", "REJECTED", "WITHDRAWN"],
+    # Terminal or pseudo-terminal states
     "FAILED":              [],
     "BLOCKED":             ["QUEUED"],   # Blocked apps can be retried
     "REJECTED":            [],
     "OFFER":               [],
+    "GHOSTED":             ["QUEUED"],   # Can retry if desired
+    "WITHDRAWN":           [],           # Terminal
 }
 
 class InvalidTransitionError(Exception):

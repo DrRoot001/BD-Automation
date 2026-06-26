@@ -1,5 +1,5 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form
+from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import List
@@ -8,27 +8,30 @@ from pydantic import BaseModel
 from app.database import get_db
 from app.models.candidate import Candidate
 from app.models.resume import Resume
+from app.models.application import Application
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
 from app.schemas.resume import ResumeResponse
 
 from app.routers.auth import get_current_user
 from app.models.user import User, UserRole
+from app.services.crypto import encrypt_token, decrypt_token
+from app.middleware.rate_limit import limiter
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
 @router.get("", response_model=List[CandidateResponse])
 async def list_candidates(
+    skip: int = 0,
+    limit: int = 100,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    if current_user.role == UserRole.admin:
-        result = await db.execute(select(Candidate).order_by(Candidate.created_at.desc()))
-    else:
-        result = await db.execute(
-            select(Candidate)
-            .where(Candidate.user_id == current_user.id)
-            .order_by(Candidate.created_at.desc())
-        )
+    query = select(Candidate).order_by(Candidate.created_at.desc())
+    if current_user.role != UserRole.admin:
+        query = query.where(Candidate.user_id == current_user.id)
+        
+    query = query.offset(skip).limit(limit)
+    result = await db.execute(query)
     return result.scalars().all()
 
 @router.post("", response_model=CandidateResponse, status_code=201)
@@ -37,19 +40,12 @@ async def create_candidate(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
-    # Check if candidate exists by email or name
-    from sqlalchemy import or_
-    conditions = []
+    # Check if candidate exists by email
     if candidate.email:
-        conditions.append(Candidate.email == candidate.email)
-    if candidate.name:
-        conditions.append(Candidate.name == candidate.name)
-        
-    if conditions:
-        result = await db.execute(select(Candidate).where(or_(*conditions)))
+        result = await db.execute(select(Candidate).where(Candidate.email == candidate.email))
         existing_candidate = result.scalars().first()
         if existing_candidate:
-            if not existing_candidate.user_id:
+            if existing_candidate.user_id != current_user.id:
                 existing_candidate.user_id = current_user.id
                 await db.commit()
                 await db.refresh(existing_candidate)
@@ -142,6 +138,14 @@ async def upload_candidate_resume(
     # Parse boolean
     is_base_bool = is_base.lower() == "true"
 
+    if is_base_bool:
+        from sqlalchemy import update
+        await db.execute(
+            update(Resume)
+            .where(Resume.candidate_id == candidate_uuid, Resume.is_base == True)
+            .values(is_base=False)
+        )
+
     # Find the maximum version for this candidate's resumes to set next version
     version_result = await db.execute(
         select(Resume.version)
@@ -165,11 +169,43 @@ async def upload_candidate_resume(
     await db.refresh(db_resume)
     return db_resume
 
+
+@router.get("/{candidate_id}/applications")
+async def list_candidate_applications(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db)
+):
+    """Internal endpoint: list all applications for a candidate (no auth required).
+    
+    Used by the dynamic_apply background task to check which jobs have already
+    been applied to, avoiding duplicate application submissions.
+    """
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+    result = await db.execute(
+        select(Application).where(Application.candidate_id == candidate_uuid)
+    )
+    applications = result.scalars().all()
+    return [
+        {
+            "id": str(a.id),
+            "candidate_id": str(a.candidate_id),
+            "job_id": str(a.job_id),
+            "status": a.status,
+            "created_at": a.created_at.isoformat() if a.created_at else None,
+        }
+        for a in applications
+    ]
+
+
 class ApplyRequest(BaseModel):
     max_apps: int = 10
 
 @router.post("/{candidate_id}/apply")
-async def trigger_apply(candidate_id: str, request: ApplyRequest, db: AsyncSession = Depends(get_db)):
+@limiter.limit("10/minute")
+async def trigger_apply(request: Request, candidate_id: str, request_body: ApplyRequest, db: AsyncSession = Depends(get_db)):
     try:
         candidate_uuid = uuid.UUID(candidate_id)
     except ValueError:
@@ -182,19 +218,25 @@ async def trigger_apply(candidate_id: str, request: ApplyRequest, db: AsyncSessi
         
     from app.tasks.dynamic_apply import _run
     import asyncio
-    
-    # Bypass Celery due to Upstash Redis limitations. Run directly in background.
-    def run_in_background():
-        try:
-            asyncio.run(_run(candidate_id, request.max_apps))
-        except Exception as e:
-            import logging
-            logging.error(f"Failed background apply: {e}")
+    import logging as _bg_logging
 
-    import threading
-    threading.Thread(target=run_in_background, daemon=True).start()
-    
-    return {"status": "queued", "candidate_id": candidate_id, "max_apps": request.max_apps}
+    _bg_log = _bg_logging.getLogger("dynamic_apply.trigger")
+
+    # Run directly in background on the same event loop (bypassing Celery due to Upstash Redis limitations).
+    # Since _run is async, running it in the same loop prevents "attached to a different loop" database pool errors.
+    async def run_in_background():
+        _bg_log.info(f"[BG] Auto-apply task started: candidate={candidate_id} max_apps={request_body.max_apps}")
+        try:
+            result = await _run(candidate_id, request_body.max_apps)
+            _bg_log.info(f"[BG] Auto-apply completed: {result}")
+        except Exception as e:
+            import traceback
+            _bg_log.error(f"[BG] Auto-apply FAILED for candidate={candidate_id}: {e}")
+            _bg_log.error(traceback.format_exc())
+
+    asyncio.create_task(run_in_background())
+
+    return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
 
 from app.config import get_settings
 import httpx
@@ -253,7 +295,8 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
     client_secret = settings.google_client_secret
     
     if not client_id or not client_secret:
-        db_candidate.google_refresh_token = f"mock_refresh_token_for_{candidate_id}"
+        # Store mock token (plaintext is fine for development mock)
+        db_candidate.google_refresh_token = encrypt_token(f"mock_refresh_token_for_{candidate_id}")
         try:
             await db.commit()
         except Exception as e:
@@ -286,7 +329,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
                 detail="No refresh token returned by Google. Try removing access and connecting again."
             )
             
-        db_candidate.google_refresh_token = refresh_token
+        db_candidate.google_refresh_token = encrypt_token(refresh_token)
         try:
             await db.commit()
         except Exception as e:
@@ -318,3 +361,41 @@ async def disconnect_google(candidate_id: str, db: AsyncSession = Depends(get_db
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
         
     return {"status": "success", "message": "Google OAuth disconnected successfully"}
+
+
+@router.post("/{candidate_id}/run-matching")
+@limiter.limit("5/minute")
+async def run_matching_endpoint(
+    request: Request,
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    from uuid import UUID
+    from app.services.matching import run_matching_for_candidate
+    
+    try:
+        cand_uuid = UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+        
+    candidate = await db.get(Candidate, cand_uuid)
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+        
+    try:
+        result = await run_matching_for_candidate(cand_uuid, db)
+        if "error" in result:
+            if result["error"] == "no_base_resume":
+                raise HTTPException(status_code=422, detail="Candidate has no base resume in database.")
+            elif result["error"] == "no_resume_embedding":
+                raise HTTPException(status_code=422, detail="Candidate base resume does not have vector embeddings. Please generate embeddings first.")
+            else:
+                raise HTTPException(status_code=400, detail=f"Matching run failed: {result['error']}")
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Internal error running matching pipeline: {str(e)}")

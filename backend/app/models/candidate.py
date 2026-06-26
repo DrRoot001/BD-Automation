@@ -17,6 +17,8 @@ class Candidate(Base):
     years_exp = Column(Integer)
     linkedin_url = Column(String(500))
     google_refresh_token = Column(Text, nullable=True)
+    automation_paused = Column(Integer, server_default="0", nullable=False) # 0 = false, 1 = true
+    max_daily_apps_override = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

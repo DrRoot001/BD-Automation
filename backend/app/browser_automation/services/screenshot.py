@@ -127,4 +127,11 @@ async def capture_and_store_screenshot(page: Page, application_id: str) -> str:
     bucket = os.getenv("SUPABASE_SCREENSHOT_BUCKET", "screenshots")
     remote_name = f"{application_id}/{timestamp}.png"
     public_url = await _upload_to_supabase(full_path, bucket, remote_name)
+    if public_url:
+        try:
+            if os.path.exists(full_path):
+                os.remove(full_path)
+                logger.info(f"[Screenshot] Cleaned up local screenshot file: {full_path}")
+        except Exception as e:
+            logger.warning(f"[Screenshot] Failed to delete local screenshot (non-fatal): {e}")
     return public_url or full_path

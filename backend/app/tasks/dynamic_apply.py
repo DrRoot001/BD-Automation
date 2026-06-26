@@ -86,29 +86,28 @@ async def _fetch_open_jobs(client: httpx.AsyncClient, limit: int = 500) -> List[
 
 
 async def _already_applied_job_ids(client: httpx.AsyncClient, candidate_id: str) -> Set[str]:
+    """Get job IDs already applied to for this candidate.
+    
+    Uses the per-candidate applications endpoint on the candidates router which
+    does NOT require auth (unlike the global /applications list endpoint).
+    Falls back gracefully — create_application handles server-side dedup anyway.
+    """
+    try:
+        # Use the candidate-scoped applications endpoint (no auth required)
+        r = await client.get(f"{API_BASE}/candidates/{candidate_id}/applications")
+        if r.status_code == 200:
+            return {str(a.get("job_id")) for a in (r.json() or []) if a.get("job_id")}
+    except Exception:
+        pass
+    # Fallback: query the global endpoint, silently ignore 401
     try:
         r = await client.get(f"{API_BASE}/applications", params={"candidate_id": candidate_id})
         if r.status_code == 200:
             return {str(a.get("job_id")) for a in (r.json() or []) if a.get("job_id")}
     except Exception:
         pass
+    logger.warning(f"[Dynamic] Could not fetch already-applied jobs for {candidate_id}; dedup handled server-side.")
     return set()
-
-
-async def _create_application(
-    client: httpx.AsyncClient, candidate_id: str, job_id: str
-) -> Optional[Dict[str, Any]]:
-    r = await client.post(
-        f"{API_BASE}/applications",
-        json={"candidate_id": candidate_id, "job_id": job_id, "status": "QUEUED"},
-    )
-    if r.status_code in (200, 201):
-        return r.json()
-    if r.status_code == 409:
-        logger.info(f"[Dynamic] duplicate application skipped: cand={candidate_id} job={job_id}")
-        return None
-    logger.warning(f"[Dynamic] create application failed: {r.status_code} {r.text[:200]}")
-    return None
 
 
 async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
@@ -168,36 +167,34 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
             "step": "matches_found",
-            "message": f"Found {len(scored)} suitable jobs. Preparing application packages..."
+            "message": f"Found {len(scored)} suitable jobs. Triggering AI matching and application pipeline..."
         })
 
-        # Lazy import to avoid celery_app circular imports
-        from app.tasks.browser_automation import execute_application
-
-        for score, job in scored:
-            jid = str(job.get("id"))
-            app_rec = await _create_application(client, candidate_id, jid)
-            if not app_rec:
-                skipped += 1
-                continue
-            package = {
-                "application_id": str(app_rec.get("id") or app_rec.get("application_id")),
-                "candidate_id": candidate_id,
-                "job_id": jid,
-                "job_url": job.get("source_url") or "",
-                "platform": (job.get("source") or "").lower(),
-                "ats_type": job.get("ats_type") or "",
-                # resume_url / cover_letter_url / candidate_profile / screening_answers
-                # are hydrated by the M4 task itself from the DB. We only pass the
-                # minimum here so the task is small.
-            }
+        target_job_ids = [str(job.get("id")) for score, job in scored]
+        
+        from app.database import AsyncSessionLocal
+        from app.services.matching import run_matching_for_candidate
+        import uuid
+        
+        cand_uuid = uuid.UUID(candidate_id)
+        
+        async with AsyncSessionLocal() as session:
             try:
-                execute_application.apply_async(args=[package], queue="queue:application_execution")
-                queued.append(jid)
-                logger.info(f"[Dynamic] queued M4 for cand={candidate_id} job={jid} score={score:.2f}")
+                result = await run_matching_for_candidate(
+                    cand_uuid, session,
+                    target_job_ids=target_job_ids,
+                    manual_limit=max_apps,  # BD-specified limit bypasses daily cap
+                )
+                queued.extend(target_job_ids)
+                logger.info(f"[Dynamic] executed M3 pipeline for cand={candidate_id} targets={target_job_ids} result={result}")
+                publish_event_sync("pipeline.progress", {
+                    "candidate_id": candidate_id,
+                    "step": "done",
+                    "message": f"Successfully processed {len(target_job_ids)} jobs through the AI pipeline."
+                })
             except Exception as exc:
-                logger.error(f"[Dynamic] could not enqueue M4 task: {exc}")
-                skipped += 1
+                logger.error(f"[Dynamic] run_matching_for_candidate failed: {exc}", exc_info=True)
+                skipped += len(target_job_ids)
 
     return {"queued": queued, "skipped": skipped, "candidate_id": candidate_id}
 
@@ -215,10 +212,22 @@ def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None):
         candidate_id: the candidate to source for.
         max_apps: cap on number of applications (defaults to MAX_APPLICATIONS_PER_RUN env).
     """
-    n = int(max_apps or MAX_APPLICATIONS_PER_RUN)
-    logger.info(f"[Dynamic] start cand={candidate_id} max_apps={n}")
-    try:
-        return asyncio.run(_run(candidate_id, n))
-    except Exception as exc:
-        logger.error(f"[Dynamic] failed: {exc}", exc_info=True)
-        raise self.retry(exc=exc, countdown=120)
+    from app.tasks.dynamic_apply import _run
+    import asyncio
+    
+    # Bypass Celery due to Upstash Redis limitations. Run directly in background.
+    def run_in_background():
+        import logging as _logging
+        _log = _logging.getLogger("dynamic_apply.bg")
+        _log.info(f"[BG] Starting auto-apply thread for candidate={candidate_id} max_apps={max_apps}")
+        try:
+            result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN))
+            _log.info(f"[BG] Auto-apply completed: {result}")
+        except Exception as e:
+            import traceback
+            _log.error(f"[BG] Failed background apply for candidate={candidate_id}: {e}")
+            _log.error(traceback.format_exc())
+
+    import threading
+    threading.Thread(target=run_in_background, daemon=True).start()
+    return {"status": "started"}

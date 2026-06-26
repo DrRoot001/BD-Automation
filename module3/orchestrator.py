@@ -53,7 +53,7 @@ async def orchestrate_application_package(
         base_resume_id = None
         
         if resp.status_code == 200 and resp.json():
-            resumes = resp.json()
+            resumes = sorted(resp.json(), key=lambda r: r.get("version", 0))
             # Find the latest base resume
             base_resume = resumes[-1]
             base_resume_id = base_resume["id"]
@@ -367,7 +367,7 @@ async def prepare_package_for_live_application(
         base_resume_id = None
         
         if resp.status_code == 200 and resp.json():
-            resumes = resp.json()
+            resumes = sorted(resp.json(), key=lambda r: r.get("version", 0))
             # Find the latest base resume
             base_resume = resumes[-1]
             base_resume_id = base_resume["id"]
@@ -504,75 +504,65 @@ async def prepare_package_for_live_application(
         }
         await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
-        # 6. Check if tailored resume already exists for this job
+        # Always tailor a new resume version from the base resume
         tailored_resume_id = None
         resume_pdf_url = None
         
+        # Calculate next version
+        next_version = 2
         all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")
         if all_resumes_resp.status_code == 200:
             existing_resumes = all_resumes_resp.json()
-            for r in existing_resumes:
-                if r.get("tailored_for_job_id") == job_id:
-                    tailored_resume_id = r["id"]
-                    resume_pdf_url = r["file_url"]
-                    print(f"[ORCHESTRATOR] Found existing tailored resume for job {job_id} (ID: {tailored_resume_id})")
-                    break
-
-        if not resume_pdf_url:
-            # Calculate next version
-            next_version = 2
-            if all_resumes_resp.status_code == 200:
-                existing_resumes = all_resumes_resp.json()
-                if existing_resumes:
-                    versions = [r.get("version", 0) for r in existing_resumes if r.get("version") is not None]
-                    if versions:
-                        next_version = max(versions) + 1
-            print(f"[ORCHESTRATOR] Tailoring new resume version: {next_version}")
-            
-            # Tailor the resume
-            tailored_resume = await tailor_resume(resume_data, job, candidate, version=next_version)
-            
-            # Upload Tailored Resume to the CORRECT Bucket
-            remote_resume_url = await upload_file_to_supabase(
-                tailored_resume.pdf_url, 
-                "updated_resume",  # CHANGED from "resume"
-                f"{candidate_id}_{job_id}_v{next_version}.pdf"
-            )
-            resume_pdf_url = remote_resume_url
-            tailored_resume.pdf_url = remote_resume_url
-            
-            # Upload Tailored Resume to DB
-            tailored_payload = {
-                "candidate_id": candidate_id,
-                "version": tailored_resume.version,
-                "file_url": tailored_resume.pdf_url,
-                "parsed_json": {
-                    "summary": tailored_resume.modified_summary,
-                    "skills": tailored_resume.modified_skills,
-                    "keywords": tailored_resume.modified_keywords,
-                    "experience": [exp.model_dump() for exp in tailored_resume.experience],
-                    "education": [edu.model_dump() for edu in tailored_resume.education],
-                    "certifications": resume_data.sections.certifications
-                },
-                "is_base": False,
-                "tailored_for_job_id": job_id
+            if existing_resumes:
+                versions = [r.get("version", 0) for r in existing_resumes if r.get("version") is not None]
+                if versions:
+                    next_version = max(versions) + 1
+        print(f"[ORCHESTRATOR] Tailoring new resume version: {next_version}")
+        
+        # Tailor the resume
+        tailored_resume = await tailor_resume(resume_data, job, candidate, version=next_version)
+        
+        # Upload Tailored Resume to the CORRECT Bucket
+        remote_resume_url = await upload_file_to_supabase(
+            tailored_resume.pdf_url, 
+            "updated_resume",  # CHANGED from "resume"
+            f"{candidate_id}_{job_id}_v{next_version}.pdf"
+        )
+        resume_pdf_url = remote_resume_url
+        tailored_resume.pdf_url = remote_resume_url
+        
+        # Upload Tailored Resume to DB
+        tailored_payload = {
+            "candidate_id": candidate_id,
+            "version": tailored_resume.version,
+            "file_url": tailored_resume.pdf_url,
+            "parsed_json": {
+                "summary": tailored_resume.modified_summary,
+                "skills": tailored_resume.modified_skills,
+                "keywords": tailored_resume.modified_keywords,
+                "experience": [exp.model_dump() for exp in tailored_resume.experience],
+                "education": [edu.model_dump() for edu in tailored_resume.education],
+                "certifications": resume_data.sections.certifications
+            },
+            "is_base": False,
+            "tailored_for_job_id": job_id
+        }
+        resp = await client.post("/api/resumes", json=tailored_payload)
+        if resp.status_code != 201:
+            raise ValueError(f"Failed to save tailored resume: {resp.text}")
+        tailored_db_resume = resp.json()
+        tailored_resume_id = tailored_db_resume["id"]
+        
+        # Update application status to RESUME_UPDATED
+        update_payload = {
+            "status": "RESUME_UPDATED",
+            "resume_id": tailored_resume_id,
+            "metadata": {
+                "ats_score_before": tailored_resume.ats_score_before,
+                "ats_score_after": tailored_resume.ats_score_after
             }
-            resp = await client.post("/api/resumes", json=tailored_payload)
-            if resp.status_code != 201:
-                raise ValueError(f"Failed to save tailored resume: {resp.text}")
-            tailored_db_resume = resp.json()
-            tailored_resume_id = tailored_db_resume["id"]
-            
-            # Update application status to RESUME_UPDATED
-            update_payload = {
-                "status": "RESUME_UPDATED",
-                "resume_id": tailored_resume_id,
-                "metadata": {
-                    "ats_score_before": tailored_resume.ats_score_before,
-                    "ats_score_after": tailored_resume.ats_score_after
-                }
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        }
+        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         # 7. Generate Cover Letter only if needs_cover_letter is True
         cover_letter_url = None

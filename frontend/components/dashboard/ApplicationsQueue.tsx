@@ -83,9 +83,12 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
       setPipelineState({ step, message, ts: new Date() })
       
       // If it's a terminal step for the background matcher, hide the status after a delay
-      if (step === 'matches_found' || step === 'no_matches') {
-        setTimeout(() => setPipelineState(null), 5000)
+      if (step === 'matches_found' || step === 'no_matches' || step === 'done') {
+        if (step !== 'matches_found') {
+          setTimeout(() => setPipelineState(null), 5000)
+        }
         queryClient.invalidateQueries({ queryKey: ['applications'] })
+        queryClient.invalidateQueries({ queryKey: ['kpis'] })
       }
     }
   })
@@ -176,7 +179,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                   </td>
 
                   <td className="px-3 py-3">
-                    <StatusBadge status={isCompleted(app.status) ? app.status : 'FAILED'} />
+                    <StatusBadge status={app.status} />
                   </td>
 
                   {/* Resume link */}

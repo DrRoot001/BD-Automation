@@ -48,7 +48,7 @@ SUPABASE_KEY = (
     or get_env_var_from_file(_env_fallback, "NEXT_PUBLIC_SUPABASE_ANON_KEY")
 )
 
-async def upload_file_to_supabase(file_path: str, bucket_name: str, file_name: str) -> str:
+async def upload_file_to_supabase(file_path: str, bucket_name: str, file_name: str, clean_local: bool = True) -> str:
     """
     Uploads a file to Supabase storage and returns the public URL.
     """
@@ -74,10 +74,24 @@ async def upload_file_to_supabase(file_path: str, bucket_name: str, file_name: s
             if resp.status_code in (200, 201):
                 public_url = f"{SUPABASE_URL}/storage/v1/object/public/{bucket_name}/{file_name}"
                 print(f"[STORAGE] Successfully uploaded to {public_url}")
+                if clean_local:
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            print(f"[STORAGE] Cleaned up local file: {file_path}")
+                    except Exception as cleanup_err:
+                        print(f"[STORAGE] Non-fatal error cleaning up local file {file_path}: {cleanup_err}")
                 return public_url
             elif resp.status_code == 400 and "Duplicate" in resp.text:
                 # If it already exists, just return the public URL
                 public_url = f"{SUPABASE_URL}/storage/v1/object/public/{bucket_name}/{file_name}"
+                if clean_local:
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            print(f"[STORAGE] Cleaned up local file (duplicate): {file_path}")
+                    except Exception as cleanup_err:
+                        print(f"[STORAGE] Non-fatal error cleaning up local file {file_path}: {cleanup_err}")
                 return public_url
             else:
                 print(f"[STORAGE] Failed to upload to Supabase ({resp.status_code}): {resp.text}")

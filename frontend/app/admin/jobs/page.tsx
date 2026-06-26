@@ -9,6 +9,7 @@ export default function JobManagementPage() {
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
+  const [timeFilter, setTimeFilter] = useState('')
   const [page, setPage] = useState(0)
   const limit = 50
   
@@ -21,7 +22,20 @@ export default function JobManagementPage() {
                           job.title.toLowerCase().includes(search.toLowerCase());
     const matchesSource = sourceFilter ? job.source === sourceFilter : true;
     const matchesType = typeFilter ? job.job_type === typeFilter : true;
-    return matchesSearch && matchesSource && matchesType;
+    
+    let matchesTime = true;
+    if (timeFilter) {
+      const jobDate = new Date(job.created_at || job.posted_at || Date.now());
+      const now = new Date();
+      const diffHours = (now.getTime() - jobDate.getTime()) / (1000 * 60 * 60);
+      
+      if (timeFilter === '24h') matchesTime = diffHours <= 24;
+      else if (timeFilter === '3d') matchesTime = diffHours <= 24 * 3;
+      else if (timeFilter === '7d') matchesTime = diffHours <= 24 * 7;
+      else if (timeFilter === '30d') matchesTime = diffHours <= 24 * 30;
+    }
+    
+    return matchesSearch && matchesSource && matchesType && matchesTime;
   })
 
   // Format salary
@@ -80,6 +94,18 @@ export default function JobManagementPage() {
             <option value="contract">Contract</option>
             <option value="part-time">Part-time</option>
           </select>
+          
+          <select 
+            value={timeFilter}
+            onChange={(e) => setTimeFilter(e.target.value)}
+            className="px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-sm text-text-primary focus:outline-none focus:border-accent"
+          >
+            <option value="">Any Time</option>
+            <option value="24h">Last 24 Hours</option>
+            <option value="3d">Last 3 Days</option>
+            <option value="7d">Last 7 Days</option>
+            <option value="30d">Last 30 Days</option>
+          </select>
         </div>
       </div>
 
@@ -131,7 +157,7 @@ export default function JobManagementPage() {
                         <Briefcase className="w-12 h-12 text-bg-border mb-4" />
                         <h3 className="text-lg font-medium text-text-primary mb-1">No jobs found</h3>
                         <p className="text-text-muted text-sm max-w-sm mb-4">
-                          {search || sourceFilter || typeFilter ? "No jobs match your current filters." : "No jobs have been scraped or imported yet."}
+                          {search || sourceFilter || typeFilter || timeFilter ? "No jobs match your current filters." : "No jobs have been scraped or imported yet."}
                         </p>
                       </div>
                     </td>

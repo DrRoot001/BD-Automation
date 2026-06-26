@@ -18,44 +18,51 @@ def _run(coro):
         loop.close()
 
 
-@celery_app.task(name="task:scan_candidate_inbox", bind=True, max_retries=2)
-def scan_candidate_inbox(self, candidate_id: str = None):
+@celery_app.task(name="task:scan_single_inbox", bind=True, max_retries=2)
+def scan_single_inbox(self, candidate_id: str):
     """
-    Poll Gmail for new emails for one (or all) candidates.
-    Triggered every 15 minutes by Celery Beat.
+    Isolated Celery task to scan a single candidate's inbox.
     """
-    async def _scan(cid: str):
+    async def _scan():
         from app.database import AsyncSessionLocal
         from module5.scanner import scan_candidate_inbox as _scan_inbox
         async with AsyncSessionLocal() as db:
-            return await _scan_inbox(cid, db)
+            return await _scan_inbox(candidate_id, db)
 
-    async def _scan_all():
+    try:
+        count = _run(_scan())
+        logger.info("[EmailScan] Processed %d emails for candidate %s", count, candidate_id)
+        return {"processed": count, "candidate_id": candidate_id}
+    except Exception as exc:
+        logger.error("[EmailScan] Failed for candidate %s: %s", candidate_id, exc)
+        raise self.retry(exc=exc, countdown=60)
+
+
+@celery_app.task(name="task:scan_candidate_inbox", bind=True)
+def scan_candidate_inbox(self):
+    """
+    Poll Gmail for new emails. Dispatches one task per connected candidate.
+    Triggered every 15 minutes by Celery Beat.
+    """
+    async def _fetch_connected_candidates():
         from app.database import AsyncSessionLocal
         from sqlalchemy import text
         async with AsyncSessionLocal() as db:
             result = await db.execute(
                 text("SELECT id FROM candidates WHERE google_refresh_token IS NOT NULL")
             )
-            candidate_ids = [str(r.id) for r in result.fetchall()]
-        total = 0
-        for cid in candidate_ids:
-            try:
-                count = await _scan(cid)
-                total += count
-            except Exception as e:
-                logger.error(f"[EmailScan] Failed for candidate {cid}: {e}")
-        return total
+            return [str(row[0]) for row in result.fetchall()]
 
     try:
-        if candidate_id:
-            count = _run(_scan(candidate_id))
-        else:
-            count = _run(_scan_all())
-        logger.info(f"[EmailScan] Processed {count} emails")
-        return {"processed": count}
+        candidate_ids = _run(_fetch_connected_candidates())
+        logger.info("[EmailScan] Dispatching email scan for %d candidates", len(candidate_ids))
+        
+        for cid in candidate_ids:
+            scan_single_inbox.delay(cid)
+            
+        return {"status": "dispatched", "candidate_count": len(candidate_ids)}
     except Exception as exc:
-        logger.error(f"[EmailScan] Task failed: {exc}")
+        logger.error(f"[EmailScan] Dispatch failed: {exc}")
         raise self.retry(exc=exc, countdown=60)
 
 

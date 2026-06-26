@@ -9,7 +9,8 @@ logger = logging.getLogger(__name__)
 _settings = get_settings()
 kwargs = {"decode_responses": True}
 if "rediss://" in _settings.redis_url:
-    kwargs["ssl_cert_reqs"] = "none"
+    import ssl as _ssl
+    kwargs["ssl_cert_reqs"] = _ssl.CERT_NONE
 
 try:
     sync_redis_client = redis.from_url(_settings.redis_url, **kwargs)

@@ -21,7 +21,7 @@ const ADMIN_NAV_ITEMS: NavItem[] = [
   { id: 'admin-overview',   label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
   { id: 'admin-users',      label: 'User Management',  path: '/admin/users',        icon: Users },
   { id: 'admin-jobs',       label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
-  { id: 'admin-apps',       label: 'All Applications', path: '/admin/applications', icon: FileText },
+  { id: 'admin-apps',       label: 'All Applications', path: '/applications',       icon: FileText },
   { id: 'admin-candidates', label: 'Candidates',       path: '/candidates',         icon: Users },
 ]
 

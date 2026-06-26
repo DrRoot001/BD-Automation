@@ -5,12 +5,16 @@ services:
     build: ./backend
     ports:
       - "8000:8000"
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/bd_automator
       - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
     depends_on:
       - db
       - redis
+    restart: always
     volumes:
       - ./backend:/app
 
@@ -22,6 +26,7 @@ services:
       - POSTGRES_DB=bd_automator
     ports:
       - "5432:5432"
+    restart: always
     volumes:
       - postgres_data:/var/lib/postgresql/data
 
@@ -29,30 +34,39 @@ services:
     image: redis:7
     ports:
       - "6379:6379"
+    restart: always
     volumes:
       - redis_data:/data
 
   celery_worker:
     build: ./backend
-    command: celery -A app.celery_app worker --loglevel=info
+    command: celery -A app.celery_app worker --concurrency=1 --loglevel=info
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/bd_automator
       - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
     depends_on:
       - db
       - redis
+    restart: always
     volumes:
       - ./backend:/app
 
   celery_beat:
     build: ./backend
     command: celery -A app.celery_app beat --loglevel=info
+    env_file:
+      - ./backend/.env
     environment:
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/bd_automator
       - REDIS_URL=redis://redis:6379/0
+      - ENVIRONMENT=production
     depends_on:
       - db
       - redis
+    restart: always
     volumes:
       - ./backend:/app
 
@@ -65,6 +79,7 @@ services:
       - API_URL=http://api:8000
     depends_on:
       - api
+    restart: always
     volumes:
       - ./frontend:/app
       - /app/node_modules

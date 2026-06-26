@@ -1,27 +1,59 @@
+"""BD Automator FastAPI application factory."""
 import sys
+import uuid
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
-
-# Add project root (parent of backend/) to sys.path so module3, module4, etc. are importable
-_project_root = str(Path(__file__).resolve().parent.parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from slowapi import _rate_limit_exceeded_handler
+import structlog
+from app.logging_config import configure_logging
+
 from app.config import get_settings
 from app.routers import candidates, resumes, jobs, applications, analytics, auth, companies
+from app.middleware.rate_limit import limiter
+
+# Configure global structured logging
+configure_logging()
 
 settings = get_settings()
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start / stop background services around the app lifecycle."""
+    # Initialise Sentry early so any startup errors are captured
+    _init_sentry()
+
     from app.routers.websocket import start_redis_subscriber, stop_redis_subscriber
     await start_redis_subscriber()
     yield
     await stop_redis_subscriber()
+
+
+def _init_sentry() -> None:
+    """Wire Sentry SDK if DSN is configured."""
+    dsn = settings.sentry_dsn
+    if not dsn:
+        return
+    try:
+        import sentry_sdk
+        from sentry_sdk.integrations.fastapi import FastApiIntegration
+        from sentry_sdk.integrations.starlette import StarletteIntegration
+        sentry_sdk.init(
+            dsn=dsn,
+            integrations=[StarletteIntegration(), FastApiIntegration()],
+            traces_sample_rate=0.1,
+            environment=settings.environment,
+            send_default_pii=False,
+        )
+        logger.info("[App] Sentry initialised (environment=%s)", settings.environment)
+    except ImportError:
+        logger.warning("[App] sentry-sdk not installed — error tracking disabled.")
 
 
 def create_app() -> FastAPI:
@@ -30,17 +62,39 @@ def create_app() -> FastAPI:
         description="FastAPI Central Orchestrator for BD Automator Agent",
         version="1.0.0",
         lifespan=lifespan,
+        # Disable docs in production
+        docs_url="/docs" if settings.environment != "production" else None,
+        redoc_url="/redoc" if settings.environment != "production" else None,
     )
 
+    # ── Rate limiter ─────────────────────────────────────────────────────────
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+    # ── CORS ─────────────────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000"],
+        allow_origins=settings.allowed_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
-    # Register all routers from Module 1
+    # ── Request correlation ID middleware ─────────────────────────────────────
+    @app.middleware("http")
+    async def add_correlation_id(request: Request, call_next):
+        """Attach a unique X-Request-ID to every request/response for traceability."""
+        rid = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+        
+        # Bind the request ID to all structlog logs for this request context
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=rid)
+        
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = rid
+        return response
+
+    # ── Module 1 routers ──────────────────────────────────────────────────────
     app.include_router(auth.router)
     app.include_router(candidates.router)
     app.include_router(resumes.router)
@@ -49,32 +103,80 @@ def create_app() -> FastAPI:
     app.include_router(analytics.router)
     app.include_router(companies.router)
 
-    # Module 2 integration
+    # ── Module 2 routes (optional — graceful if unavailable) ──────────────────
     try:
         from app.routers.module2_routes import router as module2_router
         app.include_router(module2_router)
     except Exception:
-        # ignore if module2 isn't available during imports
         pass
 
-    # Module 5 — Dashboard API + WebSocket
+    # ── Module 5 — Dashboard API + WebSocket ──────────────────────────────────
     from app.routers.dashboard import router as dashboard_router
     from app.routers.websocket import router as ws_router
     app.include_router(dashboard_router)
     app.include_router(ws_router)
 
-    @app.get("/api/health")
-    def health_check():
-        return {"status": "ok", "app_name": "BD Automator API", "module": "data_orchestration"}
+    # ── Health endpoints ──────────────────────────────────────────────────────
+    @app.get("/api/health", tags=["health"])
+    async def health_check():
+        """Basic liveness probe — always returns 200 if the process is alive."""
+        return {
+            "status": "ok",
+            "app_name": "BD Automator API",
+            "version": "1.0.0",
+            "environment": settings.environment,
+        }
 
+    @app.get("/api/health/ready", tags=["health"])
+    async def readiness_check():
+        """Readiness probe — verifies DB and Redis are reachable."""
+        from sqlalchemy import text
+        from app.database import AsyncSessionLocal
+        from app.redis_client import redis_client
+
+        checks: dict = {}
+        overall = "ok"
+
+        # Database
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("SELECT 1"))
+            checks["database"] = "ok"
+        except Exception as exc:
+            checks["database"] = f"error: {exc}"
+            overall = "degraded"
+
+        # Redis
+        try:
+            await redis_client.ping()
+            checks["redis"] = "ok"
+        except Exception as exc:
+            checks["redis"] = f"error: {exc}"
+            overall = "degraded"
+
+        status_code = 200 if overall == "ok" else 503
+        return JSONResponse(
+            content={"status": overall, "checks": checks},
+            status_code=status_code,
+        )
+
+    # ── Global error handler ──────────────────────────────────────────────────
     @app.exception_handler(Exception)
-    async def global_exception_handler(request, exc):
-        import traceback, sys
-        print(f"GLOBAL ERROR: {type(exc)} {exc}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
-        from fastapi.responses import JSONResponse
-        return JSONResponse(status_code=500, content={"detail": "Internal Server Error", "msg": str(exc)})
+    async def global_exception_handler(request: Request, exc: Exception):
+        import traceback
+        logger.error(
+            "Unhandled exception: %s %s — %s",
+            request.method,
+            request.url.path,
+            exc,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal Server Error", "msg": str(exc)},
+        )
 
     return app
+
 
 app = create_app()

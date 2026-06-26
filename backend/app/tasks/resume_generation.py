@@ -11,8 +11,7 @@ def prepare_application_package(candidate_id: str, job_id: str):
     print(f"[CELERY] task:prepare_application_package started for candidate={candidate_id}, job={job_id}")
     
     # Run the async orchestrator synchronously within the Celery worker
-    loop = asyncio.get_event_loop()
-    result = loop.run_until_complete(
+    result = asyncio.run(
         orchestrate_application_package(
             candidate_id=str(candidate_id),
             job_id=str(job_id)
