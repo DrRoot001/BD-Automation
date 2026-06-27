@@ -7,7 +7,7 @@ import { useJobs } from '@/hooks/useJobs'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { JobCard } from '@/components/dashboard/JobCard'
 import { Skeleton } from '@/components/shared/Skeleton'
-import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 
 const PAGE_SIZE = 12
@@ -19,33 +19,50 @@ export default function JobsFeedPage() {
   // Connect WebSocket to get real-time cache invalidations
   useWebSocket()
 
+  // Reset to page 0 when candidate changes
+  useEffect(() => {
+    setPage(0)
+  }, [selectedCandidateId])
+
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({
     queryKey: ['candidates'],
     queryFn: () => api.getCandidates(),
   })
 
-  // Fetch Jobs (global list)
+  // Fetch Jobs (global list or sorted by candidate embedding similarity)
   const { 
     data: jobs, 
     isLoading: jobsLoading, 
     isError: jobsError, 
     refetch: refetchJobs,
     isFetching
-  } = useJobs({ skip: page * PAGE_SIZE, limit: PAGE_SIZE })
+  } = useJobs({ skip: page * PAGE_SIZE, limit: PAGE_SIZE, candidateId: selectedCandidateId || undefined })
 
   // Fetch selected candidate's applications to cross-reference
   const { data: applications } = useQuery({
     queryKey: ['applications', 'jobs-cross-ref', selectedCandidateId],
-    queryFn: () => api.getApplications({ candidateId: selectedCandidateId }),
+    queryFn: () => api.getApplications({ candidateId: selectedCandidateId, limit: 500 }),
     enabled: !!selectedCandidateId,
     staleTime: 60 * 1000,
   })
 
-  // Cross-reference map: Job ID -> Status
+  // Build a set of job IDs this candidate has already applied to
+  const appliedJobIds = new Set<string>(
+    applications?.map(app => app.job_id) ?? []
+  )
+
+  // Cross-reference map: Job ID -> Status (for badge display)
   const appliedJobsMap = new Map<string, string>(
     applications?.map(app => [app.job_id, app.status]) ?? []
   )
+
+  // When a candidate is selected, hide jobs they've already applied to
+  const visibleJobs = selectedCandidateId
+    ? (jobs ?? []).filter(job => !appliedJobIds.has(job.id))
+    : (jobs ?? [])
+
+  const hiddenCount = (jobs?.length ?? 0) - visibleJobs.length
 
   const handleApply = (jobId: string) => {
     console.log("Apply triggered for job:", jobId)
@@ -86,7 +103,21 @@ export default function JobsFeedPage() {
         <div className="flex flex-col sm:flex-row sm:items-center gap-4">
           <div>
             <h1 className="text-2xl font-bold text-text-primary tracking-tight">Jobs Feed</h1>
-            <p className="text-sm text-text-secondary mt-1">Discover and apply to new opportunities.</p>
+            <p className="text-sm text-text-secondary mt-1">
+              {selectedCandidateId ? (
+                <span className="flex items-center gap-1.5">
+                  <Eye className="w-3.5 h-3.5" />
+                  {visibleJobs.length} jobs visible
+                  {hiddenCount > 0 && (
+                    <span className="text-text-muted">
+                      · {hiddenCount} already applied hidden
+                    </span>
+                  )}
+                </span>
+              ) : (
+                'Discover and apply to new opportunities.'
+              )}
+            </p>
           </div>
 
           {/* Candidate selector */}
@@ -110,7 +141,12 @@ export default function JobsFeedPage() {
         
         {/* Pagination Controls (Top) */}
         <div className="flex items-center gap-3">
-          <span className="text-sm text-text-muted">Page {page + 1}</span>
+          <span className="text-sm text-text-muted">
+            Page {page + 1}
+            {selectedCandidateId && visibleJobs.length > 0 && (
+              <span className="text-text-muted/60"> · {visibleJobs.length} jobs</span>
+            )}
+          </span>
           <div className="flex bg-bg-secondary border border-bg-border rounded-md overflow-hidden">
             <button 
               onClick={() => setPage(p => Math.max(0, p - 1))}
@@ -138,19 +174,34 @@ export default function JobsFeedPage() {
             <Skeleton key={i} className="h-48 w-full rounded-xl" />
           ))}
         </div>
-      ) : !jobs || jobs.length === 0 ? (
+      ) : !visibleJobs || visibleJobs.length === 0 ? (
         <div className="flex flex-col items-center justify-center min-h-[400px] bg-bg-secondary rounded-xl border border-bg-border border-dashed">
           <div className="w-16 h-16 bg-bg-hover rounded-full flex items-center justify-center mb-4 border border-bg-border">
             <Briefcase className="w-8 h-8 text-text-muted" />
           </div>
-          <h2 className="text-lg font-semibold text-text-primary">No jobs found</h2>
+          <h2 className="text-lg font-semibold text-text-primary">
+            {selectedCandidateId && hiddenCount > 0 ? 'All jobs applied' : 'No jobs found'}
+          </h2>
           <p className="text-text-muted text-sm mt-1 max-w-sm text-center">
-            {page === 0 ? "Check back later for new opportunities from the discovery pipeline." : "You've reached the end of the list."}
+            {selectedCandidateId && hiddenCount > 0
+              ? `This candidate has already applied to all ${hiddenCount} jobs on this page. Try the next page.`
+              : page === 0
+              ? 'Check back later for new opportunities from the discovery pipeline.'
+              : "You've reached the end of the list."}
           </p>
+          {selectedCandidateId && hiddenCount > 0 && hasNext && (
+            <button
+              onClick={() => setPage(p => p + 1)}
+              disabled={isFetching}
+              className="mt-4 flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Next Page <ChevronRight className="w-4 h-4" />
+            </button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {jobs.map((job) => {
+          {visibleJobs.map((job) => {
             const applicationStatus = selectedCandidateId ? appliedJobsMap.get(job.id) : undefined
             return (
               <JobCard 

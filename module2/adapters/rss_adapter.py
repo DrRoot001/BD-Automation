@@ -46,9 +46,10 @@ class RssAdapter(BaseSourceAdapter):
         location_filter = filters.get("location", "").lower()
         remote_only = filters.get("remote_only", True)
         
+        request_headers = filters.get("request_headers")
         loop = asyncio.get_event_loop()
         try:
-            content = await loop.run_in_executor(None, self._fetch_feed, rss_url)
+            content = await loop.run_in_executor(None, self._fetch_feed, rss_url, request_headers)
         except Exception as e:
             print(f"Error fetching RSS feed {rss_url}: {e}")
             return []
@@ -104,7 +105,7 @@ class RssAdapter(BaseSourceAdapter):
         )
     
     @staticmethod
-    def _fetch_feed(url: str) -> bytes:
+    def _fetch_feed(url: str, request_headers: Dict[str, str] = None) -> bytes:
         """Fetch RSS feed content."""
         from urllib.request import Request
         import ssl
@@ -114,8 +115,12 @@ class RssAdapter(BaseSourceAdapter):
             context = None
             
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "User-Agent": "Mozilla/5.0 (compatible; JobBot/1.0)",
+            "Accept": "application/rss+xml, application/xml, text/xml"
         }
+        if request_headers:
+            headers.update(request_headers)
+            
         req = Request(url, headers=headers)
         with urlopen(req, timeout=10, context=context) as response:
             return response.read()

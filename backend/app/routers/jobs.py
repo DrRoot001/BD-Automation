@@ -36,18 +36,27 @@ async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
     from app.module2.run_scrape import run_all
 
     SCRAPER_CONFIGS = [
-        ("greenhouse", {"company": "stripe",      "retries": 3}, 15),
-        ("greenhouse", {"company": "anthropic",   "retries": 3}, 15),
-        ("greenhouse", {"company": "airbnb",      "retries": 3}, 10),
-        ("greenhouse", {"company": "datadog",     "retries": 3}, 10),
-        ("greenhouse", {"company": "coinbase",    "retries": 3}, 10),
-        ("lever",      {"company": "netflix",     "retries": 3}, 10),
-        ("lever",      {"company": "figma",       "retries": 3}, 10),
-        ("indeed",     {"query": "software engineer remote", "location": "Remote", "retries": 3}, 10),
-        ("rss_generic", {"rss_url": "https://weworkremotely.com/categories/remote-jobs/jobs.rss",
-                         "request_headers": {"User-Agent": "Mozilla/5.0"}}, 10),
-        ("rss_generic", {"rss_url": "https://remotive.com/remote-jobs/rss",
-                         "request_headers": {"User-Agent": "Mozilla/5.0"}}, 10),
+        ("greenhouse", {"company": "stripe",      "retries": 3}, 25),
+        ("greenhouse", {"company": "anthropic",   "retries": 3}, 25),
+        ("greenhouse", {"company": "airbnb",      "retries": 3}, 25),
+        ("greenhouse", {"company": "datadog",     "retries": 3}, 25),
+        ("greenhouse", {"company": "coinbase",    "retries": 3}, 25),
+        ("greenhouse", {"company": "figma",       "retries": 3}, 25),
+        ("greenhouse", {"company": "notion",      "retries": 3}, 25),
+        ("greenhouse", {"company": "hubspot",     "retries": 3}, 25),
+        ("greenhouse", {"company": "brex",        "retries": 3}, 25),
+        ("greenhouse", {"company": "scaleai",     "retries": 3}, 25),
+        ("greenhouse", {"company": "airtable",    "retries": 3}, 25),
+        ("greenhouse", {"company": "vercel",      "retries": 3}, 25),
+        ("greenhouse", {"company": "asana",       "retries": 3}, 25),
+        ("greenhouse", {"company": "openai",      "retries": 3}, 25),
+        ("greenhouse", {"company": "cloudflare",  "retries": 3}, 25),
+        ("greenhouse", {"company": "gusto",       "retries": 3}, 25),
+        ("greenhouse", {"company": "postman",     "retries": 3}, 25),
+        ("lever",      {"company": "palantir",    "retries": 3}, 25),
+        ("indeed",     {"query": "software engineer remote", "location": "Remote", "retries": 3}, 25),
+        ("rss_generic", {"rss_url": "https://remoteok.com/remote-jobs.rss"}, 25),
+        ("rss_generic", {"rss_url": "https://jobicy.com/?feed=job_feed"}, 25),
     ]
 
     total_discovered = 0
@@ -84,7 +93,7 @@ async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
                     continue
                 normalized = normalize_batch(jobs)
                 payload = []
-                for job in normalized[:cap]:
+                for job in normalized:
                     d = job.to_dict()
                     # NormalizedJob uses 'url', backend expects 'source_url'
                     if 'url' in d and 'source_url' not in d:
@@ -100,6 +109,10 @@ async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
 
                 # Filter out jobs that we already have
                 filtered_payload = [p for p in payload if p.get("source_url") not in existing_urls]
+                
+                # Cap the unique results to limit
+                filtered_payload = filtered_payload[:cap]
+                
                 if not filtered_payload:
                     errors.append(f"{adapter_name}: all {len(payload)} discovered jobs were already in DB")
                     continue
@@ -206,6 +219,22 @@ async def create_jobs(
         if job_dict.get('embedding') is None:
             job_dict.pop('embedding', None)
 
+        source = job_dict.get('source')
+        source_url = job_dict.get('source_url')
+        company = job_dict.get('company')
+        title = job_dict.get('title', '')
+
+        # Check for test/demo companies (case-insensitive)
+        INVALID_COMPANIES = {"test company", "testco", "test", "demo", "sample", "example"}
+        if company and company.lower().strip() in INVALID_COMPANIES:
+            logger.warning(f"Skipping test job: {title} at {company}")
+            continue
+
+        # Check for invalid fields
+        if not source_url or source == "manual":
+            logger.warning(f"Skipping invalid job — no source_url or manual platform")
+            continue
+
         if job_dict.get('source_url') in existing_urls:
             continue
 
@@ -283,11 +312,25 @@ async def get_jobs_for_matching(
     Explicitly defers 'description' and 'embedding' to reduce Pydantic serialization
     overhead and improve fetch performance (e.g. from 17s to <1s for 100 jobs).
     """
-    from sqlalchemy import select
+    from sqlalchemy import select, or_, and_
     from sqlalchemy.orm import defer
+
+    exclusions = or_(
+        Job.source == 'manual',
+        Job.source_url.is_(None),
+        Job.source_url == '',
+        Job.company.ilike('%test%'),
+        Job.company.ilike('%testco%'),
+        Job.company.ilike('%demo%'),
+        Job.company.ilike('%sample%'),
+        Job.company.ilike('%example%'),
+        and_(Job.title.ilike('%test%'), Job.company.ilike('%test%'))
+    )
+
     result = await db.execute(
         select(Job)
         .options(defer(Job.embedding), defer(Job.description))
+        .where(~exclusions)
         .order_by(Job.created_at.desc())
         .offset(skip)
         .limit(limit)
@@ -299,18 +342,150 @@ async def get_jobs_for_matching(
 async def get_jobs(
     skip: int = 0,
     limit: int = 100,
+    candidate_id: Optional[str] = None,
+    search: Optional[str] = None,
+    source: Optional[str] = None,
+    job_type: Optional[str] = None,
+    time_filter: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    from sqlalchemy import select
+    from sqlalchemy import select, or_, and_
     from sqlalchemy.orm import defer
-    result = await db.execute(
-        select(Job)
-        .options(defer(Job.embedding))
-        .order_by(Job.created_at.desc())
-        .offset(skip)
-        .limit(limit)
+    from uuid import UUID
+    from datetime import datetime, timezone, timedelta
+    
+    exclusions = or_(
+        Job.source == 'manual',
+        Job.source_url.is_(None),
+        Job.source_url == '',
+        Job.company.ilike('%test%'),
+        Job.company.ilike('%testco%'),
+        Job.company.ilike('%demo%'),
+        Job.company.ilike('%sample%'),
+        Job.company.ilike('%example%'),
+        and_(Job.title.ilike('%test%'), Job.company.ilike('%test%'))
     )
-    return result.scalars().all()
+
+    def apply_job_filters(query):
+        if search:
+            q = f"%{search}%"
+            query = query.where(or_(Job.company.ilike(q), Job.title.ilike(q)))
+        if source:
+            query = query.where(Job.source.ilike(f"%{source}%"))
+        if job_type:
+            query = query.where(Job.job_type.ilike(f"%{job_type}%"))
+        if time_filter:
+            now = datetime.now(timezone.utc)
+            if time_filter == '24h':
+                query = query.where(Job.created_at >= now - timedelta(days=1))
+            elif time_filter == '3d':
+                query = query.where(Job.created_at >= now - timedelta(days=3))
+            elif time_filter == '7d':
+                query = query.where(Job.created_at >= now - timedelta(days=7))
+            elif time_filter == '30d':
+                query = query.where(Job.created_at >= now - timedelta(days=30))
+        return query
+
+    candidate_uuid = None
+    if candidate_id:
+        try:
+            candidate_uuid = UUID(candidate_id)
+        except ValueError:
+            pass
+
+    if candidate_uuid:
+        from app.models.resume import Resume
+        from app.models.application import Application
+        
+        # 1. Fetch job IDs candidate has already applied to
+        applied_result = await db.execute(
+            select(Application.job_id).where(Application.candidate_id == candidate_uuid)
+        )
+        applied_job_ids = [row[0] for row in applied_result.fetchall() if row[0] is not None]
+        
+        # 2. Fetch base resume
+        resume_stmt = (
+            select(Resume)
+            .where(Resume.candidate_id == candidate_uuid, Resume.is_base == True)
+            .order_by(Resume.version.desc())
+            .limit(1)
+        )
+        base_resume = (await db.execute(resume_stmt)).scalars().first()
+        
+        # 3. Build job select query
+        stmt = select(Job).options(defer(Job.embedding)).where(Job.is_duplicate == False, ~exclusions)
+        if applied_job_ids:
+            stmt = stmt.where(Job.id.notin_(applied_job_ids))
+            
+        stmt = apply_job_filters(stmt)
+            
+        if base_resume and base_resume.embedding is not None:
+            stmt = stmt.order_by(Job.embedding.cosine_distance(base_resume.embedding).asc())
+        else:
+            # Fall back to newest-first if no embedding or resume found
+            stmt = stmt.order_by(Job.created_at.desc())
+            
+        result = await db.execute(
+            stmt.offset(skip).limit(limit)
+        )
+        return result.scalars().all()
+    else:
+        # Default behavior: all duplicate-free/any jobs, newest first
+        stmt = select(Job).options(defer(Job.embedding)).where(~exclusions)
+        stmt = apply_job_filters(stmt)
+        result = await db.execute(
+            stmt.order_by(Job.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+        )
+        return result.scalars().all()
+
+@router.get("/count")
+async def get_jobs_count(
+    search: Optional[str] = None,
+    source: Optional[str] = None,
+    job_type: Optional[str] = None,
+    time_filter: Optional[str] = None,
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import select, func, or_, and_
+    from datetime import datetime, timezone, timedelta
+    exclusions = or_(
+        Job.source == 'manual',
+        Job.source_url.is_(None),
+        Job.source_url == '',
+        Job.company.ilike('%test%'),
+        Job.company.ilike('%testco%'),
+        Job.company.ilike('%demo%'),
+        Job.company.ilike('%sample%'),
+        Job.company.ilike('%example%'),
+        and_(Job.title.ilike('%test%'), Job.company.ilike('%test%'))
+    )
+
+    def apply_job_filters(query):
+        if search:
+            q = f"%{search}%"
+            query = query.where(or_(Job.company.ilike(q), Job.title.ilike(q)))
+        if source:
+            query = query.where(Job.source.ilike(f"%{source}%"))
+        if job_type:
+            query = query.where(Job.job_type.ilike(f"%{job_type}%"))
+        if time_filter:
+            now = datetime.now(timezone.utc)
+            if time_filter == '24h':
+                query = query.where(Job.created_at >= now - timedelta(days=1))
+            elif time_filter == '3d':
+                query = query.where(Job.created_at >= now - timedelta(days=3))
+            elif time_filter == '7d':
+                query = query.where(Job.created_at >= now - timedelta(days=7))
+            elif time_filter == '30d':
+                query = query.where(Job.created_at >= now - timedelta(days=30))
+        return query
+
+    query = select(func.count(Job.id)).where(~exclusions)
+    query = apply_job_filters(query)
+    result = await db.execute(query)
+    return {"total_count": result.scalar()}
 
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(

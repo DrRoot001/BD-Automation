@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 import { X, FileText, ExternalLink, RefreshCw, AlertCircle, Clock, CheckCircle, FileSignature } from 'lucide-react'
 import { ApplicationSummary } from '@/lib/api'
 import { useApplicationHistory } from '@/hooks/useApplicationHistory'
@@ -33,19 +34,31 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
   const { data: history, isLoading: historyLoading } = useApplicationHistory(application?.application_id || null)
   const { data: job, isLoading: jobLoading } = useJob(application?.job_id || null)
 
-  // Prevent background scroll when open
+  // Prevent background scroll and support Escape key when open
   useEffect(() => {
     if (isOpen) document.body.style.overflow = 'hidden'
     else document.body.style.overflow = 'unset'
-    return () => { document.body.style.overflow = 'unset' }
-  }, [isOpen])
+
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isOpen) onClose()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.body.style.overflow = 'unset'
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [isOpen, onClose])
 
   if (!isOpen || !application) return null
 
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/60 backdrop-blur-sm transition-opacity">
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[9999] flex justify-end bg-black/60 backdrop-blur-sm"
+      onClick={onClose}
+    >
       <div 
         className="w-full max-w-2xl bg-bg-secondary h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300 border-l border-bg-border"
+        onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-bg-border shrink-0">
@@ -230,7 +243,8 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
 
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

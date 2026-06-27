@@ -129,7 +129,9 @@ export interface InterviewSummary {
   type: string
   scheduled_at: string | null
   meeting_url: string | null
-  application_id: string
+  application_id?: string | null
+  received_at?: string | null
+  status?: string | null
 }
 
 export interface ConversionFunnel {
@@ -185,8 +187,16 @@ export const api = {
   createBDUser: (data: { name: string; email: string; password: string; role: string }) =>
     postJSON<BDUser>('/auth/admin/create_bd_user', data),
     
-  getAdminUsers: () =>
-    fetchJSON<BDUser[]>('/auth/admin/users'),
+  getAdminUsersCount: () =>
+    fetchJSON<{ total_count: number }>('/auth/admin/users/count'),
+
+  getAdminUsers: (params?: { skip?: number; limit?: number }) => {
+    const qs = new URLSearchParams()
+    if (params?.skip != null) qs.set('skip', String(params.skip))
+    if (params?.limit != null) qs.set('limit', String(params.limit))
+    const query = qs.toString()
+    return fetchJSON<BDUser[]>(`/auth/admin/users${query ? `?${query}` : ''}`)
+  },
     
   updateUserRole: (userId: string, role: string) =>
     patchJSON<BDUser>(`/auth/admin/users/${userId}/role`, { role }),
@@ -203,10 +213,33 @@ export const api = {
   mergeUsers: (sourceUserId: string, targetUserId: string) =>
     postJSON<{ message: string }>('/auth/admin/users/merge', { source_user_id: sourceUserId, target_user_id: targetUserId }),
 
-  getJobs: (params?: { skip?: number; limit?: number }) => {
+  getJobsCount: (params?: { search?: string; source?: string; jobType?: string; timeFilter?: string }) => {
+    const qs = new URLSearchParams()
+    if (params?.search) qs.set('search', params.search)
+    if (params?.source) qs.set('source', params.source)
+    if (params?.jobType) qs.set('job_type', params.jobType)
+    if (params?.timeFilter) qs.set('time_filter', params.timeFilter)
+    const query = qs.toString()
+    return fetchJSON<{ total_count: number }>(`/jobs/count${query ? `?${query}` : ''}`)
+  },
+
+  getJobs: (params?: { 
+    skip?: number; 
+    limit?: number; 
+    candidateId?: string; 
+    search?: string; 
+    source?: string; 
+    jobType?: string; 
+    timeFilter?: string; 
+  }) => {
     const qs = new URLSearchParams()
     if (params?.skip != null) qs.set('skip', String(params.skip))
     if (params?.limit != null) qs.set('limit', String(params.limit))
+    if (params?.candidateId) qs.set('candidate_id', params.candidateId)
+    if (params?.search) qs.set('search', params.search)
+    if (params?.source) qs.set('source', params.source)
+    if (params?.jobType) qs.set('job_type', params.jobType)
+    if (params?.timeFilter) qs.set('time_filter', params.timeFilter)
     const query = qs.toString()
     return fetchJSON<JobSummary[]>(`/jobs${query ? `?${query}` : ''}`)
   },

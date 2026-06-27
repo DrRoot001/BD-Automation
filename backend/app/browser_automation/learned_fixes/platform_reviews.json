@@ -29,5 +29,14 @@
         "error": "BLOCKED: Job-specific URL redirected to careers landing ('https://www.coinbase.com/careers'). Possible reasons: job is closed, gh_jid invalid, or anti-bot redirect."
       }
     ]
+  },
+  "manual": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-06-27T12:11:06.680314",
+        "error": "JOB_EXPIRED: Job posting no longer exists or has been removed"
+      }
+    ]
   }
 }

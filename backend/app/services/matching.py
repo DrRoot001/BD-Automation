@@ -238,6 +238,19 @@ async def run_matching_for_candidate(
         skipped_jobs.add(app.job_id)
 
     # 4. Fetch jobs added in lookback window (defaults to 24h, 72h on Mondays) that are not duplicates and pass pgvector distance < 0.35
+    from sqlalchemy import or_, and_
+    exclusions = or_(
+        Job.source == 'manual',
+        Job.source_url.is_(None),
+        Job.source_url == '',
+        Job.company.ilike('%test%'),
+        Job.company.ilike('%testco%'),
+        Job.company.ilike('%demo%'),
+        Job.company.ilike('%sample%'),
+        Job.company.ilike('%example%'),
+        and_(Job.title.ilike('%test%'), Job.company.ilike('%test%'))
+    )
+
     if target_job_ids:
         # If specific target jobs were requested (e.g. from dynamic_apply), skip pgvector and time filters.
         from uuid import UUID as _UUID
@@ -252,7 +265,7 @@ async def run_matching_for_candidate(
             logger.warning(f"[Matching] target_job_ids provided but no valid UUIDs found.")
             return {"error": "invalid_target_job_ids"}
             
-        jobs_stmt = select(Job).where(Job.id.in_(valid_uuids))
+        jobs_stmt = select(Job).where(Job.id.in_(valid_uuids), ~exclusions)
     else:
         weekday = datetime.now(timezone.utc).weekday()
         lookback_hours = settings.job_matching_monday_lookback_hours if weekday == 0 else settings.job_matching_lookback_hours
@@ -262,7 +275,8 @@ async def run_matching_for_candidate(
             Job.created_at >= time_job_lookback,
             Job.is_duplicate == False,
             Job.embedding.isnot(None),
-            Job.embedding.cosine_distance(base_resume.embedding) < 0.35
+            Job.embedding.cosine_distance(base_resume.embedding) < 0.35,
+            ~exclusions
         )
     jobs = (await session.execute(jobs_stmt)).scalars().all()
     pgvector_passed_count = len(jobs)

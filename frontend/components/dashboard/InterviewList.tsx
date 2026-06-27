@@ -2,9 +2,9 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type InterviewSummary } from '@/lib/api'
-import { formatScheduled } from '../utils'
+import { formatScheduled, formatDistanceToNow } from '../utils'
 import { clsx } from 'clsx'
-import { Calendar, Link, Target } from 'lucide-react'
+import { Calendar, Link, Target, Inbox } from 'lucide-react'
 
 function TypeBadge({ type }: { type: string }) {
   const map: Record<string, string> = {
@@ -65,8 +65,8 @@ export function InterviewList({ candidateId }: { candidateId?: string }) {
           <div className="p-8 text-center text-danger text-sm">Failed to load interviews</div>
         ) : interviews.length === 0 ? (
           <div className="p-8 text-center">
-            <Target className="w-8 h-8 text-text-muted mx-auto mb-2" />
-            <div className="text-sm text-text-muted">No upcoming interviews</div>
+            <Inbox className="w-8 h-8 text-text-muted mx-auto mb-2 opacity-50" />
+            <div className="text-sm text-text-muted">No interviews tracked yet</div>
           </div>
         ) : (
           interviews.map((iv) => (
@@ -74,15 +74,22 @@ export function InterviewList({ candidateId }: { candidateId?: string }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-text-primary">{iv.company}</span>
-                    <span className="text-xs text-text-muted">R{iv.round}</span>
+                    <span className="text-sm font-semibold text-text-primary">{iv.company}</span>
                     <TypeBadge type={iv.type} />
+                    {iv.status && (
+                      <span className={clsx(
+                        "text-[9px] font-bold px-2 py-0.5 rounded-full border uppercase tracking-wider",
+                        iv.status === 'PENDING' ? 'bg-warning/10 text-warning border-warning/20' : 'bg-success/10 text-success border-success/20'
+                      )}>
+                        {iv.status}
+                      </span>
+                    )}
                   </div>
-                  <div className="text-xs text-text-secondary mt-0.5 truncate">{iv.position}</div>
+                  <div className="text-xs text-text-secondary mt-0.5 truncate">{iv.position || 'Software Engineer'}</div>
                   <div className="flex items-center gap-1.5 mt-1.5 text-xs text-text-muted">
-                    <Calendar className="w-3 h-3" />
-                    <span className={iv.scheduled_at ? 'text-warning' : ''}>
-                      {formatScheduled(iv.scheduled_at)}
+                    <Calendar className="w-3.5 h-3.5 text-text-muted" />
+                    <span>
+                      Received {iv.received_at ? formatDistanceToNow(iv.received_at) : formatScheduled(iv.scheduled_at)}
                     </span>
                   </div>
                 </div>

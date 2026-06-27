@@ -11,6 +11,7 @@ import {
 import Link from 'next/link'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { logoutAction } from '@/app/actions/auth'
+import { getQueryClient } from '@/lib/providers'
 import { api, ActivityEvent, InterviewSummary } from '@/lib/api'
 import { formatDistanceToNow } from '@/lib/utils'
 
@@ -211,8 +212,13 @@ export function TopBar() {
 
   const handleLogout = async () => {
     setShowProfileMenu(false)
+    // 1. Clear ALL cached React Query data so the next user never sees stale data
+    const qc = getQueryClient()
+    if (qc) qc.clear()
+    // 2. Delete the auth cookie server-side
     await logoutAction()
-    router.push('/login')
+    // 3. Replace (not push) so the user cannot navigate back to the dashboard
+    router.replace('/login')
   }
 
   const markAllRead = () => {

@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     import asyncio
     from app.database import AsyncSessionLocal
     from app.services.state_machine import recover_stuck_applications_async
+    from sqlalchemy import text
     
     async def _run_startup_watchdog():
         try:
@@ -54,7 +55,30 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"[Startup] Watchdog failed: {e}")
             
+    async def _init_db_tables():
+        try:
+            async with AsyncSessionLocal() as session:
+                await session.execute(text("""
+                    CREATE TABLE IF NOT EXISTS interview_tracking (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        candidate_id UUID NOT NULL REFERENCES candidates(id) ON DELETE CASCADE,
+                        application_id UUID REFERENCES applications(id) ON DELETE SET NULL,
+                        email_subject TEXT,
+                        email_from VARCHAR(255),
+                        received_at TIMESTAMPTZ,
+                        interview_type VARCHAR(50),
+                        status VARCHAR(50),
+                        gmail_id VARCHAR(255) UNIQUE,
+                        created_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                """))
+                await session.commit()
+                logger.info("[Startup] interview_tracking table verified/created.")
+        except Exception as e:
+            logger.error(f"[Startup] Failed to initialize interview_tracking table: {e}")
+
     asyncio.create_task(_run_startup_watchdog())
+    asyncio.create_task(_init_db_tables())
     
     yield
     await stop_redis_subscriber()

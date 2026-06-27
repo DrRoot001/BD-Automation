@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { Plus, Search, MoreVertical, Loader2, CheckCircle2, AlertCircle, Edit2, Key, Trash2 } from 'lucide-react'
+import { Plus, Search, MoreVertical, Loader2, CheckCircle2, AlertCircle, Edit2, Key, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { api, BDUser } from '@/lib/api'
 import { formatDistanceToNow } from '@/lib/utils'
 
@@ -15,10 +15,26 @@ export default function UserManagementPage() {
   const [editingUser, setEditingUser] = useState<BDUser | null>(null)
   const [changingPasswordUser, setChangingPasswordUser] = useState<BDUser | null>(null)
 
+  const [page, setPage] = useState(0)
+  const limit = 10
+
   const { data: users, isLoading } = useQuery({
-    queryKey: ['admin-users'],
-    queryFn: () => api.getAdminUsers()
+    queryKey: ['admin-users', page, limit],
+    queryFn: () => api.getAdminUsers({ skip: page * limit, limit })
   })
+
+  const { data: countData } = useQuery({
+    queryKey: ['admin-users-count'],
+    queryFn: () => api.getAdminUsersCount()
+  })
+
+  const totalCount = countData?.total_count ?? 0
+  const totalPages = Math.ceil(totalCount / limit)
+
+  // Reset page to 0 on search change
+  useEffect(() => {
+    setPage(0)
+  }, [search])
 
   const updateRoleMutation = useMutation({
     mutationFn: ({ id, role }: { id: string, role: string }) => api.updateUserRole(id, role),
@@ -35,6 +51,7 @@ export default function UserManagementPage() {
     mutationFn: (id: string) => api.deleteUser(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-users-count'] })
       alert("User deleted successfully")
     },
     onError: (err: any) => {
@@ -144,7 +161,7 @@ export default function UserManagementPage() {
                   </td>
                 </tr>
               ) : (
-                filteredUsers.map((user) => (
+                filteredUsers.map((user, index) => (
                   <tr key={user.id} className="hover:bg-bg-hover transition-colors">
                     <td className="px-6 py-4">
                       <div className="font-medium text-text-primary">{user.full_name || 'Unknown User'}</div>
@@ -184,7 +201,11 @@ export default function UserManagementPage() {
                             className="fixed inset-0 z-10" 
                             onClick={() => setActiveMenuUserId(null)}
                           />
-                          <div className="absolute right-6 mt-1 w-44 bg-bg-secondary border border-bg-border rounded-lg shadow-lg py-1 z-20 text-left animate-in fade-in slide-in-from-top-1 duration-100">
+                          <div className={`absolute right-6 w-44 bg-bg-secondary border border-bg-border rounded-lg shadow-lg py-1 z-20 text-left animate-in fade-in duration-100 ${
+                            filteredUsers && index >= filteredUsers.length - 2
+                              ? 'bottom-full mb-1 slide-in-from-bottom-1'
+                              : 'top-full mt-1 slide-in-from-top-1'
+                          }`}>
                             <button
                               onClick={() => {
                                 setEditingUser(user)
@@ -225,6 +246,29 @@ export default function UserManagementPage() {
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Pagination */}
+        <div className="px-6 py-4 border-t border-bg-border flex items-center justify-between">
+          <div className="text-sm text-text-muted">
+            Showing page {page + 1} of {Math.max(1, totalPages)} ({totalCount} total users)
+          </div>
+          <div className="flex items-center gap-2">
+            <button 
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0 || isLoading}
+              className="p-1.5 rounded-md border border-bg-border text-text-primary hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setPage(p => p + 1)}
+              disabled={page + 1 >= totalPages || isLoading}
+              className="p-1.5 rounded-md border border-bg-border text-text-primary hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
 
@@ -270,6 +314,7 @@ function CreateUserModal({ onClose }: { onClose: () => void }) {
     mutationFn: () => api.createBDUser({ name, email, password, role }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-users-count'] })
       alert("User created successfully!")
       onClose()
     },
@@ -529,6 +574,7 @@ function MergeUsersModal({ users, onClose }: { users: BDUser[], onClose: () => v
     mutationFn: () => api.mergeUsers(sourceUserId, targetUserId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['admin-users'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-users-count'] })
       alert("Users merged and candidates re-assigned successfully!")
       onClose()
     },

@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { useAdminJobs } from '@/hooks/useAdminJobs'
+import { useState, useEffect } from 'react'
+import { useAdminJobs, useAdminJobsCount } from '@/hooks/useAdminJobs'
 import { Search, ChevronLeft, ChevronRight, Eye, Briefcase, MapPin, Building2, Calendar, FileText } from 'lucide-react'
 import { formatDistanceToNow } from '@/lib/utils'
 
@@ -13,30 +13,26 @@ export default function JobManagementPage() {
   const [page, setPage] = useState(0)
   const limit = 50
   
-  const { data: jobs, isLoading, isError } = useAdminJobs(page * limit, limit)
+  const activeFilters = {
+    search: search.trim() || undefined,
+    source: sourceFilter || undefined,
+    jobType: typeFilter || undefined,
+    timeFilter: timeFilter || undefined,
+  }
+
+  const { data: jobs, isLoading, isError } = useAdminJobs(page * limit, limit, activeFilters)
+  const { data: countData } = useAdminJobsCount(activeFilters)
+  const totalCount = countData?.total_count ?? 0
+  const totalPages = Math.ceil(totalCount / limit)
 
   const [selectedJob, setSelectedJob] = useState<any | null>(null)
 
-  const filteredJobs = jobs?.filter(job => {
-    const matchesSearch = job.company.toLowerCase().includes(search.toLowerCase()) || 
-                          job.title.toLowerCase().includes(search.toLowerCase());
-    const matchesSource = sourceFilter ? job.source === sourceFilter : true;
-    const matchesType = typeFilter ? job.job_type === typeFilter : true;
-    
-    let matchesTime = true;
-    if (timeFilter) {
-      const jobDate = new Date(job.created_at || job.posted_at || Date.now());
-      const now = new Date();
-      const diffHours = (now.getTime() - jobDate.getTime()) / (1000 * 60 * 60);
-      
-      if (timeFilter === '24h') matchesTime = diffHours <= 24;
-      else if (timeFilter === '3d') matchesTime = diffHours <= 24 * 3;
-      else if (timeFilter === '7d') matchesTime = diffHours <= 24 * 7;
-      else if (timeFilter === '30d') matchesTime = diffHours <= 24 * 30;
-    }
-    
-    return matchesSearch && matchesSource && matchesType && matchesTime;
-  })
+  // Reset page to 0 on filter change
+  useEffect(() => {
+    setPage(0)
+  }, [search, sourceFilter, typeFilter, timeFilter])
+
+  const filteredJobs = jobs
 
   // Format salary
   const formatSalary = (min: number | null, max: number | null, period: string | null) => {
@@ -78,10 +74,13 @@ export default function JobManagementPage() {
             className="px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-sm text-text-primary focus:outline-none focus:border-accent"
           >
             <option value="">All Sources</option>
-            <option value="ycombinator">Y Combinator</option>
-            <option value="linkedin">LinkedIn</option>
             <option value="greenhouse">Greenhouse</option>
             <option value="lever">Lever</option>
+            <option value="dice">Dice</option>
+            <option value="remote100k">Remote100k</option>
+            <option value="remoterocketship">Remote Rocketship</option>
+            <option value="rss_generic">RSS Feeds</option>
+            <option value="linkedin">LinkedIn</option>
           </select>
           
           <select 
@@ -90,9 +89,9 @@ export default function JobManagementPage() {
             className="px-3 py-2 bg-bg-primary border border-bg-border rounded-lg text-sm text-text-primary focus:outline-none focus:border-accent"
           >
             <option value="">All Types</option>
-            <option value="full-time">Full-time</option>
+            <option value="full">Full-time</option>
             <option value="contract">Contract</option>
-            <option value="part-time">Part-time</option>
+            <option value="part">Part-time</option>
           </select>
           
           <select 
@@ -215,7 +214,7 @@ export default function JobManagementPage() {
           {/* Pagination */}
           <div className="px-6 py-4 border-t border-bg-border flex items-center justify-between">
             <div className="text-sm text-text-muted">
-              Showing page {page + 1}
+              Showing page {page + 1} of {Math.max(1, totalPages)} ({totalCount} total jobs)
             </div>
             <div className="flex items-center gap-2">
               <button 
@@ -227,7 +226,7 @@ export default function JobManagementPage() {
               </button>
               <button 
                 onClick={handleNextPage}
-                disabled={!jobs || jobs.length < limit || isLoading}
+                disabled={page + 1 >= totalPages || isLoading}
                 className="p-1.5 rounded-md border border-bg-border text-text-primary hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               >
                 <ChevronRight className="w-4 h-4" />

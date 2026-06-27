@@ -7,4 +7,5 @@ from .application import Application
 from .application_history import ApplicationHistory
 from .email import Email
 from .interview import Interview
+from .interview_tracking import InterviewTracking
 from .user import User

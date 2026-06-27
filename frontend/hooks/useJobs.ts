@@ -4,6 +4,7 @@ import { api } from '@/lib/api'
 interface UseJobsOptions {
   skip?: number
   limit?: number
+  candidateId?: string
 }
 
 export function useJobs(options: UseJobsOptions = {}) {

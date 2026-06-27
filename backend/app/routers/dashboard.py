@@ -58,7 +58,9 @@ class InterviewSummary(BaseModel):
     type: str
     scheduled_at: Optional[datetime] = None
     meeting_url: Optional[str] = None
-    application_id: str
+    application_id: Optional[str] = None
+    received_at: Optional[datetime] = None
+    status: Optional[str] = None
 
 
 class ConversionFunnel(BaseModel):
@@ -250,41 +252,85 @@ async def get_interviews(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    """List of upcoming (or all) interview records."""
-    cid_filter, cid_params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
-
-    filters = ["1=1"]
-    if cid_filter:
-        filters.append(cid_filter.lstrip("AND "))
-    if upcoming_only:
-        filters.append("(i.scheduled_at IS NULL OR i.scheduled_at >= NOW())")
-
-    params = {**cid_params}
+    """List of interview records from the interview_tracking table."""
+    from sqlalchemy import select
+    from app.models.candidate import Candidate
+    # Build candidate filter targeting 'it' (interview_tracking) alias
+    if current_user.role == UserRole.admin:
+        if candidate_id:
+            cid_filter = "AND it.candidate_id = :cid"
+            params = {"cid": str(candidate_id)}
+        else:
+            cid_filter = ""
+            params = {}
+    else:
+        res = await db.execute(select(Candidate.id).where(Candidate.user_id == current_user.id))
+        owned_ids = [str(row[0]) for row in res.fetchall()]
+        if not owned_ids:
+            cid_filter = "AND it.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid"
+            params = {}
+        elif candidate_id:
+            if str(candidate_id) in owned_ids:
+                cid_filter = "AND it.candidate_id = :cid"
+                params = {"cid": str(candidate_id)}
+            else:
+                cid_filter = "AND it.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid"
+                params = {}
+        else:
+            uuid_literals = ", ".join(f"'{cid}'::uuid" for cid in owned_ids)
+            cid_filter = f"AND it.candidate_id IN ({uuid_literals})"
+            params = {}
 
     rows = await db.execute(text(f"""
-        SELECT i.id, j.company, j.title AS position, i.round, i.type,
-               i.scheduled_at, i.meeting_url, a.id AS application_id
-        FROM interviews i
-        JOIN applications a ON i.application_id = a.id
-        JOIN jobs j ON a.job_id = j.id
-        WHERE {' AND '.join(filters)}
-        ORDER BY i.scheduled_at ASC NULLS LAST
+        SELECT it.id, 
+               COALESCE(j.company, 'Unknown Company') AS company, 
+               COALESCE(j.title, 'Unknown Role') AS position, 
+               it.interview_type AS type,
+               it.received_at, 
+               it.status, 
+               it.application_id,
+               it.email_subject,
+               it.email_from
+        FROM interview_tracking it
+        LEFT JOIN applications a ON it.application_id = a.id
+        LEFT JOIN jobs j ON a.job_id = j.id
+        WHERE 1=1 {cid_filter}
+        ORDER BY it.received_at DESC
         LIMIT 50
     """), params)
 
-    return [
-        InterviewSummary(
+    res = []
+    for r in rows.fetchall():
+        company = r.company
+        if company == "Unknown Company" and r.email_subject:
+            # Simple heuristics to extract company name from subject or sender email
+            import re
+            m = re.search(r"with\s+([A-Za-z0-9\s]+)", r.email_subject, re.IGNORECASE)
+            if m:
+                company = m.group(1).strip()
+            else:
+                m2 = re.search(r"at\s+([A-Za-z0-9\s]+)", r.email_subject, re.IGNORECASE)
+                if m2:
+                    company = m2.group(1).strip()
+                elif r.email_from:
+                    # e.g. recruiter@stripe.com -> Stripe
+                    match = re.search(r"@([\w\-]+)\.", r.email_from)
+                    if match:
+                        company = match.group(1).capitalize()
+                        
+        res.append(InterviewSummary(
             interview_id=str(r.id),
-            company=r.company or "",
-            position=r.position or "",
-            round=r.round or 1,
+            company=company,
+            position=r.position,
+            round=1,
             type=r.type or "phone",
-            scheduled_at=r.scheduled_at,
-            meeting_url=r.meeting_url,
-            application_id=str(r.application_id),
-        )
-        for r in rows.fetchall()
-    ]
+            scheduled_at=r.received_at, # date received / scheduled fallback
+            meeting_url=None,
+            application_id=str(r.application_id) if r.application_id else None,
+            received_at=r.received_at,
+            status=r.status or "PENDING"
+        ))
+    return res
 
 
 @router.get("/analytics", response_model=AnalyticsData)

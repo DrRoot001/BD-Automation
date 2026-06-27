@@ -1,9 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Loader2 } from 'lucide-react'
 import { loginAction } from '@/app/actions/auth'
+import { getQueryClient } from '@/lib/providers'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -11,6 +12,13 @@ export default function LoginPage() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const router = useRouter()
+
+  // Clear any stale cache when the login page mounts
+  // This handles the case where a user lands on /login without going through logout
+  useEffect(() => {
+    const qc = getQueryClient()
+    if (qc) qc.clear()
+  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -26,8 +34,7 @@ export default function LoginPage() {
     }
 
     if (result.redirect) {
-      router.push(result.redirect)
-      router.refresh()
+      router.replace(result.redirect)
     }
   }
 

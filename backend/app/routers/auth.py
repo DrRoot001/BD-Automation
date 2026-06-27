@@ -294,9 +294,24 @@ async def create_bd_user(
     }
 
 
+@router.get("/admin/users/count")
+async def get_users_count(
+    current_admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    from sqlalchemy import func
+    result = await db.execute(select(func.count(User.id)))
+    return {"total_count": result.scalar()}
+
+
 @router.get("/admin/users")
-async def list_users(current_admin: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    query = select(User)
+async def list_users(
+    skip: int = 0,
+    limit: int = 100,
+    current_admin: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db)
+):
+    query = select(User).offset(skip).limit(limit)
     result = await db.execute(query)
     users = result.scalars().all()
     return [

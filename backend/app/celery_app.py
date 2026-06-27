@@ -80,6 +80,8 @@ celery_app.conf.task_routes = {
     "task:dynamic_apply":               {"queue": "queue:application_execution"},
     "task:scan_candidate_inbox":        {"queue": "queue:email_scan"},
     "task:scan_single_inbox":           {"queue": "queue:email_scan"},
+    "task:scan_interviews":             {"queue": "queue:email_scan"},
+    "task:scan_single_candidate_interviews": {"queue": "queue:email_scan"},
     "task:refresh_analytics":           {"queue": "queue:email_scan"},
     "task:cleanup_old_resumes":         {"queue": "celery"},
 }
@@ -119,6 +121,11 @@ celery_app.conf.beat_schedule = {
     "scan-inbox-every-15m": {
         "task": "task:scan_candidate_inbox",
         "schedule": 60 * 15,  # 15 minutes
+    },
+    # Interview search scan — poll every 30 minutes
+    "scan-interviews-every-30m": {
+        "task": "task:scan_interviews",
+        "schedule": 60 * 30,  # 30 minutes
     },
     # Analytics refresh — recompute cached dashboard metrics every hour
     "refresh-analytics-every-1h": {
