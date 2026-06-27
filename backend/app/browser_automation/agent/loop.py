@@ -684,7 +684,32 @@ _DOM_SNAPSHOT_JS = """() => {
         const sel = el.id ? '#' + el.id : null;
         if (!sel || seen.has(sel)) return;
         seen.add(sel);
-        out.push({ sel, type: 'combobox', label: labelFor(el), required: false });
+        const entry = { sel, type: 'combobox', label: labelFor(el), required: false };
+        // Surface the choosable options so the AI answers from them on the FIRST
+        // turn instead of guessing from the question text (e.g. naming a state
+        // for a "Do you live in one of these states?" Yes/No dropdown). Sources,
+        // in order: a hidden native <select> Greenhouse syncs the widget with,
+        // the listbox this combobox controls (aria-controls/owns), or already
+        // rendered option nodes. react-select renders its menu only when open,
+        // so any of these may be empty — that's fine, we just omit options then.
+        try {
+            let opts = [];
+            const container = el.closest('.application-question, .form-question, [class*="question"], fieldset, [class*="field"]') || el.parentElement;
+            if (container) {
+                const realSel = container.querySelector('select');
+                if (realSel) opts = Array.from(realSel.options).map(o => (o.text || '').trim()).filter(Boolean);
+            }
+            if (!opts.length) {
+                const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+                const lb = lid ? document.getElementById(lid) : null;
+                const scope = lb || container || document;
+                opts = Array.from(scope.querySelectorAll('[role="option"], .select__option, .react-select__option'))
+                            .map(o => (o.textContent || '').trim()).filter(Boolean);
+            }
+            opts = opts.filter((v, i, a) => v && a.indexOf(v) === i);
+            if (opts.length && opts.length <= 15) entry.options = opts;
+        } catch (e) {}
+        out.push(entry);
     });
 
     // Visible buttons (Next / Submit / Apply)
@@ -1615,7 +1640,32 @@ async def _execute_action(
                         return True
                 except Exception:
                     pass
-                # Last resort: type-then-Enter (legacy behavior)
+                # If we KNOW the real options and the proposed value matches none
+                # of them, do NOT type it as filter text: react-select would keep
+                # that stray text in its input, which fools the pre-submit gate
+                # (it reads the input value) into thinking the field is answered —
+                # so the form submits with NO real selection. This is the "AI
+                # answered a state for a Yes/No dropdown" bug. Instead: clear the
+                # stray text, leave the menu OPEN so the next DOM snapshot surfaces
+                # the actual options (e.g. ['Yes','No']) to the AI, and report
+                # failure so the field reads empty and the AI re-picks a valid one.
+                _norm_opts = [str(o).strip().lower() for o in (available_options or [])]
+                _is_real_match = bool(_norm_opts) and (target_text or "").strip().lower() in _norm_opts
+                if available_options and not _is_real_match:
+                    try:
+                        await loc.fill("")            # drop the stray filter text
+                        await loc.click(timeout=1500)  # keep/reopen menu → options visible next turn
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"[AgentLoop] combobox: proposed {value!r} is NOT a valid option for "
+                        f"{sel!r} (valid options: {available_options[:8]}). Cleared stray text and "
+                        f"left the menu open; deferring to AI to choose a real option."
+                    )
+                    return False
+
+                # Last resort: type-then-Enter (legacy behavior) — only reached
+                # when we couldn't enumerate options OR the value is a genuine match.
                 try:
                     await loc.fill("")
                     await loc.type(target_text, delay=40)
@@ -1717,6 +1767,18 @@ async def _execute_action(
                         await loc.press_sequentially(value, delay=per_char, timeout=15000)
                     else:
                         await loc.type(value, delay=per_char, timeout=15000)
+                    # Commit on blur. Some React-controlled <textarea>/<input>
+                    # fields (e.g. Greenhouse's long free-text screening
+                    # questions) only persist their value to component state on
+                    # the blur event — without it the value reverts to empty on
+                    # the next re-render, so FORM STATUS keeps showing the field
+                    # empty and the AI re-fills it forever (the free-text loop).
+                    try:
+                        await loc.evaluate(
+                            "el => { el.dispatchEvent(new Event('change', {bubbles:true})); el.blur && el.blur(); }"
+                        )
+                    except Exception:
+                        pass
                     # Verify it actually committed into the field's value.
                     # Masked / formatting widgets (e.g. react-tel-input phone
                     # fields) REFORMAT the value as you type — "+13410084746"
@@ -2146,7 +2208,21 @@ class AgentLoop:
                     const sel = el.id ? '#' + el.id : (el.name ? `[name="${el.name}"]` : '');
                     if (!sel) return;
                     const value = (el.value || '').trim();
-                    out.push({ sel, type, label: label.slice(0, 100), value });
+                    // Detect react-select / custom comboboxes and native <select>.
+                    // A raw value-set on these does NOT commit the option (react
+                    // keeps its own state), so memory pre-fill would falsely mark
+                    // the field "filled" and trip a premature, server-rejected
+                    // submit. Flag them so we defer to the AI's option-click path.
+                    const role = (el.getAttribute('role') || '').toLowerCase();
+                    const ariaPop = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+                    const combo = (
+                        el.tagName === 'SELECT'
+                        || role === 'combobox'
+                        || !!el.getAttribute('aria-autocomplete')
+                        || ariaPop === 'listbox' || ariaPop === 'menu'
+                        || !!el.closest('[class*="select__"], [class*="combobox" i], [role="combobox"]')
+                    );
+                    out.push({ sel, type, label: label.slice(0, 100), value, combo });
                 });
                 return out;
             }""")
@@ -2194,6 +2270,42 @@ class AgentLoop:
                     f"was {str(answer)[:50]!r}, forcing 'N/A'"
                 )
                 answer = "N/A"
+
+            # ── Combobox / native-select: COMMIT via the proven option-click
+            # path (the same _commit_policy_field used by deterministic prefill),
+            # NOT a raw value-set. A native value-set never selects a react-select
+            # option, so the field would look "filled" yet fail server validation
+            # — that was the premature-submit STUCK on Greenhouse. We commit it
+            # properly here, ONE-SHOT: the synthesized fill_field action below
+            # records the label so this never retries (avoiding the per-turn
+            # combobox race documented in _try_demographic_autofill).
+            if f.get("combo"):
+                try:
+                    ok = await self._commit_policy_field(
+                        page, ctx, sel, "combobox", str(answer), [str(answer)]
+                    )
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] memory pre-fill combobox commit error for {label!r}: {exc}")
+                    ok = False
+                # Record the attempt either way so memory pre-fill won't fight
+                # the field next turn; if it failed, the AI's own fill_field path
+                # can still drive it (the AI is not gated by these records).
+                actions.append(AgentAction(
+                    kind="fill_field",
+                    selector=sel,
+                    value=str(answer),
+                    field_label=label,
+                    step=-1,
+                    ok=bool(ok),
+                    raw={"source": "memory_prefill_combobox"},
+                ))
+                if ok:
+                    logger.info(f"[AgentLoop] memory pre-fill combobox committed: '{label}' = '{str(answer)[:60]}'")
+                    filled += 1
+                else:
+                    logger.debug(f"[AgentLoop] memory pre-fill combobox commit failed for '{label}' — deferring to AI")
+                continue
+
             try:
                 loc = ctx.locator(sel).first
                 if await loc.count() == 0:
@@ -2836,6 +2948,7 @@ class AgentLoop:
             else:
                 state_name, state_abbr = resolved
         salary = (p.get("salary_expectation") or "").strip()
+        phone = (p.get("phone") or "").strip()
 
         entries = [
             # dv01-style consent multi-select: "...your application acknowledges
@@ -2904,6 +3017,16 @@ class AgentLoop:
             entries.append(
                 (r"salary\s+expect|expected\s+(salary|compensation)|compensation\s+expect",
                  salary, [salary]),
+            )
+        # Phone — stable identity data (like name/email). Fill it deterministically
+        # whenever a phone field exists so an OPTIONAL phone isn't left blank for a
+        # brand-new candidate (one with no field_memory yet). The carve-out in
+        # _deterministic_prefill keeps the NUMBER out of country-code/extension
+        # fields, and _commit_policy_field defers react-tel widgets to the AI.
+        if phone:
+            entries.append(
+                (r"\bphone\b|phone\s*number|mobile\s*number|\bmobile\b|cell\s*phone|contact\s+(number|phone)",
+                 phone, [phone]),
             )
         # dv01-style consent multi-select policy is inserted at the TOP of
         # `entries` above (priority over the generic acknowledge rule).
@@ -3115,6 +3238,13 @@ class AgentLoop:
                         continue
                     # Country carve-out: skip citizenship / country-code.
                     if val == "United States" and any(w in label for w in ("citizenship", "code", "nationality")):
+                        continue
+                    # Phone carve-out: never type the phone NUMBER into a
+                    # country-code / extension field (separate small widgets).
+                    _phone_v = ((self.profile or {}).get("phone") or "").strip()
+                    if _phone_v and val == _phone_v and any(
+                        w in label for w in ("country code", "country", "code", "extension", " ext")
+                    ):
                         continue
                     value, aliases = val, als
                     break
@@ -3332,6 +3462,23 @@ class AgentLoop:
                 except Exception as exc:
                     logger.debug(f"[AgentLoop] combobox commit attempt {attempt} failed: {exc}")
             return False
+
+        # ── react-tel-input phone widget (e.g. Talent.com) ──
+        # This is a strictly-controlled React widget that REJECTS a native-set
+        # and mangles a full "+<cc>" (the country-code collision), so we defer it
+        # to the AgentLoop's react-tel-aware fill (clear + national digits).
+        # NOTE: do NOT defer intl-tel-input (`.iti`, used by Greenhouse) — that
+        # is a plain <input> with a flag dropdown; a native-set commits fine and
+        # the AI's national-digit logic would actually be WRONG for it. Only the
+        # genuine react-tel-input (or #phone-input) is deferred.
+        try:
+            if await loc.evaluate(
+                "(el) => !!(el.closest && el.closest('.react-tel-input')) "
+                "|| el.id === 'phone-input'"
+            ):
+                return False
+        except Exception:
+            pass
 
         # ── text / email / tel / url / textarea ── native setter
         try:
