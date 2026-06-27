@@ -50,6 +50,9 @@ export default function CandidateDetailPage() {
 
   useWebSocket((evt) => {
     if (evt.event === 'pipeline.progress' && evt.data) {
+      const candidateId = evt.data?.candidate_id || evt.data?.candidateId
+      if (candidateId && candidateId !== id) return
+      
       setProgressLogs((prev) => [...prev, {
         timestamp: evt.timestamp || new Date().toISOString(),
         message: evt.data?.message as string

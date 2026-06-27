@@ -67,18 +67,23 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
           <div className="flex items-start justify-between bg-bg-primary p-5 rounded-xl border border-bg-border">
             <div>
               <div className="text-xs text-text-muted uppercase tracking-wider font-semibold mb-2">Current Status</div>
-              <StatusBadge status={isCompleted(application.status) ? application.status : 'FAILED'} />
+              <StatusBadge status={application.status} />
               
-              {!isCompleted(application.status) && (
+              {(application.status === 'FAILED' || application.status === 'BLOCKED') && (
                 <div className="mt-3 text-sm text-danger flex flex-col gap-2 bg-danger/10 p-3 rounded-lg border border-danger/20">
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
-                    <span className="font-semibold">Application Incomplete / Failed</span>
+                    <span className="font-semibold">
+                      {application.failure_reason === 'JOB_EXPIRED' ? 'Job Posting Expired' : 'Application Incomplete / Failed'}
+                    </span>
                   </div>
                   <span className="text-xs text-danger/80">
-                    {application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity."}
+                    {application.failure_reason === 'JOB_EXPIRED' 
+                      ? 'This job posting has been removed or expired. The position is no longer available.'
+                      : (application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity.")
+                    }
                   </span>
-                  {application.job_url && (
+                  {application.failure_reason !== 'JOB_EXPIRED' && application.job_url && (
                     <a
                       href={application.job_url}
                       target="_blank"
@@ -93,7 +98,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
               )}
             </div>
             
-            {application.status === 'FAILED' && (
+            {(application.status === 'FAILED' || application.status === 'BLOCKED') && (
               <button 
                 onClick={() => onRetry(application.application_id)}
                 className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors"

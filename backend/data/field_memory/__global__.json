@@ -79,6 +79,14 @@
     "source": "agent_loop",
     "value": "United States"
   },
+  "are you currently bound by any agreements with a current or former employer that": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you currently bound by any agreements with a current or former employer that",
+    "last_seen": 1782467019,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "are you currently bound by any agreements with a current or former employer that may restrict your ability to work for scale ai or perform the duties of the position for which you are applying? this includes, but is not limited to, non-compete agreements, non-solicitation agreements, confidentiality or non-disclosure agreements, or any other contractual obligations that could limit your employment activities": {
     "count": 1,
     "field_type": "select",
@@ -133,6 +141,14 @@
     "label": "Are you willing to relocate? *",
     "last_seen": 1781982235,
     "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "asana is seeking the below information for the exclusive and limited purpose of": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Asana is seeking the below information for the exclusive and limited purpose of",
+    "last_seen": 1782503776,
+    "source": "agent_loop",
     "value": "Yes"
   },
   "by submitting my application, i acknowledge that i have read and understand verc": {
@@ -206,6 +222,30 @@
     "last_seen": 1781982799,
     "source": "llm:0.90",
     "value": "Prefer not to answer"
+  },
+  "do you consent to brex processing your personal information for the purpose of assessing your candidacy for this position in accordance with brex’s applicant privacy policy": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you consent to Brex processing your personal information for the purpose of assessing your candidacy for this position in accordance with Brex’s Applicant Privacy Policy?*",
+    "last_seen": 1782468142,
+    "source": "llm:0.90",
+    "value": "Yes"
+  },
+  "do you currently work for or have you ever worked for a u.s. government entity,": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you currently work for or have you ever worked for a U.S. government entity,",
+    "last_seen": 1782503792,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "do you currently, or have you previously, worked at capital one or a company acq": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you currently, or have you previously, worked at Capital One or a company acq",
+    "last_seen": 1782467911,
+    "source": "agent_loop",
+    "value": "No"
   },
   "do you have a disability or chronic condition": {
     "count": 17,
@@ -311,6 +351,14 @@
     "source": "llm:0.90",
     "value": "No"
   },
+  "have you been employed, or otherwise engaged, by an asana entity in the past (p": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Have you been employed, or otherwise engaged, by an Asana entity in the past? (P",
+    "last_seen": 1782503782,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "have you ever interviewed at anthropic before": {
     "count": 1,
     "field_type": "select",
@@ -367,6 +415,14 @@
     "source": "llm:0.85",
     "value": "Online Job Board"
   },
+  "how did you hear about us": {
+    "count": 15,
+    "field_type": "text",
+    "label": "How did you hear about us?*",
+    "last_seen": 1782468064,
+    "source": "agent_loop",
+    "value": "Online"
+  },
   "how many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct ic reports)": {
     "count": 1,
     "field_type": "select",
@@ -382,6 +438,22 @@
     "last_seen": 1781982234,
     "source": "llm:0.95",
     "value": "Yes"
+  },
+  "if you answered “yes,” please list the u.s. government entity you worked for. if": {
+    "count": 1,
+    "field_type": "text",
+    "label": "If you answered “Yes,” please list the U.S. government entity you worked for. If",
+    "last_seen": 1782503797,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
+  "if you currently work, or have previously worked, at capital one or a company ac": {
+    "count": 2,
+    "field_type": "text",
+    "label": "If you currently work, or have previously worked, at Capital One or a company ac",
+    "last_seen": 1782467933,
+    "source": "agent_loop",
+    "value": "N/A"
   },
   "pick your favorite color": {
     "count": 1,
@@ -470,6 +542,22 @@
     "last_seen": 1782138587,
     "source": "agent_loop",
     "value": "Yes, I have 5 years of experience as a Senior Software Engineer working on backend systems with Python, TypeScript, AWS, PostgreSQL, and Docker in production environments."
+  },
+  "this role requires in-office work three days per week (mon, wed, thurs). do you acknowledge and agree to this requirement": {
+    "count": 1,
+    "field_type": "select",
+    "label": "This role requires in-office work three days per week (Mon, Wed, Thurs). Do you acknowledge and agree to this requirement?*",
+    "last_seen": 1782468144,
+    "source": "llm:0.70",
+    "value": "Yes"
+  },
+  "veteran status": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Veteran Status",
+    "last_seen": 1782468159,
+    "source": "llm:0.90",
+    "value": "Prefer not to say"
   },
   "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
     "count": 1,

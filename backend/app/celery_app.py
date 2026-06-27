@@ -130,4 +130,9 @@ celery_app.conf.beat_schedule = {
         "task": "task:cleanup_old_resumes",
         "schedule": crontab(day_of_week=0, hour=2, minute=0),
     },
+    # Recover stuck applications (status='QUEUED' or 'APPLICATION_STARTED' for more than 30 minutes)
+    "recover-stuck-applications-every-10m": {
+        "task": "task:recover_stuck_applications",
+        "schedule": 60 * 10,  # 10 minutes
+    },
 }

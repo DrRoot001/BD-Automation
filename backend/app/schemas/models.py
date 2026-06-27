@@ -45,7 +45,7 @@ VALID_TRANSITIONS: Dict[ApplicationStatus, List[ApplicationStatus]] = {
     ApplicationStatus.MATCHED: [ApplicationStatus.RESUME_UPDATED, ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
     ApplicationStatus.RESUME_UPDATED: [ApplicationStatus.COVER_LETTER_CREATED, ApplicationStatus.FORM_COMPLETED, ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
     ApplicationStatus.COVER_LETTER_CREATED: [ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
-    ApplicationStatus.QUEUED: [ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.FORM_COMPLETED, ApplicationStatus.FAILED],
+    ApplicationStatus.QUEUED: [ApplicationStatus.APPLICATION_STARTED, ApplicationStatus.FORM_COMPLETED, ApplicationStatus.FAILED, ApplicationStatus.ANALYZED],
     ApplicationStatus.APPLICATION_STARTED: [ApplicationStatus.FORM_COMPLETED, ApplicationStatus.QUEUED, ApplicationStatus.ANALYZED, ApplicationStatus.FAILED, ApplicationStatus.BLOCKED],
     ApplicationStatus.FORM_COMPLETED: [ApplicationStatus.SUBMITTED, ApplicationStatus.QUEUED, ApplicationStatus.FAILED],
     ApplicationStatus.SUBMITTED: [ApplicationStatus.CONFIRMED, ApplicationStatus.REJECTED],

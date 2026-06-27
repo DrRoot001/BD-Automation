@@ -31,6 +31,21 @@ async def lifespan(app: FastAPI):
 
     from app.routers.websocket import start_redis_subscriber, stop_redis_subscriber
     await start_redis_subscriber()
+    
+    # Run the watchdog once on startup to clean up any stale jobs from prior crashes
+    import asyncio
+    from app.database import AsyncSessionLocal
+    from app.services.state_machine import recover_stuck_applications_async
+    
+    async def _run_startup_watchdog():
+        try:
+            async with AsyncSessionLocal() as session:
+                await recover_stuck_applications_async(session)
+        except Exception as e:
+            logger.error(f"[Startup] Watchdog failed: {e}")
+            
+    asyncio.create_task(_run_startup_watchdog())
+    
     yield
     await stop_redis_subscriber()
 

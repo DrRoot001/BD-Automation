@@ -41,6 +41,7 @@ class ApplicationSummary(BaseModel):
     submitted_at: Optional[datetime] = None
     created_at: datetime
     error_message: Optional[str] = None
+    failure_reason: Optional[str] = None
     resume_url: Optional[str] = None
     cover_letter_url: Optional[str] = None
     job_url: Optional[str] = None
@@ -200,7 +201,7 @@ async def get_applications(
     rows = await db.execute(text(f"""
         SELECT a.id, a.job_id, j.title, j.company, j.source AS platform,
                a.status, a.fit_score, a.ats_score,
-               a.submitted_at, a.created_at, a.error_message,
+               a.submitted_at, a.created_at, a.error_message, a.failure_reason,
                r.file_url AS resume_url,
                a.cover_letter_url,
                COALESCE(j.canonical_url, j.source_url) AS job_url,
@@ -230,6 +231,7 @@ async def get_applications(
             submitted_at=r.submitted_at,
             created_at=r.created_at,
             error_message=r.error_message,
+            failure_reason=r.failure_reason,
             resume_url=r.resume_url,
             cover_letter_url=r.cover_letter_url,
             job_url=r.job_url,

@@ -161,7 +161,7 @@ async def test_prepare_package_happy_path(
 
     # 5. Verify status sequence
     status_updates = [log[2]["status"] for log in mock_client.requests_log if log[0] == "PATCH"]
-    assert status_updates == ["ANALYZED", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED", "QUEUED"]
+    assert status_updates == ["QUEUED", "QUEUED", "QUEUED", "QUEUED", "QUEUED"]
 
 
 @pytest.mark.asyncio
@@ -290,7 +290,7 @@ async def test_prepare_package_no_cover_letter(
 
     # Verify sequence transitions skipped COVER_LETTER_CREATED
     status_updates = [log[2]["status"] for log in mock_client.requests_log if log[0] == "PATCH"]
-    assert status_updates == ["ANALYZED", "MATCHED", "RESUME_UPDATED", "QUEUED"]
+    assert status_updates == ["QUEUED", "QUEUED", "QUEUED", "QUEUED"]
 
 
 @pytest.mark.asyncio

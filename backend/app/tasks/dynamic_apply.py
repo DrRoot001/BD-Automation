@@ -56,7 +56,7 @@ def _score_job(candidate_keywords: Set[str], job: Dict[str, Any]) -> float:
     if not haystack:
         return 0.0
     overlap = candidate_keywords & haystack
-    return len(overlap) / max(len(candidate_keywords), 1)
+    return len(overlap) / max(len(haystack), 1)
 
 
 async def _fetch_candidate(client: httpx.AsyncClient, candidate_id: str) -> Optional[Dict[str, Any]]:
@@ -72,9 +72,10 @@ async def _fetch_open_jobs(client: httpx.AsyncClient, limit: int = 500) -> List[
     skip = 0
     page_size = 100
     while skip < limit:
-        r = await client.get(f"{API_BASE}/jobs", params={"skip": skip, "limit": page_size})
+        r = await client.get(f"{API_BASE}/jobs/for-matching", params={"skip": skip, "limit": page_size})
         if r.status_code != 200:
-            break
+            logger.error(f"[Dynamic] Failed to fetch jobs: HTTP {r.status_code} — {r.text}")
+            raise RuntimeError(f"Failed to fetch jobs from API: HTTP {r.status_code}")
         batch = r.json() or []
         if not batch:
             break
@@ -170,7 +171,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
             "message": f"Found {len(scored)} suitable jobs. Triggering AI matching and application pipeline..."
         })
 
-        target_job_ids = [str(job.get("id")) for score, job in scored]
+        target_job_ids = [str(job.get("id") or job.get("job_id")) for score, job in scored]
         
         from app.database import AsyncSessionLocal
         from app.services.matching import run_matching_for_candidate
@@ -181,16 +182,38 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
         async with AsyncSessionLocal() as session:
             try:
                 result = await run_matching_for_candidate(
-                    cand_uuid, session,
+                    candidate_id=cand_uuid,
+                    session=session,
                     target_job_ids=target_job_ids,
-                    manual_limit=max_apps,  # BD-specified limit bypasses daily cap
+                    manual_limit=max_apps
                 )
-                queued.extend(target_job_ids)
+                if result.get("error") == "limit_reached":
+                    active = result.get("active_count", 0)
+                    publish_event_sync("pipeline.progress", {
+                        "candidate_id": candidate_id,
+                        "step": "limit_reached",
+                        "message": f"Application limit reached ({active} job(s) already pending/queued)."
+                    })
+                    return {"queued": [], "skipped": len(target_job_ids), "candidate_id": candidate_id, "error": "limit_reached"}
+                    
+                enqueued_ids = result.get("enqueued_job_ids", [])
+                skipped_details = result.get("skipped", [])
+                
+                queued.extend(enqueued_ids)
+                skipped += len(target_job_ids) - len(enqueued_ids)
                 logger.info(f"[Dynamic] executed M3 pipeline for cand={candidate_id} targets={target_job_ids} result={result}")
+                
+                already_applied = [s for s in skipped_details if s.get("reason") == "already_applied"]
+                skip_msg = ""
+                if already_applied:
+                    skip_msg = f", skipped {len(already_applied)} (already applied)"
+                elif skipped_details:
+                    skip_msg = f", skipped {len(skipped_details)}"
+
                 publish_event_sync("pipeline.progress", {
                     "candidate_id": candidate_id,
                     "step": "done",
-                    "message": f"Successfully processed {len(target_job_ids)} jobs through the AI pipeline."
+                    "message": f"Processed {len(enqueued_ids)} new jobs{skip_msg}."
                 })
             except Exception as exc:
                 logger.error(f"[Dynamic] run_matching_for_candidate failed: {exc}", exc_info=True)
@@ -227,6 +250,15 @@ def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None):
             import traceback
             _log.error(f"[BG] Failed background apply for candidate={candidate_id}: {e}")
             _log.error(traceback.format_exc())
+            try:
+                from app.tasks.dynamic_apply import publish_event_sync
+                publish_event_sync("pipeline.progress", {
+                    "candidate_id": candidate_id,
+                    "step": "error",
+                    "message": f"Pipeline failed: {e}"
+                })
+            except Exception as ev_err:
+                _log.error(f"[BG] Failed to broadcast error event: {ev_err}")
 
     import threading
     threading.Thread(target=run_in_background, daemon=True).start()

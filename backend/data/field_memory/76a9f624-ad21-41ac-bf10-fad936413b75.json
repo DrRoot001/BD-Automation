@@ -15,6 +15,14 @@
     "source": "agent_loop",
     "value": "No"
   },
+  "are you authorized to work in the stated location of this role": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you authorized to work in the stated location of this role?\n*",
+    "last_seen": 1782468134,
+    "source": "profile_direct",
+    "value": "US"
+  },
   "are you authorized to work in the uk": {
     "count": 6,
     "field_type": "text",
@@ -55,6 +63,22 @@
     "source": "agent_loop",
     "value": "United States"
   },
+  "are you currently bound by any agreements with a current or former employer that": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you currently bound by any agreements with a current or former employer that",
+    "last_seen": 1782467019,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you hispanic/latino": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1782466441,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "by submitting my application, i acknowledge that i have read and understand verc": {
     "count": 7,
     "field_type": "text",
@@ -86,6 +110,46 @@
     "last_seen": 1782163317,
     "source": "agent_loop",
     "value": "United States"
+  },
+  "current company / employer": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Who is your current or most recent employer?",
+    "last_seen": 1782467024,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
+  "current job title": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your current or more recent job title?",
+    "last_seen": 1782467032,
+    "source": "agent_loop",
+    "value": "Senior Software Engineer"
+  },
+  "do you consent to brex processing your personal information for the purpose of assessing your candidacy for this position in accordance with brex’s applicant privacy policy": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you consent to Brex processing your personal information for the purpose of assessing your candidacy for this position in accordance with Brex’s Applicant Privacy Policy?*",
+    "last_seen": 1782468142,
+    "source": "llm:0.90",
+    "value": "Yes"
+  },
+  "do you currently live in, or plan to relocate to, the specified location to meet this in-office requirement": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you currently live in, or plan to relocate to, the specified location to meet this in-office requirement?*",
+    "last_seen": 1782468138,
+    "source": "profile_direct",
+    "value": "US"
+  },
+  "do you currently, or have you previously, worked at capital one or a company acq": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you currently, or have you previously, worked at Capital One or a company acq",
+    "last_seen": 1782467911,
+    "source": "agent_loop",
+    "value": "No"
   },
   "do you have a disability or chronic condition (physical, visual, auditory, cognitive, mental, emotional, or other) that substantially limits one or more of your major life activities, including mobility, communication (seeing, hearing, speaking), and learning": {
     "count": 1,
@@ -144,12 +208,28 @@
     "value": "sabih0364@gmail.com"
   },
   "first name": {
-    "count": 13,
+    "count": 18,
     "field_type": "text",
     "label": "First Name",
-    "last_seen": 1782220085,
-    "source": "resume_parse",
+    "last_seen": 1782466462,
+    "source": "agent_loop",
     "value": "Sabih"
+  },
+  "gender": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Gender",
+    "last_seen": 1782468150,
+    "source": "llm:0.90",
+    "value": "Prefer not to say"
+  },
+  "how did you hear about us": {
+    "count": 15,
+    "field_type": "text",
+    "label": "How did you hear about us?*",
+    "last_seen": 1782468064,
+    "source": "agent_loop",
+    "value": "Online"
   },
   "how would you describe your gender identity (mark all that apply)": {
     "count": 8,
@@ -175,6 +255,30 @@
     "source": "agent_loop",
     "value": "Heterosexual"
   },
+  "if you currently work, or have previously worked, at capital one or a company ac": {
+    "count": 2,
+    "field_type": "text",
+    "label": "If you currently work, or have previously worked, at Capital One or a company ac",
+    "last_seen": 1782467933,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
+  "if you heard about us through a referral, please state the brex employee's name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "If you heard about us through a referral, please state the Brex employee's name.",
+    "last_seen": 1782468115,
+    "source": "profile_direct",
+    "value": "Sabih Haider"
+  },
+  "if you're not authorized to work at the stated location, what sponsorship would you require for the role": {
+    "count": 1,
+    "field_type": "text",
+    "label": "If you're not authorized to work at the stated location, what sponsorship would you require for the role?",
+    "last_seen": 1782468115,
+    "source": "profile_direct",
+    "value": "US"
+  },
   "last name": {
     "count": 13,
     "field_type": "text",
@@ -190,6 +294,14 @@
     "last_seen": 1782220085,
     "source": "policy_override",
     "value": "N/A"
+  },
+  "location (city)": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Location (City)*",
+    "last_seen": 1782467881,
+    "source": "agent_loop",
+    "value": "San Francisco"
   },
   "name": {
     "count": 12,
@@ -246,6 +358,38 @@
     "last_seen": 1782186240,
     "source": "agent_loop",
     "value": "123456"
+  },
+  "this role requires in-office work three days per week (mon, wed, thurs). do you acknowledge and agree to this requirement": {
+    "count": 1,
+    "field_type": "select",
+    "label": "This role requires in-office work three days per week (Mon, Wed, Thurs). Do you acknowledge and agree to this requirement?*",
+    "last_seen": 1782468144,
+    "source": "llm:0.70",
+    "value": "Yes"
+  },
+  "veteran status": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Veteran Status",
+    "last_seen": 1782468159,
+    "source": "llm:0.90",
+    "value": "Prefer not to say"
+  },
+  "what are your preferred gender pronouns (she/her/hers; he/him/his; they/them/theirs, etc.)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What are your preferred gender pronouns? (She/Her/Hers; He/Him/His; They/Them/Theirs, etc.)",
+    "last_seen": 1782468217,
+    "source": "rules",
+    "value": "Decline To Self Identify"
+  },
+  "what country are you based in": {
+    "count": 14,
+    "field_type": "text",
+    "label": "What country are you based in?*",
+    "last_seen": 1782468069,
+    "source": "agent_loop",
+    "value": "United States"
   },
   "where did you first hear about this role": {
     "count": 5,

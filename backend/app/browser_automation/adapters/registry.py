@@ -18,6 +18,7 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "workday": WorkdayAdapter,
     "linkedin": LinkedInEasyApplyAdapter,
     "remoterocketship": RemoteRocketshipAdapter,
+    "remote100k": RemoteRocketshipAdapter,
     "icims": ICIMSAdapter,
     "indeed": IndeedAdapter,
     "dice": DiceAdapter,
@@ -34,7 +35,7 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
     # Detect ATS from URL substring when caller only has the URL
     cls = ADAPTER_REGISTRY.get(key)
     if cls is None and key:
-        if "remoterocketship" in normalized:
+        if "remoterocketship" in normalized or "remote100k" in normalized:
             cls = RemoteRocketshipAdapter
         elif "myworkdayjobs" in key:
             cls = WorkdayAdapter

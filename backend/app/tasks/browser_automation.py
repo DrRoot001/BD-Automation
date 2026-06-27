@@ -94,7 +94,7 @@ async def publish_application_failed(
     status_to_set = "BLOCKED" if failure_reason == "BOT_DETECTED" or "blocked" in error.lower() else "FAILED"
     
     metadata = {
-        "error": error,
+        "error_message": error,
         "retry_eligible": retry_eligible
     }
     await transition_status(
@@ -125,10 +125,12 @@ async def publish_status_changed(
 async def hydrate_and_execute(package_dict: dict, retry_count: int) -> ApplicationResult:
     api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
     app_id = package_dict["application_id"]
+    cand_id = package_dict.get("candidate_id")
 
     async with httpx.AsyncClient(timeout=30) as client:
         await publish_event("pipeline.progress", {
             "application_id": str(app_id),
+            "candidate_id": str(cand_id) if cand_id else None,
             "step": "preparing_package",
             "message": "Preparing tailored resume and cover letter..."
         })
@@ -265,6 +267,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     logger.info(f"Loaded executor payload. Hydration complete.")
     await publish_event("pipeline.progress", {
         "application_id": str(package.application_id),
+        "candidate_id": str(package.candidate_id),
         "step": "form_filling",
         "message": f"Initializing browser to fill application at {package.platform.capitalize()}..."
     })
@@ -275,6 +278,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     if result.status == "SUBMITTED":
         await publish_event("pipeline.progress", {
             "application_id": str(package.application_id),
+            "candidate_id": str(package.candidate_id),
             "step": "submitting",
             "message": "Application successfully submitted with evidence!"
         })
@@ -286,6 +290,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     else:
         await publish_event("pipeline.progress", {
             "application_id": str(package.application_id),
+            "candidate_id": str(package.candidate_id),
             "step": "failed",
             "message": f"Automation ended with status: {result.status}"
         })
@@ -321,15 +326,40 @@ def execute_application(self, package_dict: dict):
             ))
         elif result.status in ["FAILED", "CAPTCHA_FAILED"]:
             logger.info(f"Automation execution completed: {result.status}")
+            if result.error_message and ("JOB_EXPIRED" in result.error_message or "job no longer exists" in result.error_message.lower()):
+                asyncio.run(publish_application_failed(
+                    application_id=package_dict.get("application_id", ""),
+                    error=result.error_message,
+                    retry_eligible=False,
+                    failure_reason="JOB_EXPIRED"
+                ))
+                return result.dict()
             raise Exception(f"Execution failed: {result.error_message}")
             
         return result.dict()
     except Retry:
         raise
     except Exception as exc:
+        err_msg = str(exc)
+        if "JOB_EXPIRED" in err_msg or "job no longer exists" in err_msg.lower() or "job posting no longer exists" in err_msg.lower():
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error="Job posting no longer exists or has been removed",
+                retry_eligible=False,
+                failure_reason="JOB_EXPIRED"
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
+        if "PLATFORM_NEEDS_REVIEW" in err_msg or "flagged as needing review" in err_msg.lower():
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="INFRA_ERROR"
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
         if self.request.retries >= self.max_retries:
-            err_msg = str(exc)
-            
             # Determine appropriate failure reason
             failure_reason = "INFRA_ERROR"
             if "form fill incomplete" in err_msg.lower() or "one or more required fields" in err_msg.lower():
@@ -377,3 +407,24 @@ def verify_submission(application_id: str):
     with httpx.Client() as client:
         resp = client.get(f"{api_base}/applications/{application_id}")
         return resp.json()
+
+@celery_app.task(
+    name="task:recover_stuck_applications",
+    queue="queue:application_execution",
+)
+def recover_stuck_applications():
+    """
+    Watchdog task that runs periodically (every 10 minutes) to find applications
+    stuck in QUEUED, APPLICATION_STARTED, or FORM_COMPLETED status for more than
+    their respective thresholds. Marks them as FAILED.
+    """
+    import asyncio
+    from app.database import AsyncSessionLocal
+    from app.services.state_machine import recover_stuck_applications_async
+    
+    async def run_recovery():
+        async with AsyncSessionLocal() as session:
+            await recover_stuck_applications_async(session)
+            
+    asyncio.run(run_recovery())
+

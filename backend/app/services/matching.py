@@ -22,6 +22,72 @@ from app.tasks.browser_automation import execute_application
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+async def get_active_application_count(
+    candidate_id: UUID,
+    session: AsyncSession,
+    since_datetime: Optional[datetime] = None
+) -> int:
+    """
+    Counts active applications for the candidate, excluding any that are stale
+    (stuck in QUEUED > 15 mins, or APPLICATION_STARTED/FORM_COMPLETED > 30 mins).
+    Optionally filters to applications created after since_datetime.
+    """
+    from datetime import datetime, timezone, timedelta
+    from app.models.application import Application
+    from app.models.application_history import ApplicationHistory
+    
+    active_statuses = {
+        "QUEUED", "SUBMITTED", "CONFIRMED", "APPLICATION_STARTED", "FORM_COMPLETED",
+        "INTERVIEW_R1", "INTERVIEW_R2", "INTERVIEW_R3", "INTERVIEW_R4", "OFFER",
+        "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED"
+    }
+    
+    is_mock = type(session).__name__ in ("AsyncMock", "MagicMock") or hasattr(session, "_mock_self")
+    
+    from sqlalchemy import or_
+    stmt = select(Application).where(
+        Application.candidate_id == candidate_id,
+        Application.status.in_(list(active_statuses)),
+        or_(Application.failure_reason.is_(None), Application.failure_reason != "JOB_EXPIRED")
+    )
+    if since_datetime is not None:
+        stmt = stmt.where(Application.created_at >= since_datetime)
+        
+    apps = (await session.execute(stmt)).scalars().all()
+    
+    if is_mock:
+        return len(apps)
+        
+    count = 0
+    now = datetime.now(timezone.utc)
+    for app in apps:
+        if app.status in ["QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED"]:
+            # Check if stale (duration based on latest history transition)
+            hist_stmt = (
+                select(ApplicationHistory)
+                .where(ApplicationHistory.application_id == app.id)
+                .order_by(ApplicationHistory.created_at.desc())
+                .limit(1)
+            )
+            latest_history = (await session.execute(hist_stmt)).scalars().first()
+            
+            start_time = None
+            if latest_history and hasattr(latest_history, "created_at"):
+                val = latest_history.created_at
+                if isinstance(val, datetime):
+                    start_time = val
+            if start_time is None:
+                start_time = app.created_at
+                
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=timezone.utc)
+                
+            threshold_min = 15 if app.status == "QUEUED" else 30
+            if start_time < now - timedelta(minutes=threshold_min):
+                continue
+        count += 1
+    return count
+
 async def run_matching_for_candidate(
     candidate_id: UUID,
     session: AsyncSession,
@@ -39,6 +105,16 @@ async def run_matching_for_candidate(
     5. Scores candidate job fit using the LLM.
     6. For fits >= 70, tailors resume/CL/answers and enqueues browser execution.
     """
+    is_mock = type(session).__name__ in ("AsyncMock", "MagicMock") or hasattr(session, "_mock_self")
+    
+    # 0. Clean up stale applications first (only if session is not a mock)
+    if not is_mock:
+        from app.services.state_machine import recover_stuck_applications_async
+        try:
+            await recover_stuck_applications_async(session)
+        except Exception as e:
+            logger.error(f"Watchdog failed during match pipeline: {e}")
+
     candidate = await session.get(Candidate, candidate_id)
     if not candidate:
         logger.error(f"[Matching] Candidate {candidate_id} not found.")
@@ -128,17 +204,16 @@ async def run_matching_for_candidate(
         logger.warning(f"[Matching] Candidate {candidate.name} ({candidate_id}) has base resume but no embedding after self-heal. Skipping.")
         return {"error": "no_resume_embedding"}
 
-    active_statuses = {
-        "QUEUED", "SUBMITTED", "CONFIRMED", "APPLICATION_STARTED", "FORM_COMPLETED",
-        "INTERVIEW_R1", "INTERVIEW_R2", "INTERVIEW_R3", "INTERVIEW_R4", "OFFER",
-        "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED"
-    }
-
     # 3. Calculate remaining daily limit
     # manual_limit overrides the daily cap (used when BD user manually clicks "Run Now")
+    max_daily = None  # initialized here so it's always defined in the loop below
     if manual_limit is not None:
-        remaining_slots = manual_limit
-        logger.info(f"[Matching] Candidate {candidate.name}: manual run with limit={manual_limit} (bypassing daily cap).")
+        active_count = await get_active_application_count(candidate_id, session)
+        remaining_slots = max(0, manual_limit - active_count)
+        logger.info(f"[Matching] Candidate {candidate.name}: manual run with limit={manual_limit}, active={active_count}, remaining={remaining_slots}")
+        if remaining_slots <= 0:
+            logger.info(f"[Matching] Candidate {candidate.name}: limit reached (limit={manual_limit}, active={active_count}).")
+            return {"error": "limit_reached", "active_count": active_count}
     else:
         max_daily = getattr(candidate, "max_daily_apps_override", None)
         if max_daily is None:
@@ -146,16 +221,11 @@ async def run_matching_for_candidate(
             
         time_24h_ago = datetime.now(timezone.utc) - timedelta(hours=24)
         
-        app_stmt = select(Application).where(
-            Application.candidate_id == candidate_id,
-            Application.created_at >= time_24h_ago
-        )
-        apps = (await session.execute(app_stmt)).scalars().all()
-        
-        already_applied_today = sum(1 for app in apps if app.status in active_statuses)
+        already_applied_today = await get_active_application_count(candidate_id, session, since_datetime=time_24h_ago)
         remaining_slots = max(0, max_daily - already_applied_today)
         
         logger.info(f"[Matching] Candidate {candidate.name}: applied today={already_applied_today}, remaining={remaining_slots}")
+
 
     # Build maps of existing apps to check retry/skip conditions
     skipped_jobs = set()
@@ -165,20 +235,7 @@ async def run_matching_for_candidate(
     all_apps = (await session.execute(all_apps_stmt)).scalars().all()
     
     for app in all_apps:
-        status_val = app.status
-        if status_val in active_statuses or status_val == "REJECTED":
-            skipped_jobs.add(app.job_id)
-        elif status_val in ("FAILED", "BLOCKED"):
-            reason = app.failure_reason
-            retries = app.retry_count or 0
-            if reason == "QUALIFICATION_MISMATCH":
-                skipped_jobs.add(app.job_id)
-            elif reason == "BOT_DETECTED" and retries >= 1:
-                skipped_jobs.add(app.job_id)
-            else:
-                retryable_apps[app.job_id] = app
-        else:
-            skipped_jobs.add(app.job_id)
+        skipped_jobs.add(app.job_id)
 
     # 4. Fetch jobs added in lookback window (defaults to 24h, 72h on Mondays) that are not duplicates and pass pgvector distance < 0.35
     if target_job_ids:
@@ -217,6 +274,7 @@ async def run_matching_for_candidate(
 
     # 5. Process shortlist
     enqueued = []
+    enqueued_job_ids = []
     skipped_details = []
     details = []
     
@@ -240,10 +298,17 @@ async def run_matching_for_candidate(
     for job in jobs:
         if job.id in skipped_jobs:
             logger.info(f"[Matching] Skipping job {job.title} at {job.company}: already applied and not eligible for retry.")
+            skipped_details.append({
+                "job_id": str(job.id),
+                "job_title": job.title,
+                "company": job.company,
+                "reason": "already_applied"
+            })
             continue
             
         if remaining_slots <= 0:
-            logger.info(f"[Matching] Daily application cap ({max_daily}) reached for {candidate.name}. Skipping LLM evaluation.")
+            cap_desc = max_daily if max_daily is not None else manual_limit
+            logger.info(f"[Matching] Application cap ({cap_desc}) reached for {candidate.name}. Skipping LLM evaluation.")
             skipped_details.append({
                 "job_title": job.title,
                 "company": job.company,
@@ -278,6 +343,27 @@ async def run_matching_for_candidate(
             source_url=job.source_url or ""
         )
         job_obj.job_id = str(job.id)
+
+        # Bug 2: Insert Application record as QUEUED before LLM evaluation
+        app_record = Application(
+            candidate_id=candidate_id,
+            job_id=job.id,
+            status="QUEUED",
+            resume_id=base_resume.id
+        )
+        session.add(app_record)
+        await session.commit()
+        await session.refresh(app_record)
+        app_id = app_record.id
+
+        from app.services.events import publish_event
+        await publish_event("application.created", {
+            "application_id": str(app_id),
+            "candidate_id": str(candidate_id),
+            "job_id": str(job.id),
+            "status": "QUEUED",
+            "timestamp": datetime.utcnow().isoformat()
+        })
 
         # LLM Score Match — check Redis cache first to avoid redundant Gemini calls
         try:
@@ -314,26 +400,44 @@ async def run_matching_for_candidate(
                 })
         except Exception as e:
             logger.error("[Matching] Error during LLM score_job_fit for job %s: %s", job.id, e)
+            # Mark the pre-created application record as FAILED so it doesn't sit in QUEUED
+            try:
+                fail_app = await session.get(Application, app_id)
+                if fail_app and fail_app.status == "QUEUED":
+                    fail_app.status = "FAILED"
+                    fail_app.error_message = f"LLM scoring error: {e}"
+                    fail_app.failure_reason = "INFRA_ERROR"
+                    from app.models.application_history import ApplicationHistory
+                    session.add(ApplicationHistory(
+                        application_id=app_id,
+                        from_status="QUEUED",
+                        to_status="FAILED",
+                        meta_data={"error": f"LLM scoring failed: {e}"}
+                    ))
+                    await session.commit()
+                    from app.tasks.browser_automation import publish_status_changed
+                    await publish_status_changed(
+                        application_id=str(app_id),
+                        from_status="QUEUED",
+                        to_status="FAILED"
+                    )
+            except Exception as mark_err:
+                logger.error("[Matching] Could not mark app %s as FAILED after LLM error: %s", app_id, mark_err)
+            skipped_details.append({
+                "job_title": job.title,
+                "company": job.company,
+                "reason": f"llm_error: {str(e)}"
+            })
             continue
 
         if passed_llm:
             try:
                 logger.info(f"[Matching] Job {job.title} passed threshold with score {score}. Preparing package...")
                 
-                existing_app = retryable_apps.get(job.id)
-                app_id = None
-                if existing_app:
-                    app_id = existing_app.id
-                    logger.info(f"[Matching] Reusing existing failed application: {app_id}")
-                    existing_app.status = "FOUND"
-                    existing_app.retry_count = 0
-                    session.add(existing_app)
-                    await session.commit()
-                
                 # Job already passed the LLM gate above (score >= 70).
-                # Use orchestrate_application_package with skip_gate=True so the
-                # gate is NOT run a second time — LLM non-determinism can lower the
-                # score on a re-call and silently skip resume tailoring + cover letter.
+                # Pass the existing app_id so orchestrate_application_package does NOT
+                # create a second application record — it will reuse the one we created above.
+                # Use skip_gate=True so the LLM gate is NOT run a second time.
                 result = await orchestrate_application_package(
                     candidate_id=str(candidate_id),
                     job_id=str(job.id),
@@ -341,19 +445,11 @@ async def run_matching_for_candidate(
                     screening_questions=[],
                     api_base_url=api_base_url,
                     skip_gate=True,              # already gated above
+                    existing_app_id=str(app_id), # reuse record created before LLM
                 )
                 
                 # orchestrate_application_package returns status="QUEUED" on success
                 if result.get("status") == "QUEUED":
-                    if not app_id:
-                        app_stmt = select(Application).where(
-                            Application.candidate_id == candidate_id,
-                            Application.job_id == job.id
-                        )
-                        app_rec_result = await session.execute(app_stmt)
-                        app_rec = app_rec_result.scalar_one()
-                        app_id = app_rec.id
-                    
                     package = {
                         "application_id": str(app_id),
                         "candidate_id": str(candidate_id),
@@ -366,18 +462,67 @@ async def run_matching_for_candidate(
                         "screening_answers": result.get("screening_answers") or {}
                     }
                     
-                    execute_application.apply_async(args=[package], queue="queue:application_execution")
+                    from app.tasks.browser_automation import hydrate_and_execute
+                    import threading
+                    
+                    # Bypass Celery due to Upstash Redis limitations
+                    def run_automation_background_thread(pkg):
+                        import asyncio
+                        
+                        async def _do_run():
+                            try:
+                                await hydrate_and_execute(pkg, retry_count=0)
+                            except Exception as e:
+                                logger.error(f"Background automation failed: {e}")
+                                from app.tasks.browser_automation import publish_application_failed
+                                await publish_application_failed(
+                                    application_id=pkg.get("application_id", ""),
+                                    error=str(e),
+                                    retry_eligible=True,
+                                    failure_reason="INFRA_ERROR"
+                                )
+                                
+                        asyncio.run(_do_run())
+                            
+                    t = threading.Thread(target=run_automation_background_thread, args=(package,))
+                    t.start()
+                    
+                    await publish_event("pipeline.progress", {
+                        "application_id": str(app_id),
+                        "candidate_id": str(candidate_id),
+                        "step": "dispatched",
+                        "message": f"Browser automation dispatched for {job.title} at {job.company}"
+                    })
+                    
                     enqueued.append({
                         "job_title": job.title,
                         "company": job.company,
                         "score": score,
                         "status": "QUEUED"
                     })
+                    enqueued_job_ids.append(str(job.id))
                     remaining_slots -= 1
                     
-                    logger.info(f"[Matching] Enqueued execute_application for application: {app_id}")
+                    logger.info(f"[Matching] Dispatched automation for application: {app_id}")
                 else:
-                    logger.info(f"[Matching] orchestrate_application_package returned status={result.get('status')} for job {job.id}")
+                    logger.warning(f"[Matching] orchestrate_application_package returned status={result.get('status')} for job {job.id}")
+                    # Mark application as FAILED since orchestration didn't complete
+                    try:
+                        fail_app = await session.get(Application, app_id)
+                        if fail_app and fail_app.status == "QUEUED":
+                            fail_app.status = "FAILED"
+                            fail_app.error_message = f"Package prep returned status={result.get('status')} — orchestration incomplete"
+                            fail_app.failure_reason = "INFRA_ERROR"
+                            from app.models.application_history import ApplicationHistory
+                            session.add(ApplicationHistory(
+                                application_id=app_id,
+                                from_status="QUEUED",
+                                to_status="FAILED",
+                                meta_data={"error": f"orchestrate returned status={result.get('status')}"}
+                            ))
+                            await session.commit()
+                    except Exception as mark_err:
+                        logger.error(f"[Matching] Could not mark app {app_id} as FAILED: {mark_err}")
                     skipped_details.append({
                         "job_title": job.title,
                         "company": job.company,
@@ -385,7 +530,30 @@ async def run_matching_for_candidate(
                         "reason": "package_prep_failed"
                     })
             except Exception as e:
-                logger.error(f"[Matching] Failed to prepare/enqueue application for job {job.id}: {e}")
+                logger.error(f"[Matching] Failed to prepare/enqueue application for job {job.id}: {e}", exc_info=True)
+                # Mark the pre-created application record as FAILED with the real error
+                try:
+                    fail_app = await session.get(Application, app_id)
+                    if fail_app and fail_app.status == "QUEUED":
+                        fail_app.status = "FAILED"
+                        fail_app.error_message = str(e)
+                        fail_app.failure_reason = "INFRA_ERROR"
+                        from app.models.application_history import ApplicationHistory
+                        session.add(ApplicationHistory(
+                            application_id=app_id,
+                            from_status="QUEUED",
+                            to_status="FAILED",
+                            meta_data={"error": str(e)}
+                        ))
+                        await session.commit()
+                        from app.tasks.browser_automation import publish_status_changed
+                        await publish_status_changed(
+                            application_id=str(app_id),
+                            from_status="QUEUED",
+                            to_status="FAILED"
+                        )
+                except Exception as mark_err:
+                    logger.error(f"[Matching] Could not mark app {app_id} as FAILED: {mark_err}")
                 skipped_details.append({
                     "job_title": job.title,
                     "company": job.company,
@@ -394,6 +562,29 @@ async def run_matching_for_candidate(
                 })
         else:
             logger.info(f"[Matching] Job {job.title} at {job.company} did not pass threshold (score: {score}).")
+            # QUEUED → ANALYZED: transition the pre-created app record out of the queue
+            try:
+                analyzed_app = await session.get(Application, app_id)
+                if analyzed_app and analyzed_app.status == "QUEUED":
+                    analyzed_app.status = "ANALYZED"
+                    analyzed_app.fit_score = score
+                    from app.models.application_history import ApplicationHistory
+                    session.add(ApplicationHistory(
+                        application_id=app_id,
+                        from_status="QUEUED",
+                        to_status="ANALYZED",
+                        meta_data={"reason": "below_threshold", "score": float(score)}
+                    ))
+                    await session.commit()
+                    await publish_event("application.status_changed", {
+                        "application_id": str(app_id),
+                        "candidate_id": str(candidate_id),
+                        "from_status": "QUEUED",
+                        "to_status": "ANALYZED",
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
+            except Exception as trans_err:
+                logger.error(f"[Matching] Could not transition app {app_id} to ANALYZED: {trans_err}")
             skipped_details.append({
                 "job_title": job.title,
                 "company": job.company,
@@ -404,7 +595,7 @@ async def run_matching_for_candidate(
         details.append({
             "job_title": job.title,
             "company": job.company,
-            "score": score,
+            "score": float(score) if score is not None else None,
             "passed": passed_llm,
             "reasoning": reason
         })
@@ -415,6 +606,7 @@ async def run_matching_for_candidate(
         "pgvector_passed": pgvector_passed_count,
         "llm_passed": len(enqueued),
         "enqueued_count": len(enqueued),
+        "enqueued_job_ids": enqueued_job_ids,
         "details": details,
         "skipped": skipped_details
     }

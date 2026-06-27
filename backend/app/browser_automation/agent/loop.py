@@ -1818,6 +1818,7 @@ class AgentLoop:
         platform = str(job_context.get("platform") or "generic").lower()
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
         self._platform = platform
+        self.verify_gate_limit = self._hints.get("verify_gate_limit", 8)
         self._llm = get_llm()
         # Build the identity-anchored system prompt. Rebuilt if the effective
         # provider changes mid-session (e.g. Anthropic exhausts and Groq takes
@@ -4299,12 +4300,12 @@ class AgentLoop:
                 # click Apply / scroll / wait for SPA. Bumped 3 → 8 because the old
                 # threshold was tripping on multi-page careers SPAs that need
                 # navigation before the form ever appears.
-                if not page_verified and step >= 8:
-                    logger.warning("[AgentLoop] page never verified after 8 steps — aborting")
+                if not page_verified and step >= self.verify_gate_limit:
+                    logger.warning(f"[AgentLoop] page never verified after {self.verify_gate_limit} steps — aborting")
                     return LoopResult(
                         success=False,
                         status="WRONG_PAGE",
-                        error="Agent did not verify page within 8 steps",
+                        error=f"Agent did not verify page within {self.verify_gate_limit} steps",
                         steps_taken=step,
                         actions=actions,
                     )

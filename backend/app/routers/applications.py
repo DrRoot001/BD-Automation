@@ -179,25 +179,27 @@ async def update_status(
     if "error_message" in meta and meta["error_message"] is not None:
         app.error_message = meta["error_message"]
     
-    # 4. Write audit history
-    history = ApplicationHistory(
-        application_id=application_id,
-        from_status=old_status,
-        to_status=update.status.value,
-        metadata=update.metadata or {}
-    )
-    db.add(history)
+    # 4. Write audit history only if status actually changed
+    if old_status != update.status.value:
+        history = ApplicationHistory(
+            application_id=application_id,
+            from_status=old_status,
+            to_status=update.status.value,
+            metadata=update.metadata or {}
+        )
+        db.add(history)
     await db.commit()
     await db.refresh(app)
     
-    # 5. Publish event for Module 5 WebSocket
-    await publish_event("application.status_changed", {
-        "application_id": str(application_id),
-        "candidate_id": str(app.candidate_id),
-        "from_status": old_status,
-        "to_status": update.status.value,
-        "timestamp": datetime.utcnow().isoformat()
-    })
+    # 5. Publish event for Module 5 WebSocket (only when status actually changed)
+    if old_status != update.status.value:
+        await publish_event("application.status_changed", {
+            "application_id": str(application_id),
+            "candidate_id": str(app.candidate_id),
+            "from_status": old_status,
+            "to_status": update.status.value,
+            "timestamp": datetime.utcnow().isoformat()
+        })
     
     return app
 
@@ -253,3 +255,98 @@ async def prepare_package(request: PreparePackageRequest):
             status_code=500,
             detail=f"Error preparing application package: {str(e)}"
         )
+
+@router.post("/{application_id}/retry", response_model=ApplicationResponse)
+async def retry_application(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db)
+):
+    # 1. Fetch current application
+    result = await db.execute(
+        select(Application).where(Application.id == application_id)
+    )
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(404, "Application not found")
+        
+    # 2. Fetch associated job and candidate
+    from app.models.job import Job
+    from app.models.candidate import Candidate
+    from app.models.resume import Resume
+    
+    job = await db.get(Job, app.job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+        
+    candidate = await db.get(Candidate, app.candidate_id)
+    if not candidate:
+        raise HTTPException(404, "Candidate not found")
+        
+    # 3. Retrieve tailored resume URL
+    resume_url = ""
+    if app.resume_id:
+        resume = await db.get(Resume, app.resume_id)
+        if resume:
+            resume_url = resume.file_url
+            
+    # 4. Fetch screening answers from history
+    screening_answers = {}
+    history_stmt = (
+        select(ApplicationHistory)
+        .where(
+            ApplicationHistory.application_id == application_id,
+            ApplicationHistory.to_status == "QUEUED"
+        )
+        .order_by(ApplicationHistory.created_at.desc())
+        .limit(1)
+    )
+    history_rec = (await db.execute(history_stmt)).scalars().first()
+    if history_rec:
+        meta = getattr(history_rec, "meta_data", None) or getattr(history_rec, "metadata", None)
+        if isinstance(meta, dict):
+            screening_answers = meta.get("screening_answers") or {}
+            
+    old_status = app.status
+    
+    # 5. Reset application status and details
+    app.status = "QUEUED"
+    app.retry_count = 0
+    app.error_message = None
+    app.failure_reason = None
+    
+    # 6. Write history
+    history = ApplicationHistory(
+        application_id=application_id,
+        from_status=old_status,
+        to_status="QUEUED",
+        meta_data={"screening_answers": screening_answers, "info": "Retry triggered manually from dashboard"}
+    )
+    db.add(history)
+    await db.commit()
+    await db.refresh(app)
+    
+    # 7. Publish websocket event for UI update
+    await publish_event("application.status_changed", {
+        "application_id": str(application_id),
+        "candidate_id": str(app.candidate_id),
+        "from_status": old_status,
+        "to_status": "QUEUED",
+        "timestamp": datetime.utcnow().isoformat()
+    })
+    
+    # 8. Dispatch celery task
+    from app.tasks.browser_automation import execute_application
+    package = {
+        "application_id": str(application_id),
+        "candidate_id": str(app.candidate_id),
+        "job_id": str(app.job_id),
+        "job_url": job.source_url or "",
+        "platform": (job.source or "").lower(),
+        "ats_type": job.job_type or "",
+        "resume_url": resume_url,
+        "cover_letter_url": app.cover_letter_url or "",
+        "screening_answers": screening_answers
+    }
+    execute_application.apply_async(args=[package], queue="queue:application_execution")
+    
+    return app

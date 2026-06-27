@@ -26,6 +26,117 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+async def is_job_url_active(url: str) -> bool:
+    try:
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+            
+        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            resp = await client.get(url, headers=headers)
+            
+            if resp.status_code in (404, 410):
+                logger.info(f"[Job Check] Job URL returned status {resp.status_code}: {url}")
+                return False
+                
+            final_url = str(resp.url)
+            
+            if final_url != url:
+                parsed_orig = urlparse(url)
+                parsed_final = urlparse(final_url)
+                
+                orig_path = parsed_orig.path.strip("/")
+                final_path = parsed_final.path.strip("/")
+                
+                orig_segments = [s for s in orig_path.split("/") if s]
+                final_segments = [s for s in final_path.split("/") if s]
+                
+                job_id_segments = [s for s in orig_segments if s.isdigit() or len(s) > 8]
+                if job_id_segments:
+                    if not any(jid in final_url for jid in job_id_segments):
+                        logger.info(f"[Job Check] Redirected away from job URL: {url} -> {final_url}")
+                        return False
+                else:
+                    if len(final_segments) < len(orig_segments) and (not final_path or "jobs" not in final_path or final_path == "jobs" or final_path == "careers"):
+                        logger.info(f"[Job Check] Redirected away to homepage or directory: {url} -> {final_url}")
+                        return False
+            
+            text = resp.text.lower()
+            expired_patterns = [
+                "job no longer available",
+                "position is no longer available",
+                "job posting has been removed",
+                "no longer accepting applications",
+                "this job has expired",
+                "job is no longer active",
+                "position has been filled",
+                "job posting is no longer active",
+                "the job you are looking for has been filled",
+                "this listing has expired",
+            ]
+            if any(p in text for p in expired_patterns):
+                logger.info(f"[Job Check] Job page contains expired text patterns: {url}")
+                return False
+                
+            return True
+    except Exception as e:
+        logger.warning(f"Lightweight job check failed for {url}: {e}")
+        return True
+
+
+async def check_page_indicates_expired(page: Page, original_url: str) -> bool:
+    try:
+        final_url = page.url
+        if final_url != original_url:
+            parsed_orig = urlparse(original_url)
+            parsed_final = urlparse(final_url)
+            
+            orig_path = parsed_orig.path.strip("/")
+            final_path = parsed_final.path.strip("/")
+            
+            orig_segments = [s for s in orig_path.split("/") if s]
+            final_segments = [s for s in final_path.split("/") if s]
+            
+            job_id_segments = [s for s in orig_segments if s.isdigit() or len(s) > 8]
+            
+            if job_id_segments:
+                if not any(jid in final_url for jid in job_id_segments):
+                    logger.info(f"[Browser Check] Page redirected away: {original_url} -> {final_url}")
+                    return True
+            else:
+                if len(final_segments) < len(orig_segments) and (not final_path or "jobs" not in final_path or final_path == "jobs" or final_path == "careers"):
+                    logger.info(f"[Browser Check] Page redirected away to directory/homepage: {original_url} -> {final_url}")
+                    return True
+
+        title = (await page.title()).lower()
+        if "404" in title or "page not found" in title or "job not found" in title:
+            logger.info(f"[Browser Check] Page title indicates not found: {title}")
+            return True
+            
+        content = (await page.content()).lower()
+        expired_patterns = [
+            "job no longer available",
+            "position is no longer available",
+            "job posting has been removed",
+            "no longer accepting applications",
+            "this job has expired",
+            "job is no longer active",
+            "position has been filled",
+            "job posting is no longer active",
+            "the job you are looking for has been filled",
+            "this listing has expired",
+        ]
+        if any(p in content for p in expired_patterns):
+            logger.info(f"[Browser Check] Page content indicates expired/removed")
+            return True
+            
+    except Exception as e:
+        logger.warning(f"Error checking if page indicates expired: {e}")
+    return False
+
+
 class RateLimiter:
     def __init__(self):
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
@@ -185,6 +296,11 @@ class ApplicationExecutor:
             return time.monotonic() - start_time
 
         try:
+            # Check platform review status
+            from .platform_review import is_platform_flagged
+            if is_platform_flagged(package.platform):
+                raise Exception(f"PLATFORM_NEEDS_REVIEW: Platform {package.platform} is flagged as needing review due to previous failures.")
+
             # ── PRE-FLIGHT: validate resume exists before launching browser ──
             if not package.resume_url:
                 raise ValueError("ApplicationPackage.resume_url is empty — cannot proceed")
@@ -202,6 +318,16 @@ class ApplicationExecutor:
 
             logger.info(f"[M4] Pre-flight OK — resume={_temp_resume}, "
                         f"cover_letter={_temp_cover or 'N/A'}")
+
+            # ── PRE-FLIGHT 2: check if job exists ──
+            job_url_active = True
+            try:
+                job_url_active = await is_job_url_active(package.job_url)
+            except Exception as e:
+                logger.warning(f"Error checking job URL existence: {e}")
+                
+            if not job_url_active:
+                raise Exception("JOB_EXPIRED: Job posting no longer exists or has been removed")
 
             # ── STEP 1: Rate limit ──
             rate_limiter = RateLimiter()
@@ -236,6 +362,9 @@ class ApplicationExecutor:
 
             # ── STEP 5: Navigate ──
             await adapter.navigate_to_application(page, package.job_url)
+
+            if await check_page_indicates_expired(page, package.job_url):
+                raise Exception("JOB_EXPIRED: Job posting no longer exists or has been removed")
 
             # ── STEP 5.5: Vision page-agent oversight ─────────────────────
             # After navigation, ask Gemini what page state we landed on. If
@@ -769,8 +898,46 @@ class ApplicationExecutor:
             error_message = str(exc)
             logger.error(f"[M4] Application {package.application_id} error: {exc}", exc_info=True)
 
-            if "BLOCKED" in error_message:
+            # Record platform failure
+            if "PLATFORM_NEEDS_REVIEW" not in error_message:
+                try:
+                    from .platform_review import record_platform_failure
+                    record_platform_failure(package.platform, error_message)
+                except Exception as p_exc:
+                    logger.warning(f"Failed to record platform failure: {p_exc}")
+
+            if "PLATFORM_NEEDS_REVIEW" in error_message:
+                status = "FAILED"
+                if context_mgr and context:
+                    try:
+                        await context_mgr.destroy_context(context)
+                    except Exception:
+                        pass
+                _cleanup_temp(_temp_resume, _temp_cover)
+                return ApplicationResult(
+                    application_id=package.application_id,
+                    status="FAILED",
+                    error_message=error_message,
+                    execution_time_seconds=_elapsed(),
+                    retry_count=retry_count,
+                )
+            elif "BLOCKED" in error_message:
                 status = "BLOCKED"
+            elif "JOB_EXPIRED" in error_message:
+                status = "FAILED"
+                if context_mgr and context:
+                    try:
+                        await context_mgr.destroy_context(context)
+                    except Exception:
+                        pass
+                _cleanup_temp(_temp_resume, _temp_cover)
+                return ApplicationResult(
+                    application_id=package.application_id,
+                    status="FAILED",
+                    error_message=error_message.replace("JOB_EXPIRED: ", ""),
+                    execution_time_seconds=_elapsed(),
+                    retry_count=retry_count,
+                )
             elif retry_count < 3:
                 # Re-raise so Celery can schedule a retry
                 if context_mgr and context:

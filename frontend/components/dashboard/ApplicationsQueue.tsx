@@ -80,6 +80,11 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
     if (evt.event === 'pipeline.progress') {
       const step = String(evt.data?.step)
       const message = String(evt.data?.message)
+      
+      // Only show progress for our candidate's pipeline
+      const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
+      if (evtCandidateId && candidateId && evtCandidateId !== candidateId) return
+      
       setPipelineState({ step, message, ts: new Date() })
       
       // If it's a terminal step for the background matcher, hide the status after a delay
@@ -87,6 +92,20 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
         if (step !== 'matches_found') {
           setTimeout(() => setPipelineState(null), 5000)
         }
+        queryClient.invalidateQueries({ queryKey: ['applications'] })
+        queryClient.invalidateQueries({ queryKey: ['kpis'] })
+      }
+    } else if (evt.event === 'application.created') {
+      // Only refetch if the event is for our candidate
+      const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
+      if (!evtCandidateId || !candidateId || evtCandidateId === candidateId) {
+        queryClient.invalidateQueries({ queryKey: ['applications'] })
+        queryClient.invalidateQueries({ queryKey: ['kpis'] })
+      }
+    } else if (evt.event === 'application.status_changed') {
+      // Only refetch if the event is for our candidate
+      const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
+      if (!evtCandidateId || !candidateId || evtCandidateId === candidateId) {
         queryClient.invalidateQueries({ queryKey: ['applications'] })
         queryClient.invalidateQueries({ queryKey: ['kpis'] })
       }

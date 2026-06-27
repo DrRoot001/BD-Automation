@@ -66,3 +66,33 @@ class JobResponse(BaseModel):
             except Exception:
                 return []
         return v
+
+class JobMatchingResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    title: str
+    company: str
+    location: Optional[str] = None
+    source: str
+    source_url: str
+    canonical_url: Optional[str] = None
+    skills: Optional[List[str]] = None
+    salary_min: Optional[int] = None
+    salary_max: Optional[int] = None
+    pay_period: Optional[str] = None
+    job_type: Optional[str] = None
+    posted_at: Optional[datetime] = None
+    created_at: datetime
+
+    @field_validator('skills', mode='before')
+    @classmethod
+    def coerce_skills(cls, v):
+        if v is None:
+            return []
+        if isinstance(v, str):
+            try:
+                return json.loads(v)
+            except Exception:
+                return []
+        return v

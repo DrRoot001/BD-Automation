@@ -31,6 +31,7 @@ class FailureReason(str, Enum):
     QUALIFICATION_MISMATCH = "QUALIFICATION_MISMATCH"
     BOT_DETECTED = "BOT_DETECTED"
     FORM_INCOMPLETE = "FORM_INCOMPLETE"
+    JOB_EXPIRED = "JOB_EXPIRED"
 
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus

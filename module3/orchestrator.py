@@ -29,11 +29,16 @@ async def orchestrate_application_package(
     base_resume_pdf_path: Optional[str] = None,
     screening_questions: Optional[List[str]] = None,
     api_base_url: str = "http://127.0.0.1:8000",
-    skip_gate: bool = False
+    skip_gate: bool = False,
+    existing_app_id: Optional[str] = None,
 ) -> Dict[str, any]:
     """
     Orchestrate candidate application flow:
     Score -> Validate Gate -> Tailor Resume -> Generate Cover Letter -> QA -> Queue.
+    
+    If existing_app_id is provided (e.g. from matching.py which creates the record
+    before LLM scoring), the orchestrator reuses that record instead of creating
+    a new one. This prevents duplicate application records.
     """
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
     
@@ -141,20 +146,25 @@ async def orchestrate_application_package(
         )
         job.job_id = job_id
 
-        # 4. Create Application record in FOUND status
-        print("[ORCHESTRATOR] Creating application record in 'FOUND' status...")
-        app_payload = {
-            "candidate_id": candidate_id,
-            "job_id": job_id,
-            "status": "FOUND",
-            "resume_id": base_resume_id
-        }
-        resp = await client.post("/api/applications", json=app_payload)
-        if resp.status_code != 201:
-            raise ValueError(f"Failed to create application record: {resp.text}")
-        application = resp.json()
-        app_id = application["id"]
-        print(f"[ORCHESTRATOR] Created application ID: {app_id}")
+        # 4. Create or reuse Application record in QUEUED status
+        if existing_app_id:
+            # Reuse the record already created by matching.py (avoids duplicate + redundant patches)
+            app_id = existing_app_id
+            print(f"[ORCHESTRATOR] Reusing existing application ID: {app_id}")
+        else:
+            print("[ORCHESTRATOR] Creating application record in 'QUEUED' status...")
+            app_payload = {
+                "candidate_id": candidate_id,
+                "job_id": job_id,
+                "status": "QUEUED",
+                "resume_id": base_resume_id
+            }
+            resp = await client.post("/api/applications", json=app_payload)
+            if resp.status_code not in (200, 201):
+                raise ValueError(f"Failed to create application record: {resp.text}")
+            application = resp.json()
+            app_id = application["id"]
+            print(f"[ORCHESTRATOR] Created application ID: {app_id}")
 
         # 5. Run Fit Score & ATS match evaluation
         print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
@@ -184,27 +194,8 @@ async def orchestrate_application_package(
                 "screening_answers": {}
             }
 
-        # Transition to ANALYZED since combined_score >= 70
-        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'ANALYZED'...")
-        update_payload = {
-            "status": "ANALYZED",
-            "fit_score": match_result.fit_score,
-            "ats_score": match_result.ats_score,
-            "combined_score": match_result.combined_score,
-            "metadata": {"explanation": match_result.reasoning}
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-
-        # Transition to MATCHED
-        print("[ORCHESTRATOR] Transitioning status to 'MATCHED'...")
-        update_payload = {
-            "status": "MATCHED",
-            "fit_score": match_result.fit_score,
-            "ats_score": match_result.ats_score,
-            "combined_score": match_result.combined_score,
-            "metadata": {"explanation": match_result.reasoning}
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        # combined_score >= 70 — proceed with tailoring
+        print("[ORCHESTRATOR] Combined score matches threshold. Proceeding with resume tailoring...")        
 
         # Query existing resumes for this candidate to calculate next version number
         all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")
@@ -269,49 +260,37 @@ async def orchestrate_application_package(
         tailored_db_resume = resp.json()
         tailored_resume_id = tailored_db_resume["id"]
         
-        # Update status to RESUME_UPDATED
-        print("[ORCHESTRATOR] Transitioning application status to 'RESUME_UPDATED'...")
-        update_payload = {
-            "status": "RESUME_UPDATED",
-            "resume_id": tailored_resume_id,
-            "metadata": {
-                "ats_score_before": tailored_resume.ats_score_before,
-                "ats_score_after": tailored_resume.ats_score_after
-            }
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-        
         cover_letter_url = cover_letter.pdf_url
         print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
         
         # Upload Cover letter to the CORRECT Bucket
         remote_cl_url = await upload_file_to_supabase(
             cover_letter_url, 
-            "cover_letter", # CHANGED from "cover_letter"
+            "cover_letter",
             f"{candidate_id}_{job_id}_cl.pdf"
         )
         cover_letter_url = remote_cl_url
-        
-        # Update status to COVER_LETTER_CREATED
-        print("[ORCHESTRATOR] Transitioning application status to 'COVER_LETTER_CREATED'...")
-        update_payload = {
-            "status": "COVER_LETTER_CREATED",
-            "cover_letter_url": cover_letter_url
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
         if screening_questions:
             print("[ORCHESTRATOR] Screening answers drafted successfully.")
 
-        # Update status to QUEUED (Ready for submission)
-        print("[ORCHESTRATOR] Application package complete. Transitioning application status to 'QUEUED'...")
-        update_payload = {
+        # Final consolidated status update: set tailored resume, scores, and cover letter in one patch
+        print("[ORCHESTRATOR] Application package complete. Updating application record...")
+        final_update_payload = {
             "status": "QUEUED",
+            "resume_id": tailored_resume_id,
+            "cover_letter_url": cover_letter_url,
+            "fit_score": match_result.fit_score,
+            "ats_score": match_result.ats_score,
+            "combined_score": match_result.combined_score,
             "metadata": {
-                "screening_answers": screening_answers
+                "ats_score_before": tailored_resume.ats_score_before,
+                "ats_score_after": tailored_resume.ats_score_after,
+                "screening_answers": screening_answers,
+                "explanation": match_result.reasoning
             }
         }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        await client.patch(f"/api/applications/{app_id}/status", json=final_update_payload)
 
         # 10. Publish event to Redis event bus
         if HAS_EVENTS:
@@ -442,11 +421,11 @@ async def prepare_package_for_live_application(
                     break
         
         if not app_id:
-            print("[ORCHESTRATOR] Application record not found. Creating in 'FOUND' status...")
+            print("[ORCHESTRATOR] Application record not found. Creating in 'QUEUED' status...")
             app_payload = {
                 "candidate_id": candidate_id,
                 "job_id": job_id,
-                "status": "FOUND",
+                "status": "QUEUED",
                 "resume_id": base_resume_id
             }
             resp = await client.post("/api/applications", json=app_payload)
@@ -482,10 +461,10 @@ async def prepare_package_for_live_application(
                 "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 70: {match_result.reasoning}"
             }
 
-        # Transition to ANALYZED since combined_score >= 70
-        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'ANALYZED'...")
+        # Transition to QUEUED since combined_score >= 70
+        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'QUEUED'...")
         update_payload = {
-            "status": "ANALYZED",
+            "status": "QUEUED",
             "fit_score": match_result.fit_score,
             "ats_score": match_result.ats_score,
             "combined_score": match_result.combined_score,
@@ -493,10 +472,10 @@ async def prepare_package_for_live_application(
         }
         await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
 
-        # Transition to MATCHED
-        print("[ORCHESTRATOR] Transitioning status to 'MATCHED'...")
+        # Transition to QUEUED
+        print("[ORCHESTRATOR] Transitioning status to 'QUEUED'...")
         update_payload = {
-            "status": "MATCHED",
+            "status": "QUEUED",
             "fit_score": match_result.fit_score,
             "ats_score": match_result.ats_score,
             "combined_score": match_result.combined_score,
@@ -553,9 +532,9 @@ async def prepare_package_for_live_application(
         tailored_db_resume = resp.json()
         tailored_resume_id = tailored_db_resume["id"]
         
-        # Update application status to RESUME_UPDATED
+        # Update application status to QUEUED
         update_payload = {
-            "status": "RESUME_UPDATED",
+            "status": "QUEUED",
             "resume_id": tailored_resume_id,
             "metadata": {
                 "ats_score_before": tailored_resume.ats_score_before,
@@ -580,9 +559,9 @@ async def prepare_package_for_live_application(
             )
             cover_letter_url = remote_cl_url
             
-            # Update application status to COVER_LETTER_CREATED
+            # Update application status to QUEUED
             update_payload = {
-                "status": "COVER_LETTER_CREATED",
+                "status": "QUEUED",
                 "cover_letter_url": cover_letter_url
             }
             await client.patch(f"/api/applications/{app_id}/status", json=update_payload)

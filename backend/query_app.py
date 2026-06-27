@@ -1,20 +1,24 @@
 import asyncio
-import sys
-from sqlalchemy.ext.asyncio import create_async_engine
-from sqlalchemy import text
-
-DATABASE_URL = "postgresql+asyncpg://postgres.rdfnydteruigmajebxsm:JOWA1pMxYz70t1YR@aws-1-ap-southeast-1.pooler.supabase.com:5432/postgres"
+from sqlalchemy import select, text
+from app.database import AsyncSessionLocal
+from app.models.application import Application
 
 async def main():
-    engine = create_async_engine(DATABASE_URL)
-    async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT id, status, screenshot_url, cover_letter_url, error_message, retry_count FROM applications WHERE id = '036eda83-946d-45f7-af0d-f87dd977ae74'"))
-        row = result.fetchone()
-        print(row)
-        
-        # also get history
-        result2 = await conn.execute(text("SELECT from_status, to_status, created_at, meta_data FROM application_history WHERE application_id = '036eda83-946d-45f7-af0d-f87dd977ae74' ORDER BY created_at ASC"))
-        for r in result2:
-            print(r)
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Application).where(
+                Application.id == "f104a72a-e9b0-44b6-8540-9ae47e77d0f2"
+            )
+        )
+        app = result.scalars().first()
+        if app:
+            print(f"App {app.id}: status={app.status} err={app.error_message}")
+        else:
+            print("App not found!")
+            
+        # Get all application histories for this candidate
+        res2 = await session.execute(text("SELECT application_id, from_status, to_status, meta_data FROM application_history WHERE application_id = 'f104a72a-e9b0-44b6-8540-9ae47e77d0f2'"))
+        for row in res2:
+            print(row)
 
 asyncio.run(main())

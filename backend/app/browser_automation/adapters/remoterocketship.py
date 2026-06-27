@@ -160,7 +160,8 @@ class RemoteRocketshipAdapter(BasePlatformAdapter):
         # straight to that ATS adapter — otherwise we'd try to scrape an
         # Ashby/Greenhouse page as if it were an RR listing and fail.
         direct_key = _detect_ats_from_url(job_url)
-        if direct_key and "remoterocketship" not in (urlparse(job_url).hostname or "").lower():
+        hostname = (urlparse(job_url).hostname or "").lower()
+        if direct_key and "remoterocketship" not in hostname and "remote100k" not in hostname:
             self._inner = get_adapter(direct_key)
             self._resolved_url = job_url
             logger.info(f"[RR] URL is already a resolved {direct_key!r} ATS — delegating directly")

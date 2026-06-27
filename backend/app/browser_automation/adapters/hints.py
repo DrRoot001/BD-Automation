@@ -359,6 +359,7 @@ _HINTS: Dict[str, Dict[str, Any]] = {
     },
 
     "remoterocketship": {
+        "verify_gate_limit": 15,
         "apply_selectors": [
             "button[aria-label='Apply']",
             "button:has-text('Apply')",
@@ -390,6 +391,39 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "Listing page has NO form fields — only a job description and an Apply button.",
             "The 'underlying' ATS host determines the actual form layout; treat that ATS's quirks as authoritative.",
             "If you ever land on a remoterocketship.com URL during fill, the HTTP pre-resolve failed — abort or click Apply with the vision agent.",
+        ],
+    },
+
+    "remote100k": {
+        "verify_gate_limit": 15,
+        "apply_selectors": [
+            "a:has-text('Apply for This Job')",
+            "a:has-text('Apply for this Job')",
+            "a:has-text('Apply')",
+            "a:has-text('Apply Now')",
+            "button:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+            "your application has been received",
+        ],
+        "url_hint": (
+            "Listing pages live on remote100k.com. Each posting's Apply "
+            "button is an anchor pointing at the underlying ATS (Greenhouse, "
+            "Lever, Ashby, etc.). The adapter pre-resolves that URL via HTTP "
+            "and navigates the browser directly to the ATS form — you should "
+            "never see remote100k.com once the form loads."
+        ),
+        "quirks": [
+            "Listing page has NO form fields — only a job description and an Apply button.",
+            "The 'underlying' ATS host determines the actual form layout; treat that ATS's quirks as authoritative.",
+            "If you ever land on a remote100k.com URL during fill, the HTTP pre-resolve failed — abort or click Apply with the vision agent.",
         ],
     },
 

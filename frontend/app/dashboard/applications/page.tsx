@@ -54,8 +54,15 @@ export default function ApplicationsPage() {
     setIsDrawerOpen(true)
   }
 
-  const handleRetry = (appId: string) => {
-    console.log("Retry application:", appId)
+  const handleRetry = async (appId: string) => {
+    try {
+      await api.retryApplication(appId)
+      alert("Application re-queued for execution successfully!")
+      setIsDrawerOpen(false)
+      refetch()
+    } catch (err: any) {
+      alert(err.message || "Failed to retry application")
+    }
   }
 
   // Filter applications by company or job title

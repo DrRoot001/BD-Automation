@@ -112,6 +112,7 @@ export interface ApplicationSummary {
   submitted_at: string | null
   created_at: string
   error_message?: string | null
+  failure_reason?: string | null
   resume_url?: string | null
   cover_letter_url?: string | null
   job_url?: string | null
@@ -249,6 +250,9 @@ export const api = {
 
   getApplicationHistory: (id: string) =>
     fetchJSON<ApplicationHistoryEntry[]>(`/applications/${id}/history`),
+
+  retryApplication: (appId: string) =>
+    postJSON<any>(`/applications/${appId}/retry`, {}),
 
   getJob: (id: string) =>
     fetchJSON<JobSummary>(`/jobs/${id}`),

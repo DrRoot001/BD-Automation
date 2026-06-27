@@ -270,6 +270,31 @@ async def _append_jobs_to_json_log(created_jobs: List[Job]) -> None:
         print(f"Warning: failed to append jobs to JSON log: {exc}")
 
 
+from app.schemas.job import JobMatchingResponse
+
+@router.get("/for-matching", response_model=List[JobMatchingResponse])
+async def get_jobs_for_matching(
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Lightweight endpoint for the keyword matching pipeline.
+    Explicitly defers 'description' and 'embedding' to reduce Pydantic serialization
+    overhead and improve fetch performance (e.g. from 17s to <1s for 100 jobs).
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import defer
+    result = await db.execute(
+        select(Job)
+        .options(defer(Job.embedding), defer(Job.description))
+        .order_by(Job.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+    )
+    return result.scalars().all()
+
+
 @router.get("", response_model=List[JobResponse])
 async def get_jobs(
     skip: int = 0,

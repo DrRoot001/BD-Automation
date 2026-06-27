@@ -7,6 +7,7 @@ cross-run learning loop.
 from __future__ import annotations
 
 import logging
+import asyncio
 from typing import Optional, Tuple
 
 from playwright.async_api import Page
@@ -30,11 +31,10 @@ _APPLY_SELECTORS = [
 _SUBMIT_SELECTORS = [
     "button[type='submit']",
     "input[type='submit']",
-    "button:has-text('Submit Application')",
-    "button:has-text('Submit application')",
-    "button:has-text('Send Application')",
     "button:has-text('Submit')",
     "button:has-text('Apply')",
+    "button:has-text('Send Application')",
+    "[role='button']:has-text('Submit')",
 ]
 
 _SUCCESS_PATTERNS = (
@@ -107,23 +107,40 @@ class GenericFormAdapter(BasePlatformAdapter):
 
     async def submit(self, page: Page) -> bool:
         learned = get_learned_fixes("generic").get("submit")
-        for sel in learned + [s for s in _SUBMIT_SELECTORS if s not in learned]:
-            try:
-                btn = page.locator(sel).first
-                if await btn.count() > 0:
-                    await btn.scroll_into_view_if_needed()
-                    await btn.click(timeout=6_000)
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=12_000)
-                    except Exception:
-                        pass
-                    await self.human_delay(0.8, 1.6)
-                    get_learned_fixes("generic").add("submit", sel)
-                    logger.info(f"[Generic] submit via {sel!r}")
-                    return True
-            except Exception as exc:
-                logger.debug(f"[Generic] submit selector {sel!r} failed: {exc}")
-        return False
+        selectors = learned + [s for s in _SUBMIT_SELECTORS if s not in learned]
+
+        async def try_selectors() -> bool:
+            for sel in selectors:
+                try:
+                    btn = page.locator(sel).first
+                    if await btn.count() > 0:
+                        await btn.scroll_into_view_if_needed()
+                        await btn.click(timeout=6_000)
+                        try:
+                            await page.wait_for_load_state("networkidle", timeout=12_000)
+                        except Exception:
+                            pass
+                        await self.human_delay(0.8, 1.6)
+                        get_learned_fixes("generic").add("submit", sel)
+                        logger.info(f"[Generic] submit via {sel!r}")
+                        return True
+                except Exception as exc:
+                    logger.debug(f"[Generic] submit selector {sel!r} failed: {exc}")
+            return False
+
+        # Attempt 1: Try all selectors as is
+        if await try_selectors():
+            return True
+
+        # Attempt 2: Scroll to bottom, then retry all selectors
+        logger.info("[Generic] Submit buttons not found. Scrolling to bottom to retry...")
+        try:
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await self.human_delay(1.0, 1.5)
+        except Exception as exc:
+            logger.debug(f"[Generic] failed to scroll to bottom before retry: {exc}")
+
+        return await try_selectors()
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
         try:
