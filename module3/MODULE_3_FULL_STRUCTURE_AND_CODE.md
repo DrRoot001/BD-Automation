@@ -1516,10 +1516,18 @@ async def tailor_resume(
         for edu in final_resume_json.get("education", []):
             date_str = edu.get("date", "")
             digits = re.findall(r'\d{4}', str(date_str))
+            
+            degree_str = edu.get("degree", "")
+            field_str = edu.get("field", "") or edu.get("major", "")
+            if not field_str and " in " in degree_str:
+                parts = degree_str.split(" in ", 1)
+                degree_str = parts[0].strip()
+                field_str = parts[1].strip()
+                
             temp_edu.append(EducationEntry(
                 institution=edu.get("institution", ""),
-                degree=edu.get("degree", ""),
-                field="",
+                degree=degree_str,
+                field=field_str, 
                 graduation_year=int(digits[0]) if digits else None
             ))
             
@@ -1566,15 +1574,23 @@ async def tailor_resume(
     for edu in final_resume_json.get("education", []):
         date_str = edu.get("date", "")
         digits = re.findall(r'\d{4}', str(date_str))
+        
+        degree_str = edu.get("degree", "")
+        field_str = edu.get("field", "") or edu.get("major", "")
+        if not field_str and " in " in degree_str:
+            parts = degree_str.split(" in ", 1)
+            degree_str = parts[0].strip()
+            field_str = parts[1].strip()
+            
         final_education.append(EducationEntry(
             institution=edu.get("institution", "Institution"),
-            degree=edu.get("degree", ""),
-            field="",
+            degree=degree_str, 
+            field=field_str,
             graduation_year=int(digits[0]) if digits else None
         ))
         pdf_education.append({
             "institution": edu.get("institution", "Institution"),
-            "degree": edu.get("degree", ""),
+            "degree": f"{degree_str} in {field_str}" if field_str else degree_str,
             "date": edu.get("date", "")
         })
 
