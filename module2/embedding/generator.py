@@ -45,7 +45,10 @@ def generate_embedding(texts: List[str]) -> List[List[float]]:
         try:
             model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
             if hasattr(openai, "OpenAI"):
-                client = openai.OpenAI()
+                # Bound the call: the OpenAI SDK defaults to a 10-minute timeout
+                # with retries, which (when invoked from a request handler) can
+                # stall the pipeline. Fail fast to the pseudo-embedding fallback.
+                client = openai.OpenAI(timeout=20.0, max_retries=1)
                 resp = client.embeddings.create(model=model, input=texts)
                 return [r.embedding for r in resp.data]
             else:

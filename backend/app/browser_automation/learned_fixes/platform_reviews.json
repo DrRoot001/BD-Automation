@@ -1,0 +1,33 @@
+{
+  "generic": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-06-27T01:11:36.913603",
+        "error": "ApplicationPackage.resume_url is empty \u2014 cannot proceed"
+      }
+    ]
+  },
+  "remote100k": {
+    "needs_review": true,
+    "failures": [
+      {
+        "timestamp": "2026-06-27T01:12:35.537928",
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
+      },
+      {
+        "timestamp": "2026-06-27T01:20:14.794790",
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
+      }
+    ]
+  },
+  "greenhouse": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-06-27T01:36:30.219975",
+        "error": "BLOCKED: Job-specific URL redirected to careers landing ('https://www.coinbase.com/careers'). Possible reasons: job is closed, gh_jid invalid, or anti-bot redirect."
+      }
+    ]
+  }
+}

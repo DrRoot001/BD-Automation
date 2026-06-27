@@ -104,6 +104,24 @@ async def resolve_candidate(query: str) -> dict:
         "work_authorization_type": _WORK_AUTH_TYPE_MAP.get(work_auth, "Other"),
         "sponsorship": "No" if is_auth else "Yes",
     }
+    # Test-only phone override. Some candidates have invalid phone data (e.g.
+    # an unassigned NANP area code) that real ATS phone widgets reject. This
+    # lets us validate the pipeline end-to-end with a valid number without
+    # mutating production data. Real candidates supply their own valid phone.
+    _test_phone = os.getenv("TEST_PHONE", "").strip()
+    if _test_phone:
+        profile["phone"] = _test_phone
+        logger.info(f"[test] phone overridden via TEST_PHONE → {_test_phone!r}")
+
+    # Test-only full address. Some candidates store only a country code as their
+    # location (e.g. "US"), which can't satisfy ATS steps that require a full
+    # street/city/state/ZIP. TEST_LOCATION lets us validate those steps without
+    # mutating production data. Real candidates supply their own address.
+    _test_location = os.getenv("TEST_LOCATION", "").strip()
+    if _test_location:
+        profile["location"] = _test_location
+        logger.info(f"[test] location overridden via TEST_LOCATION → {_test_location!r}")
+
     profile["_candidate_id"] = str(cand.id)
     logger.info(f"Candidate {full!r} id={cand.id} email={cand.email!r} work_auth={work_auth}")
     return profile
@@ -177,6 +195,28 @@ async def resolve_files(candidate_id: str) -> tuple[str | None, str | None]:
     return resume_url, cover_letter_url
 
 
+def _address_screening_answers() -> dict:
+    """Parse TEST_LOCATION ("street, city, state zip") into per-field answers so
+    ATS address steps (address/city/state/postal) get exact values. Test-only."""
+    loc = os.getenv("TEST_LOCATION", "").strip()
+    if not loc:
+        return {}
+    out: dict = {"Country": "United States", "country": "United States"}
+    parts = [p.strip() for p in loc.split(",")]
+    if len(parts) >= 1:
+        out["Address"] = out["address"] = out["Street address"] = parts[0]
+    if len(parts) >= 2:
+        out["City"] = out["city"] = parts[1]
+    if len(parts) >= 3:
+        m = re.match(r"([A-Za-z ]+)\s*(\d{5})?", parts[2])
+        if m:
+            if m.group(1):
+                out["State"] = out["state"] = m.group(1).strip()
+            if m.group(2):
+                out["Postal code"] = out["postal"] = out["Zip"] = out["ZIP code"] = m.group(2)
+    return out
+
+
 async def main() -> int:
     parser = argparse.ArgumentParser(description="M4 AI-first real test (any platform)")
     parser.add_argument("url", nargs="?", default=None, help="Explicit job URL (optional)")
@@ -219,6 +259,7 @@ async def main() -> int:
             "Work Authorization": profile.get("work_authorization_type", "US Citizen"),
             "Are you legally authorized to work in the United States?": "Yes",
             "Will you now or in the future require sponsorship for employment visa status?": "No",
+            **_address_screening_answers(),
         },
     )
 

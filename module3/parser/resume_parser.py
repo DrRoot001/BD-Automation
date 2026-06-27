@@ -4,11 +4,12 @@ from __future__ import annotations
 import os
 import asyncio
 import json
+import re
 import pdfplumber
 import pypdfium2 as pdfium
 from PIL import Image
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from google import genai
 from google.genai import types
 
@@ -27,7 +28,17 @@ class EducationEntry(BaseModel):
     graduation_year: Optional[int] = Field(None, description="Graduation year (4-digit integer)")
 
 class ResumeSection(BaseModel):
-    summary: str = Field(description="Professional summary or profile description")
+    summary: str = Field(default="", description="Professional summary or profile description")
+    email: Optional[str] = Field(None, description="Email address found in the resume contact section. Return None if absent.")
+    phone: Optional[str] = Field(None, description="Phone number found in the resume contact section. Return None if absent.")
+    linkedin_url: Optional[str] = Field(None, description="LinkedIn URL found in the resume contact section. Return None if absent.")
+
+    @field_validator("summary", mode="before")
+    @classmethod
+    def _coerce_summary(cls, v):
+        # Many resumes have no explicit summary section; the LLM legitimately
+        # returns null. Coerce to empty string instead of failing validation.
+        return v if isinstance(v, str) else ""
     current_company: Optional[str] = Field(None, description="Name of the candidate's current or most recent employer company. Return None if not explicitly clear.")
     current_title: Optional[str] = Field(None, description="Candidate's current or most recent job title. Return None if not explicitly clear.")
     salary_expectation: Optional[str] = Field(None, description="Any mention of salary expectations or current salary. Return None if absent.")
@@ -56,13 +67,47 @@ def extract_pdf_text(file_path: str) -> str:
                 text_content.append(page_text)
     return "\n".join(text_content)
 
+
+def _extract_contact_fallbacks(raw_text: str) -> dict[str, Optional[str]]:
+    """Pull obvious contact fields from PDF text when the LLM omits them."""
+    email = None
+    phone = None
+    linkedin_url = None
+
+    email_match = re.search(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+", raw_text or "")
+    if email_match:
+        email = email_match.group(0).strip(" .,:;")
+
+    linkedin_match = re.search(r"(?:https?://)?(?:www\.)?linkedin\.com/[^\s|,;]+", raw_text or "", re.IGNORECASE)
+    if linkedin_match:
+        linkedin_url = linkedin_match.group(0).strip(" .,:;")
+
+    phone_match = re.search(
+        r"(?:(?:\+?1[\s.-]*)?(?:\(?\d{3}\)?[\s.-]*)\d{3}[\s.-]*\d{4})",
+        raw_text or "",
+    )
+    if phone_match:
+        phone = phone_match.group(0).strip(" .,:;")
+
+    return {
+        "email": email,
+        "phone": phone,
+        "linkedin_url": linkedin_url,
+    }
+
 def render_pdf_to_images(file_path: str) -> List[Image.Image]:
     """Render PDF pages to PIL images."""
     doc = pdfium.PdfDocument(file_path)
     images = []
-    for page in doc:
-        bitmap = page.render(scale=2)
-        images.append(bitmap.to_pil())
+    try:
+        for page in doc:
+            bitmap = page.render(scale=2)
+            images.append(bitmap.to_pil())
+            page.close()
+    finally:
+        # pdfium holds an OS file handle until the document is closed; on Windows
+        # a leaked handle blocks os.unlink() of the temp PDF (WinError 32).
+        doc.close()
     return images
 
 async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resume_id: Optional[str] = None) -> ResumeData:
@@ -74,7 +119,10 @@ async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resum
         import httpx
         import tempfile
         try:
-            async with httpx.AsyncClient() as client:
+            # httpx defaults to a 5s timeout; Supabase storage can be slower than
+            # that on a cold object, which spuriously fails the download. Use a
+            # generous timeout with follow_redirects for public-bucket URLs.
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 resp = await client.get(file_path)
                 resp.raise_for_status()
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
@@ -139,6 +187,11 @@ async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resum
         print("Failed to parse Gemini output as ResumeSection:", e)
         print("Raw response:", response.text)
         raise ValueError(f"Failed to structure resume data: {e}")
+
+    contact_fallbacks = _extract_contact_fallbacks(raw_text)
+    for field, value in contact_fallbacks.items():
+        if value and not getattr(sections, field, None):
+            setattr(sections, field, value)
         
     # Calculate file hash for idempotency if a valid file path was provided
     file_hash = None

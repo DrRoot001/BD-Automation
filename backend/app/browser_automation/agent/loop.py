@@ -684,7 +684,32 @@ _DOM_SNAPSHOT_JS = """() => {
         const sel = el.id ? '#' + el.id : null;
         if (!sel || seen.has(sel)) return;
         seen.add(sel);
-        out.push({ sel, type: 'combobox', label: labelFor(el), required: false });
+        const entry = { sel, type: 'combobox', label: labelFor(el), required: false };
+        // Surface the choosable options so the AI answers from them on the FIRST
+        // turn instead of guessing from the question text (e.g. naming a state
+        // for a "Do you live in one of these states?" Yes/No dropdown). Sources,
+        // in order: a hidden native <select> Greenhouse syncs the widget with,
+        // the listbox this combobox controls (aria-controls/owns), or already
+        // rendered option nodes. react-select renders its menu only when open,
+        // so any of these may be empty — that's fine, we just omit options then.
+        try {
+            let opts = [];
+            const container = el.closest('.application-question, .form-question, [class*="question"], fieldset, [class*="field"]') || el.parentElement;
+            if (container) {
+                const realSel = container.querySelector('select');
+                if (realSel) opts = Array.from(realSel.options).map(o => (o.text || '').trim()).filter(Boolean);
+            }
+            if (!opts.length) {
+                const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+                const lb = lid ? document.getElementById(lid) : null;
+                const scope = lb || container || document;
+                opts = Array.from(scope.querySelectorAll('[role="option"], .select__option, .react-select__option'))
+                            .map(o => (o.textContent || '').trim()).filter(Boolean);
+            }
+            opts = opts.filter((v, i, a) => v && a.indexOf(v) === i);
+            if (opts.length && opts.length <= 15) entry.options = opts;
+        } catch (e) {}
+        out.push(entry);
     });
 
     // Visible buttons (Next / Submit / Apply)
@@ -1615,7 +1640,32 @@ async def _execute_action(
                         return True
                 except Exception:
                     pass
-                # Last resort: type-then-Enter (legacy behavior)
+                # If we KNOW the real options and the proposed value matches none
+                # of them, do NOT type it as filter text: react-select would keep
+                # that stray text in its input, which fools the pre-submit gate
+                # (it reads the input value) into thinking the field is answered —
+                # so the form submits with NO real selection. This is the "AI
+                # answered a state for a Yes/No dropdown" bug. Instead: clear the
+                # stray text, leave the menu OPEN so the next DOM snapshot surfaces
+                # the actual options (e.g. ['Yes','No']) to the AI, and report
+                # failure so the field reads empty and the AI re-picks a valid one.
+                _norm_opts = [str(o).strip().lower() for o in (available_options or [])]
+                _is_real_match = bool(_norm_opts) and (target_text or "").strip().lower() in _norm_opts
+                if available_options and not _is_real_match:
+                    try:
+                        await loc.fill("")            # drop the stray filter text
+                        await loc.click(timeout=1500)  # keep/reopen menu → options visible next turn
+                    except Exception:
+                        pass
+                    logger.warning(
+                        f"[AgentLoop] combobox: proposed {value!r} is NOT a valid option for "
+                        f"{sel!r} (valid options: {available_options[:8]}). Cleared stray text and "
+                        f"left the menu open; deferring to AI to choose a real option."
+                    )
+                    return False
+
+                # Last resort: type-then-Enter (legacy behavior) — only reached
+                # when we couldn't enumerate options OR the value is a genuine match.
                 try:
                     await loc.fill("")
                     await loc.type(target_text, delay=40)
@@ -1626,6 +1676,59 @@ async def _execute_action(
                 except Exception as exc:
                     logger.warning(f"[AgentLoop] combobox fallback failed: {exc}")
                     return False
+
+            # ── react-tel-input / intl-tel phone widgets ─────────────────────
+            # These are controlled React widgets that PRE-SEED the country dial
+            # code (e.g. "+1") and REFORMAT as you type. Two gotchas:
+            #   1. A normal fill / native-setter is rejected (widget reverts).
+            #   2. Typing the FULL "+1 3410084746" collides with the pre-existing
+            #      "+1" and SHIFTS the digits → "+1 (134) 100-8474" (invalid).
+            # Correct recipe: focus, clear thoroughly (select-all + many
+            # backspaces — Delete leaves the "+1"), then type ONLY the national
+            # digits. The widget re-adds the dial code and formats correctly.
+            try:
+                is_reacttel = await loc.evaluate(
+                    "(el) => !!(el.closest && (el.closest('.react-tel-input') "
+                    "|| el.closest('.iti')) || el.id === 'phone-input')"
+                )
+            except Exception:
+                is_reacttel = False
+            if is_reacttel:
+                try:
+                    digits = re.sub(r"\D", "", value)
+                    # Reduce to the NATIONAL number (drop a leading country code).
+                    # US-first product: "+1XXXXXXXXXX"/"1XXXXXXXXXX" → national 10.
+                    national = digits
+                    if len(digits) == 11 and digits.startswith("1"):
+                        national = digits[1:]
+                    await loc.click(timeout=3000)
+                    try:
+                        await loc.press("Control+a", timeout=1500)
+                        for _ in range(20):
+                            await loc.press("Backspace", timeout=800)
+                    except Exception:
+                        pass
+                    target = national or digits
+                    if hasattr(loc, "press_sequentially"):
+                        await loc.press_sequentially(target, delay=70, timeout=15000)
+                    else:
+                        await loc.type(target, delay=70, timeout=15000)
+                    await asyncio.sleep(0.3)
+                    cur = (await loc.input_value(timeout=2000)) or ""
+                    if re.sub(r"\D", "", cur).endswith(national[-7:] if len(national) >= 7 else national):
+                        logger.info(f"[AgentLoop] react-tel phone filled → {cur!r}")
+                        return True
+                    logger.warning(
+                        f"[AgentLoop] react-tel phone value after fill = {cur!r} "
+                        f"(expected national {national!r}); the number may be "
+                        "invalid (e.g. unassigned area code)."
+                    )
+                    # Return True anyway — re-typing would only thrash; the AI
+                    # should not loop on it (a bad value is a data problem).
+                    return True
+                except Exception as exc:
+                    logger.warning(f"[AgentLoop] react-tel fill failed: {exc}")
+                    # fall through to the generic path
 
             # Default: text / email / textarea / url / tel / number
             try:
@@ -1664,9 +1767,34 @@ async def _execute_action(
                         await loc.press_sequentially(value, delay=per_char, timeout=15000)
                     else:
                         await loc.type(value, delay=per_char, timeout=15000)
+                    # Commit on blur. Some React-controlled <textarea>/<input>
+                    # fields (e.g. Greenhouse's long free-text screening
+                    # questions) only persist their value to component state on
+                    # the blur event — without it the value reverts to empty on
+                    # the next re-render, so FORM STATUS keeps showing the field
+                    # empty and the AI re-fills it forever (the free-text loop).
+                    try:
+                        await loc.evaluate(
+                            "el => { el.dispatchEvent(new Event('change', {bubbles:true})); el.blur && el.blur(); }"
+                        )
+                    except Exception:
+                        pass
                     # Verify it actually committed into the field's value.
-                    cur = await loc.input_value(timeout=2000)
-                    typed_ok = (cur or "").strip() == value.strip()
+                    # Masked / formatting widgets (e.g. react-tel-input phone
+                    # fields) REFORMAT the value as you type — "+13410084746"
+                    # becomes "+1 (341) 008-4746" — so an exact-string compare
+                    # wrongly reports failure and triggers the native-setter
+                    # fallback, which CORRUPTS the controlled widget (it reverts
+                    # to its default). Treat the field as committed when the raw
+                    # value matches OR the digit sequences match (covers phone).
+                    cur = (await loc.input_value(timeout=2000)) or ""
+                    _cur_d = re.sub(r"\D", "", cur)
+                    _val_d = re.sub(r"\D", "", value)
+                    typed_ok = (
+                        cur.strip() == value.strip()
+                        or (bool(_val_d) and _val_d in _cur_d)
+                        or (bool(value.strip()) and value.strip() in cur)
+                    )
                 except Exception as exc:
                     logger.debug(f"[AgentLoop] human-typing failed for {sel!r}: {exc}")
 
@@ -1818,7 +1946,7 @@ class AgentLoop:
         platform = str(job_context.get("platform") or "generic").lower()
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
         self._platform = platform
-        self.verify_gate_limit = self._hints.get("verify_gate_limit", 8)
+        self.verify_gate_limit = self._hints.get("verify_gate_limit", 20)
         self._llm = get_llm()
         # Build the identity-anchored system prompt. Rebuilt if the effective
         # provider changes mid-session (e.g. Anthropic exhausts and Groq takes
@@ -1967,10 +2095,31 @@ class AgentLoop:
                 + resume_text[:_budget]
                 + "\n" + sep + "\n"
             )
+        # Platform-specific playbook — the per-ATS cheat sheet from
+        # adapters/hints.py (iframe quirks, multi-step flow, reliable
+        # selectors, success signals, known failure modes). This is what makes
+        # the AI aware of, e.g., Talent.com's email-OTP-before-form flow or
+        # Dice's 3-step wizard. Injected once into the (cached) system prompt.
+        hints_block = ""
+        try:
+            rendered = format_hints_for_prompt(self._hints)
+            if rendered and rendered.strip() and "no specific hints" not in rendered:
+                hints_block = (
+                    "\n\n══════════════════════════════════════════════════════════"
+                    "════════════════\n"
+                    f"PLATFORM PLAYBOOK — {self._platform} (empirical knowledge; "
+                    "the live page is still authoritative)\n"
+                    "══════════════════════════════════════════════════════════"
+                    "════════════════\n"
+                    + rendered + "\n"
+                )
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] hint render failed (non-fatal): {exc}")
+
         # Append the action-schema/rules block (unchanged from the original
         # system prompt, just relocated so the identity card comes first).
         # Then the screening-answers block, if M3 provided any.
-        return base + resume_block + screening_block + _ACTION_SCHEMA_BLOCK
+        return base + resume_block + hints_block + screening_block + _ACTION_SCHEMA_BLOCK
 
     # ──────────────────────────────────────────────────────────────────────
     # Lever 2: memory pre-fill — recall + apply known answers before the LLM
@@ -2060,7 +2209,21 @@ class AgentLoop:
                     const sel = el.id ? '#' + el.id : (el.name ? `[name="${el.name}"]` : '');
                     if (!sel) return;
                     const value = (el.value || '').trim();
-                    out.push({ sel, type, label: label.slice(0, 100), value });
+                    // Detect react-select / custom comboboxes and native <select>.
+                    // A raw value-set on these does NOT commit the option (react
+                    // keeps its own state), so memory pre-fill would falsely mark
+                    // the field "filled" and trip a premature, server-rejected
+                    // submit. Flag them so we defer to the AI's option-click path.
+                    const role = (el.getAttribute('role') || '').toLowerCase();
+                    const ariaPop = (el.getAttribute('aria-haspopup') || '').toLowerCase();
+                    const combo = (
+                        el.tagName === 'SELECT'
+                        || role === 'combobox'
+                        || !!el.getAttribute('aria-autocomplete')
+                        || ariaPop === 'listbox' || ariaPop === 'menu'
+                        || !!el.closest('[class*="select__"], [class*="combobox" i], [role="combobox"]')
+                    );
+                    out.push({ sel, type, label: label.slice(0, 100), value, combo });
                 });
                 return out;
             }""")
@@ -2108,6 +2271,42 @@ class AgentLoop:
                     f"was {str(answer)[:50]!r}, forcing 'N/A'"
                 )
                 answer = "N/A"
+
+            # ── Combobox / native-select: COMMIT via the proven option-click
+            # path (the same _commit_policy_field used by deterministic prefill),
+            # NOT a raw value-set. A native value-set never selects a react-select
+            # option, so the field would look "filled" yet fail server validation
+            # — that was the premature-submit STUCK on Greenhouse. We commit it
+            # properly here, ONE-SHOT: the synthesized fill_field action below
+            # records the label so this never retries (avoiding the per-turn
+            # combobox race documented in _try_demographic_autofill).
+            if f.get("combo"):
+                try:
+                    ok = await self._commit_policy_field(
+                        page, ctx, sel, "combobox", str(answer), [str(answer)]
+                    )
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] memory pre-fill combobox commit error for {label!r}: {exc}")
+                    ok = False
+                # Record the attempt either way so memory pre-fill won't fight
+                # the field next turn; if it failed, the AI's own fill_field path
+                # can still drive it (the AI is not gated by these records).
+                actions.append(AgentAction(
+                    kind="fill_field",
+                    selector=sel,
+                    value=str(answer),
+                    field_label=label,
+                    step=-1,
+                    ok=bool(ok),
+                    raw={"source": "memory_prefill_combobox"},
+                ))
+                if ok:
+                    logger.info(f"[AgentLoop] memory pre-fill combobox committed: '{label}' = '{str(answer)[:60]}'")
+                    filled += 1
+                else:
+                    logger.debug(f"[AgentLoop] memory pre-fill combobox commit failed for '{label}' — deferring to AI")
+                continue
+
             try:
                 loc = ctx.locator(sel).first
                 if await loc.count() == 0:
@@ -2750,6 +2949,7 @@ class AgentLoop:
             else:
                 state_name, state_abbr = resolved
         salary = (p.get("salary_expectation") or "").strip()
+        phone = (p.get("phone") or "").strip()
 
         entries = [
             # dv01-style consent multi-select: "...your application acknowledges
@@ -2818,6 +3018,16 @@ class AgentLoop:
             entries.append(
                 (r"salary\s+expect|expected\s+(salary|compensation)|compensation\s+expect",
                  salary, [salary]),
+            )
+        # Phone — stable identity data (like name/email). Fill it deterministically
+        # whenever a phone field exists so an OPTIONAL phone isn't left blank for a
+        # brand-new candidate (one with no field_memory yet). The carve-out in
+        # _deterministic_prefill keeps the NUMBER out of country-code/extension
+        # fields, and _commit_policy_field defers react-tel widgets to the AI.
+        if phone:
+            entries.append(
+                (r"\bphone\b|phone\s*number|mobile\s*number|\bmobile\b|cell\s*phone|contact\s+(number|phone)",
+                 phone, [phone]),
             )
         # dv01-style consent multi-select policy is inserted at the TOP of
         # `entries` above (priority over the generic acknowledge rule).
@@ -3029,6 +3239,13 @@ class AgentLoop:
                         continue
                     # Country carve-out: skip citizenship / country-code.
                     if val == "United States" and any(w in label for w in ("citizenship", "code", "nationality")):
+                        continue
+                    # Phone carve-out: never type the phone NUMBER into a
+                    # country-code / extension field (separate small widgets).
+                    _phone_v = ((self.profile or {}).get("phone") or "").strip()
+                    if _phone_v and val == _phone_v and any(
+                        w in label for w in ("country code", "country", "code", "extension", " ext")
+                    ):
                         continue
                     value, aliases = val, als
                     break
@@ -3247,6 +3464,23 @@ class AgentLoop:
                     logger.debug(f"[AgentLoop] combobox commit attempt {attempt} failed: {exc}")
             return False
 
+        # ── react-tel-input phone widget (e.g. Talent.com) ──
+        # This is a strictly-controlled React widget that REJECTS a native-set
+        # and mangles a full "+<cc>" (the country-code collision), so we defer it
+        # to the AgentLoop's react-tel-aware fill (clear + national digits).
+        # NOTE: do NOT defer intl-tel-input (`.iti`, used by Greenhouse) — that
+        # is a plain <input> with a flag dropdown; a native-set commits fine and
+        # the AI's national-digit logic would actually be WRONG for it. Only the
+        # genuine react-tel-input (or #phone-input) is deferred.
+        try:
+            if await loc.evaluate(
+                "(el) => !!(el.closest && el.closest('.react-tel-input')) "
+                "|| el.id === 'phone-input'"
+            ):
+                return False
+        except Exception:
+            pass
+
         # ── text / email / tel / url / textarea ── native setter
         try:
             committed = await loc.evaluate(
@@ -3286,6 +3520,185 @@ class AgentLoop:
                 if w in low or low in w:
                     return orig
         return value
+
+    async def _read_turnstile_token(self, ctx) -> str:
+        try:
+            return await ctx.evaluate(
+                """() => { const i=document.querySelector(
+                    'input[name="cf-turnstile-response"],textarea[name="cf-turnstile-response"]');
+                    return i ? (i.value || '') : ''; }"""
+            ) or ""
+        except Exception:
+            return ""
+
+    async def _settle_turnstile(self, page: Page, frame: Optional[Any]) -> bool:
+        """Settle a Cloudflare Turnstile bot-check (e.g. Talent.com's review →
+        'Send application' gate).
+
+        IMPORTANT: Turnstile has NO audio challenge, so the vendored Whisper
+        "capsolver" (which only solves reCAPTCHA v2) cannot touch it. Strategy,
+        in order:
+          1. Managed/auto mode — on a trusted (typically residential) IP CF
+             auto-issues a token to the hidden ``cf-turnstile-response`` input;
+             we poll for it (and click the interactive checkbox if present).
+          2. CapSolver.com API fallback — when ``CAPSOLVER_API_KEY`` is set we
+             fetch a token via AntiTurnstileTaskProxyLess and inject it. This is
+             IP-independent and is the reliable path on datacenter IPs.
+
+        Triggers when a Turnstile widget is present OR the submit button is
+        disabled (the widget often loads a beat after the review page renders,
+        so keying off the disabled submit catches it). Cheap when nothing
+        matches; safe to call every turn.
+        """
+        ctx = frame or page
+        try:
+            info = await ctx.evaluate(
+                """() => {
+                    const i = document.querySelector(
+                        'input[name="cf-turnstile-response"],textarea[name="cf-turnstile-response"]');
+                    const ifr = document.querySelector("iframe[src*='challenges.cloudflare.com']");
+                    const div = document.querySelector('.cf-turnstile,[data-sitekey],[id*="turnstile"]');
+                    const send = Array.from(document.querySelectorAll('button')).find(
+                        b => /send application|submit application/i.test(b.innerText||''));
+                    return {
+                        widget: !!(i || ifr || div),
+                        token: i ? (i.value || '') : '',
+                        send_disabled: send ? !!send.disabled : null,
+                    };
+                }"""
+            )
+        except Exception:
+            return True
+        # Only do the long managed-token wait when an ACTUAL Turnstile widget is
+        # present (visible/explicit variant that pre-populates a token). If the
+        # submit is merely disabled with NO widget, it's either an invisible
+        # on-submit Turnstile (nothing to pre-solve — it runs on the click) or a
+        # non-captcha gate; a 100s wait there is pointless and makes the run feel
+        # stuck. In that case do a brief check and move on.
+        if len(info.get("token") or "") > 20:
+            return True
+        if not info.get("widget"):
+            # No widget to settle. Give the page a brief moment in case the
+            # widget renders late, then return without blocking.
+            for _ in range(3):
+                await asyncio.sleep(1.5)
+                if len(await self._read_turnstile_token(ctx)) > 20:
+                    return True
+                try:
+                    has_w = await ctx.evaluate(
+                        "() => !!document.querySelector(\"iframe[src*='challenges.cloudflare.com'],.cf-turnstile,[data-sitekey]\")"
+                    )
+                except Exception:
+                    has_w = False
+                if has_w:
+                    break
+            else:
+                return False  # invisible/on-submit turnstile or non-captcha gate
+
+        logger.info(
+            "[AgentLoop] Cloudflare Turnstile widget detected — settling "
+            "(managed-token wait → CapSolver fallback)…"
+        )
+        import time as _t
+        deadline = _t.monotonic() + 25.0
+        while _t.monotonic() < deadline:
+            try:
+                for f in page.frames:
+                    if "challenges.cloudflare.com" in (f.url or ""):
+                        for cbsel in ("input[type='checkbox']", "label", "body"):
+                            cb = f.locator(cbsel).first
+                            if await cb.count() > 0 and await cb.is_visible():
+                                await cb.click(timeout=1500)
+                                break
+                        break
+            except Exception:
+                pass
+            await asyncio.sleep(2.0)
+            if len(await self._read_turnstile_token(ctx)) > 20:
+                logger.info("[AgentLoop] Turnstile token acquired (managed) — submit gate cleared")
+                return True
+
+        # ── CapSolver.com API fallback (IP-independent) ──────────────────────
+        key = os.getenv("CAPSOLVER_API_KEY", "").strip()
+        if key and not key.lower().startswith("your_"):
+            if await self._solve_turnstile_capsolver(page, ctx, key):
+                return True
+        logger.warning(
+            "[AgentLoop] Turnstile NOT settled. The managed token never populated "
+            "(common on datacenter IPs) and no usable CAPSOLVER_API_KEY is set. "
+            "Set CAPSOLVER_API_KEY (Turnstile-capable) or PROXY_URL (residential) "
+            "to clear the final-submit gate. NOTE: the Whisper 'capsolver' only "
+            "solves reCAPTCHA — it cannot solve Turnstile."
+        )
+        return False
+
+    async def _solve_turnstile_capsolver(self, page: Page, ctx, key: str) -> bool:
+        """Solve Cloudflare Turnstile via the CapSolver.com REST API
+        (AntiTurnstileTaskProxyLess) and inject the token into the page."""
+        import httpx
+        try:
+            meta = await ctx.evaluate(
+                """() => {
+                    let sk = '';
+                    const d = document.querySelector('.cf-turnstile[data-sitekey],[data-sitekey]');
+                    if (d) sk = d.getAttribute('data-sitekey') || '';
+                    if (!sk) {
+                        const ifr = document.querySelector("iframe[src*='challenges.cloudflare.com']");
+                        if (ifr) { const m = (ifr.src||'').match(/[?&]k=([^&]+)/); if (m) sk = decodeURIComponent(m[1]); }
+                    }
+                    return { sitekey: sk, url: location.href };
+                }"""
+            )
+            sitekey = (meta or {}).get("sitekey") or ""
+            url = (meta or {}).get("url") or page.url
+            if not sitekey:
+                logger.warning("[AgentLoop] CapSolver: Turnstile sitekey not found on page")
+                return False
+            async with httpx.AsyncClient(timeout=30) as c:
+                r = await c.post(
+                    "https://api.capsolver.com/createTask",
+                    json={"clientKey": key, "task": {
+                        "type": "AntiTurnstileTaskProxyLess",
+                        "websiteURL": url, "websiteKey": sitekey,
+                    }},
+                )
+                j = r.json()
+                if j.get("errorId"):
+                    logger.warning(f"[AgentLoop] CapSolver createTask failed: {j.get('errorDescription')}")
+                    return False
+                task_id = j.get("taskId")
+                for _ in range(24):
+                    await asyncio.sleep(3)
+                    rr = await c.post(
+                        "https://api.capsolver.com/getTaskResult",
+                        json={"clientKey": key, "taskId": task_id},
+                    )
+                    jr = rr.json()
+                    if jr.get("errorId"):
+                        logger.warning(f"[AgentLoop] CapSolver getTaskResult error: {jr.get('errorDescription')}")
+                        return False
+                    if jr.get("status") == "ready":
+                        token = (jr.get("solution") or {}).get("token") or ""
+                        if not token:
+                            return False
+                        await ctx.evaluate(
+                            """(tok) => {
+                                document.querySelectorAll(
+                                    'input[name="cf-turnstile-response"],textarea[name="cf-turnstile-response"]'
+                                ).forEach(i => {
+                                    i.value = tok;
+                                    i.dispatchEvent(new Event('input',  {bubbles:true}));
+                                    i.dispatchEvent(new Event('change', {bubbles:true}));
+                                });
+                            }""",
+                            token,
+                        )
+                        logger.info("[AgentLoop] CapSolver Turnstile token injected — submit gate cleared")
+                        return True
+            return False
+        except Exception as exc:
+            logger.warning(f"[AgentLoop] CapSolver Turnstile solve failed: {exc}")
+            return False
 
     async def _handle_email_verification(
         self,
@@ -3556,6 +3969,19 @@ class AgentLoop:
         submit_fired = False
         verification_attempts = 0
 
+        # ── Mid-flow OTP / email-verification state ──────────────────────────
+        # Some ATSes (Talent.com) gate the application behind an emailed OTP
+        # code BEFORE the form (email -> "check your email" -> 6-box code ->
+        # contact info). The post-submit verification phase above only fires
+        # AFTER a submit; this handles a code screen that appears mid-flow.
+        # `_otp_after_epoch` bounds which inbox emails count as "this run's"
+        # code — set to a few minutes before the loop starts so a code emailed
+        # moments ago (after the AI submits the email) is in range.
+        otp_attempts = 0
+        otp_filled_once = False
+        otp_last_fill_step = -10
+        _otp_after_epoch = int(_time.time()) - 300
+
         try:
             for step in range(1, self.max_steps + 1):
                 # Wall-clock check
@@ -3627,6 +4053,8 @@ class AgentLoop:
                             try:
                                 for s in (
                                     "button:has-text('Verify')",
+                                    "button:has-text('Continue')",
+                                    "button:has-text('Next')",
                                     "button:has-text('Submit')",
                                     "button[type='submit']",
                                 ):
@@ -3650,6 +4078,89 @@ class AgentLoop:
                             f"[AgentLoop] step={step} POST-SUBMIT: no code screen — "
                             "submit likely complete; one confirmation turn."
                         )
+
+                # ── MID-FLOW OTP / EMAIL-VERIFICATION (e.g. Talent.com) ──────
+                # Handle an emailed-code screen that appears BEFORE submit. Gate
+                # strictly on a multi-box "split" widget (4–10 single-char
+                # boxes): that shape is ALWAYS an OTP/code entry and is never a
+                # normal email/contact input, so this cannot misfire on the
+                # email-entry or contact-info pages. The runner fetches the code
+                # from the candidate's Gmail and fills it — the AI never sees or
+                # types the code itself.
+                if (not submit_fired and self.candidate_id and otp_attempts < 4):
+                    _otp_shape = None
+                    try:
+                        from ..verification import detect_code_input
+                        _oframe = live_frame or frame
+                        _otp_shape = await detect_code_input(page, _oframe)
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] mid-flow code detect failed: {exc}")
+                    if _otp_shape and _otp_shape.kind == "split":
+                        # Anti-thrash: filling these auto-advancing OTP boxes and
+                        # then RE-filling them on the next turn (~3s later) resets
+                        # the widget mid-validation and prevents the auto-submit —
+                        # the code never "takes". After a fill, give the page a few
+                        # turns to validate + advance before touching it again.
+                        if otp_filled_once and (step - otp_last_fill_step) <= 2:
+                            logger.info(
+                                f"[AgentLoop] step={step} MID-FLOW OTP already "
+                                "filled recently — waiting for it to validate "
+                                "(not re-filling)."
+                            )
+                            await asyncio.sleep(4.0)
+                            continue
+                        otp_attempts += 1
+                        logger.info(
+                            f"[AgentLoop] step={step} MID-FLOW OTP code screen "
+                            f"detected (kind=split, digits={_otp_shape.digits}, "
+                            f"attempt {otp_attempts}); fetching code from Gmail."
+                        )
+                        ok_otp = await self._handle_email_verification(
+                            page, live_frame,
+                            after_epoch=_otp_after_epoch,
+                            actions=actions,
+                        )
+                        if ok_otp:
+                            otp_filled_once = True
+                            otp_last_fill_step = step
+                            page_verified = True  # a code screen IS a real app flow
+                            await self._human_delay()
+                            for s in (
+                                "button:has-text('Continue')",
+                                "button:has-text('Verify')",
+                                "button:has-text('Next')",
+                                "button:has-text('Submit')",
+                                "button:has-text('Confirm')",
+                                "button[type='submit']",
+                            ):
+                                try:
+                                    btn = (live_frame or page).locator(s).first
+                                    if await btn.count() > 0 and await btn.is_visible():
+                                        await btn.click(timeout=5000)
+                                        logger.info(f"[AgentLoop] post-OTP advance via {s!r}")
+                                        break
+                                except Exception:
+                                    continue
+                            # These boxes auto-submit once all 6 chars are in;
+                            # give the server time to validate + advance before
+                            # the next turn re-checks (anti-thrash guard above
+                            # prevents an immediate re-fill).
+                            await asyncio.sleep(5.0)
+                        else:
+                            # Code not yet available — let Gmail deliver, retry.
+                            await asyncio.sleep(4.0)
+                        continue
+
+                # ── CLOUDFLARE TURNSTILE settle (e.g. Talent.com submit gate) ──
+                # Some flows gate the FINAL submit behind a Cloudflare Turnstile
+                # (a hidden cf-turnstile-response that must be populated before
+                # the submit button enables). Settle it deterministically each
+                # turn — cheap when absent, and it ensures the token is present
+                # by the time the AI clicks 'Send application'.
+                try:
+                    await self._settle_turnstile(page, live_frame or frame)
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] turnstile settle non-fatal: {exc}")
 
                 # ── Capture perception ──────────────────────────────────────────
                 # Lever 1 (cost optimization): if the DOM hasn't changed since
@@ -4396,17 +4907,30 @@ class AgentLoop:
                 # entirely for that field. The recall happens in the pre-LLM
                 # check below (see _try_memory_prefill).
                 if ok and action.kind == "fill_field" and action.field_label and action.value:
-                    try:
-                        from ..forms import memory as _field_memory
-                        _field_memory.remember(
-                            label=action.field_label,
-                            field_type="text",  # generic — memory module doesn't gate on this
-                            value=str(action.value),
-                            source="agent_loop",
-                            candidate_id=self.candidate_id,
+                    # Do NOT memorize per-application LOCATION fields. They're
+                    # job-specific, not stable identity, and they're the source
+                    # of the recurring "memory poisoning" (e.g. an address from
+                    # one run, or a Yes/No that aliases onto a 'state' field,
+                    # getting wrongly recalled on the next application).
+                    _lbl_l = (action.field_label or "").strip().lower()
+                    _skip_remember = any(
+                        kw in _lbl_l for kw in (
+                            "address", "street", "city", "state", "province",
+                            "postal", "zip", "post code",
                         )
-                    except Exception as exc:
-                        logger.debug(f"[AgentLoop] memory.remember failed (non-fatal): {exc}")
+                    )
+                    if not _skip_remember:
+                        try:
+                            from ..forms import memory as _field_memory
+                            _field_memory.remember(
+                                label=action.field_label,
+                                field_type="text",  # generic — memory module doesn't gate on this
+                                value=str(action.value),
+                                source="agent_loop",
+                                candidate_id=self.candidate_id,
+                            )
+                        except Exception as exc:
+                            logger.debug(f"[AgentLoop] memory.remember failed (non-fatal): {exc}")
                 if not ok:
                     logger.debug(f"[AgentLoop] step={step} action {action.kind} returned ok=False")
 

@@ -67,6 +67,57 @@ _CODE_MIXED_RE = re.compile(r"\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)([A-Za
 _CODE_DIGITS_RE = re.compile(r"\b(\d{6,8})\b")
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
 
+# HTML/CSS stripping — many ATS emails are HTML-only and stuffed with styling
+# noise that the naive code regexes mistake for the code:
+#   * hex colors like #F0F0F3 / #676767 (the latter is ALSO 6 digits!),
+#   * px/em sizes like 600px,
+#   * MIXED tokens like 691F74 / bf041352 (CSS).
+# We strip <style>/<head>, tags, hex colors, and size units to recover the
+# VISIBLE text before extracting the code.
+_HTML_STYLE_RE = re.compile(r"<(style|head|script)[^>]*>.*?</\1>", re.I | re.S)
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_HEXCOLOR_RE = re.compile(r"#[0-9a-fA-F]{3,8}\b")
+_CSSUNIT_RE = re.compile(r"\b\d+(?:px|em|rem|pt|vh|vw|%)\b", re.I)
+# "6-digit code" / "enter the 6 digit code" → the code length the email declares.
+_NDIGIT_RE = re.compile(r"(\d)\s*-?\s*digit", re.I)
+
+
+def _html_to_text(s: str) -> str:
+    """Strip an HTML email to its visible text, removing styling noise (hex
+    colors, css units, tags) that the code regexes would otherwise grab."""
+    if not s:
+        return ""
+    import html as _htmllib
+    s = _HTML_STYLE_RE.sub(" ", s)
+    s = _HTML_TAG_RE.sub(" ", s)
+    s = _htmllib.unescape(s)
+    s = _HEXCOLOR_RE.sub(" ", s)
+    s = _CSSUNIT_RE.sub(" ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def _pick_numeric_code(text: str, n: Optional[int] = None) -> Optional[str]:
+    """Pick a numeric OTP from cleaned visible text. When the email declares an
+    exact length ("6-digit code") we extract exactly-N-digit runs; otherwise
+    6–8 digit runs. The real OTP is UNIQUE, while leftover styling numbers
+    (e.g. a repeated #676767 color that survived as bare digits) recur — so we
+    prefer the least-frequent candidate, breaking ties by first appearance.
+    Years are excluded."""
+    if not text:
+        return None
+    if n and 4 <= n <= 10:
+        runs = re.findall(rf"(?<!\d)(\d{{{n}}})(?!\d)", text)
+    else:
+        runs = re.findall(r"(?<!\d)(\d{6,8})(?!\d)", text)
+    runs = [r for r in runs if not _YEAR_RE.match(r)]
+    if not runs:
+        return None
+    from collections import Counter
+    freq = Counter(runs)
+    uniq = list(dict.fromkeys(runs))
+    uniq.sort(key=lambda r: (freq[r], text.index(r)))
+    return uniq[0]
+
 
 def _pick_code(text: str) -> Optional[str]:
     """Extract the most likely verification code from a blob of text.
@@ -158,9 +209,21 @@ _DETECT_JS = r"""() => {
         }
         return el.placeholder || el.name || el.id || '';
     }
+    function cssStr(v){ return (v||'').replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
+    let _otpStamp = 0;
     function selFor(el){
-        return el.id ? '#' + CSS.escape(el.id)
-             : (el.name ? 'input[name="' + el.name + '"]' : '');
+        if (el.id) return '#' + CSS.escape(el.id);
+        if (el.name) return 'input[name="' + cssStr(el.name) + '"]';
+        // Many modern OTP widgets render id-less, name-less <input maxlength=1>
+        // boxes. Their aria-label/placeholder is often NON-UNIQUE across the
+        // cluster (Talent.com labels all 6 boxes "Phone number"), so using it
+        // would make every selector resolve to the FIRST box — the whole code
+        // then lands in box 1 (last char wins). Always stamp a UNIQUE marker
+        // attribute so each box gets its own selector. The stamp persists on
+        // the DOM node and is consumed by fill_code() moments later.
+        const mark = 'otpx-' + (_otpStamp++);
+        el.setAttribute('data-otpx', mark);
+        return 'input[data-otpx="' + mark + '"]';
     }
     const CODE_KEY = /(verif|confirm|otp|one[-\s]?time|security|access[-\s]?code|\bcode\b|pin)/i;
 
@@ -339,38 +402,66 @@ def _is_likely_verification(payload_headers: dict, snippet: str) -> bool:
     return False
 
 
+def _collect_bodies(payload: dict) -> List[str]:
+    """Recursively decode every text/html and text/plain body part."""
+    out: List[str] = []
+
+    def walk(p: dict) -> None:
+        if not p:
+            return
+        body = p.get("body") or {}
+        data = body.get("data")
+        if data:
+            try:
+                out.append(base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace"))
+            except Exception:
+                pass
+        for sub in (p.get("parts") or []):
+            walk(sub)
+
+    walk(payload or {})
+    return out
+
+
 def _extract_code_from_message(msg: dict) -> Optional[str]:
-    """Pull the verification code (alphanumeric, case-sensitive) out of a
-    Gmail message. Scans snippet → body → subject in that order, because the
-    snippet usually contains the cue phrase ("paste this code … : CODE")
-    while the subject often only says "Security code for your application".
+    """Pull the verification code out of a Gmail message.
+
+    HTML emails are stripped to visible text first (removing hex colors, css
+    units, tags) so styling noise like #F0F0F3 / #676767 / 600px is never
+    mistaken for the code. If the email DECLARES a digit length ("6-digit
+    code") we extract the unique N-digit run; otherwise we fall back to the
+    general cue/mixed/digit extractor.
     """
     headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
     subj = headers.get("Subject") or ""
     snip = msg.get("snippet") or ""
 
-    # Snippet first — it carries the cue phrase with the actual code.
-    code = _pick_code(snip)
-    if code:
-        return code
+    raw_bodies = _collect_bodies(msg.get("payload", {}))
+    # Clean HTML bodies to visible text; keep plain-ish bodies as-is.
+    cleaned_parts = [
+        _html_to_text(b) if ("<" in b and ">" in b) else b
+        for b in raw_bodies
+    ]
+    # Combine snippet (carries the "N-digit" cue) with the visible body text.
+    combined = " ".join([snip] + cleaned_parts).strip()
 
-    # Then the decoded body parts (full text, may include the code in HTML).
-    parts = msg.get("payload", {}).get("parts") or [msg.get("payload", {})]
-    for part in parts:
-        body = (part or {}).get("body") or {}
-        data = body.get("data")
-        if not data:
-            continue
+    # If the email declares an exact code length, prefer that numeric run.
+    nm = _NDIGIT_RE.search(combined)
+    if nm:
         try:
-            decoded = base64.urlsafe_b64decode(data + "===").decode("utf-8", errors="replace")
+            n = int(nm.group(1))
         except Exception:
-            continue
-        code = _pick_code(decoded)
+            n = None
+        code = _pick_numeric_code(combined, n)
         if code:
             return code
 
-    # Subject last — least likely to contain the code, most likely to contain
-    # a misleading number (e.g. "Vercel" + year).
+    # General extractor over the CLEANED combined text (cue → mixed → digits).
+    code = _pick_code(combined)
+    if code:
+        return code
+
+    # Subject last — least likely to contain the code.
     return _pick_code(subj)
 
 

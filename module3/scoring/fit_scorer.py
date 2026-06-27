@@ -118,7 +118,15 @@ async def score_job_fit(
 
     # Combined score is average of fit and ATS
     combined_score = round((fit_score * 0.5) + (ats_score * 0.5), 2)
-    should_apply = combined_score >= 70.0
+    # Apply-gate threshold. Default 70 keeps the pipeline selective (only strong
+    # fits auto-apply). Lower it via APPLY_SCORE_THRESHOLD when you want the
+    # pipeline to apply to the best available match even if it's a weaker fit
+    # (e.g. demo/test runs, or a job pool with no 70+ matches for the candidate).
+    try:
+        _apply_threshold = float(os.getenv("APPLY_SCORE_THRESHOLD", "70"))
+    except ValueError:
+        _apply_threshold = 70.0
+    should_apply = combined_score >= _apply_threshold
 
     return MatchResult(
         job_id=str(job.job_id) if job.job_id else "job-unknown",

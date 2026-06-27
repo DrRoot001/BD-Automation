@@ -157,10 +157,42 @@ async def solve_recaptcha_v2_via_audio(
         return AudioSolveResult(success=False, error="no_recaptcha_iframe")
 
     # ─── Step 2: click the checkbox ─────────────────────────────────────
-    try:
-        await anchor.locator("#recaptcha-anchor").click(timeout=5000)
-    except Exception as exc:
-        return AudioSolveResult(success=False, error=f"checkbox_click_failed: {exc}")
+    # The anchor iframe can be present in page.frames before its DOM has
+    # painted the #recaptcha-anchor checkbox, so a bare click times out.
+    # Wait for it, scroll it into view, and fall back to a forced click /
+    # JS click before giving up. Retry the whole sequence twice.
+    cb = anchor.locator("#recaptcha-anchor")
+    clicked = False
+    last_cb_err: Optional[str] = None
+    for cb_attempt in range(1, 4):
+        try:
+            await cb.wait_for(state="visible", timeout=8000)
+            try:
+                await cb.scroll_into_view_if_needed(timeout=2000)
+            except Exception:
+                pass
+            await cb.click(timeout=4000)
+            clicked = True
+            break
+        except Exception as exc:
+            last_cb_err = str(exc)
+            # Fallback: force-click, then a raw JS click on the checkbox.
+            try:
+                await cb.click(timeout=2500, force=True)
+                clicked = True
+                break
+            except Exception:
+                try:
+                    await anchor.evaluate(
+                        "() => { const el = document.querySelector('#recaptcha-anchor'); if (el) el.click(); }"
+                    )
+                    clicked = True
+                    break
+                except Exception as exc2:
+                    last_cb_err = f"{exc} | js: {exc2}"
+            await asyncio.sleep(1.5)
+    if not clicked:
+        return AudioSolveResult(success=False, error=f"checkbox_click_failed: {last_cb_err}")
     await asyncio.sleep(2.0)
 
     # If it passed without a challenge, we're done.

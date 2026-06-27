@@ -23,6 +23,62 @@ try:
 except ImportError:
     HAS_EVENTS = False
 
+
+def _is_blank(value) -> bool:
+    return value is None or (isinstance(value, str) and not value.strip())
+
+
+def _candidate_with_resume_contact_fallbacks(candidate: dict, resume_data: ResumeData) -> dict:
+    """
+    Build the candidate profile used by generated documents.
+
+    Non-empty UI/profile fields are authoritative. Blank profile contact fields
+    fall back to the contact values parsed from the base resume PDF.
+    """
+    effective = dict(candidate or {})
+    sections = resume_data.sections
+
+    fallback_map = {
+        "email": getattr(sections, "email", None),
+        "phone": getattr(sections, "phone", None),
+        "linkedin_url": getattr(sections, "linkedin_url", None) or getattr(sections, "website", None),
+    }
+    for field, fallback in fallback_map.items():
+        if _is_blank(effective.get(field)) and not _is_blank(fallback):
+            effective[field] = fallback
+
+    return effective
+
+
+def _resume_contact_is_incomplete(resume_data: ResumeData) -> bool:
+    sections = resume_data.sections
+    return _is_blank(getattr(sections, "email", None)) or _is_blank(getattr(sections, "phone", None))
+
+
+async def _refresh_resume_contacts_if_needed(
+    client: httpx.AsyncClient,
+    resume_data: ResumeData,
+    resume_id: Optional[str],
+    file_url: Optional[str],
+) -> ResumeData:
+    """Re-parse the base PDF when older stored parsed_json lacks contact fields."""
+    if not resume_data or not resume_id or not file_url or not _resume_contact_is_incomplete(resume_data):
+        return resume_data
+
+    try:
+        print("[ORCHESTRATOR] Stored parsed_json is missing contact fields. Re-scanning base resume PDF...")
+        reparsed = await parse_resume(file_url, candidate_id=resume_data.candidate_id, resume_id=resume_id)
+        patch_resp = await client.patch(
+            f"/api/resumes/{resume_id}",
+            json={"parsed_json": reparsed.sections.model_dump()},
+        )
+        if patch_resp.status_code not in (200, 204):
+            print(f"[ORCHESTRATOR] Warning: could not persist contact-enriched parsed_json ({patch_resp.status_code}): {patch_resp.text}")
+        return reparsed
+    except Exception as exc:
+        print(f"[ORCHESTRATOR] Warning: could not re-scan base resume contacts: {exc}")
+        return resume_data
+
 async def orchestrate_application_package(
     candidate_id: str,
     job_id: str,
@@ -56,19 +112,21 @@ async def orchestrate_application_package(
         
         resume_data = None
         base_resume_id = None
+        base_resume_file_url = None
         
         if resp.status_code == 200 and resp.json():
             resumes = sorted(resp.json(), key=lambda r: r.get("version", 0))
             # Find the latest base resume
             base_resume = resumes[-1]
             base_resume_id = base_resume["id"]
+            base_resume_file_url = base_resume.get("file_url", "")
             parsed_json = base_resume.get("parsed_json")
             if parsed_json:
                 sections = ResumeSection(**parsed_json)
                 resume_data = ResumeData(
                     candidate_id=candidate_id,
                     resume_id=base_resume_id,
-                    file_url=base_resume.get("file_url", ""),
+                    file_url=base_resume_file_url,
                     sections=sections,
                     raw_text="[Loaded from DB]"
                 )
@@ -87,6 +145,15 @@ async def orchestrate_application_package(
                     resume_data = parsed_resume
                     resume_data.resume_id = base_resume_id
                     print(f"[ORCHESTRATOR] Auto-parsed base resume and updated DB (ID: {base_resume_id})")
+        
+        if resume_data:
+            resume_data = await _refresh_resume_contacts_if_needed(
+                client,
+                resume_data,
+                base_resume_id,
+                base_resume_file_url or resume_data.file_url,
+            )
+            candidate = _candidate_with_resume_contact_fallbacks(candidate, resume_data)
         
         # If no base resume exists, parse the local PDF and insert it as the base resume!
         if not resume_data:
@@ -114,6 +181,7 @@ async def orchestrate_application_package(
             parsed_resume.resume_id = base_resume_id
             resume_data = parsed_resume
             print(f"[ORCHESTRATOR] Created base resume record in database (ID: {base_resume_id})")
+            candidate = _candidate_with_resume_contact_fallbacks(candidate, resume_data)
 
         # 3. Fetch Job details
         print("[ORCHESTRATOR] Fetching job details...")
@@ -344,19 +412,21 @@ async def prepare_package_for_live_application(
         
         resume_data = None
         base_resume_id = None
+        base_resume_file_url = None
         
         if resp.status_code == 200 and resp.json():
             resumes = sorted(resp.json(), key=lambda r: r.get("version", 0))
             # Find the latest base resume
             base_resume = resumes[-1]
             base_resume_id = base_resume["id"]
+            base_resume_file_url = base_resume.get("file_url", "")
             parsed_json = base_resume.get("parsed_json")
             if parsed_json:
                 sections = ResumeSection(**parsed_json)
                 resume_data = ResumeData(
                     candidate_id=candidate_id,
                     resume_id=base_resume_id,
-                    file_url=base_resume.get("file_url", ""),
+                    file_url=base_resume_file_url,
                     sections=sections,
                     raw_text="[Loaded from DB]"
                 )
@@ -378,6 +448,14 @@ async def prepare_package_for_live_application(
 
         if not resume_data:
             raise ValueError("No base resume found in DB for this candidate.")
+
+        resume_data = await _refresh_resume_contacts_if_needed(
+            client,
+            resume_data,
+            base_resume_id,
+            base_resume_file_url or resume_data.file_url,
+        )
+        candidate = _candidate_with_resume_contact_fallbacks(candidate, resume_data)
 
         # 3. Fetch Job details
         print("[ORCHESTRATOR] Fetching job details...")

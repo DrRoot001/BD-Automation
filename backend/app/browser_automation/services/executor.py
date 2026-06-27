@@ -361,6 +361,15 @@ class ApplicationExecutor:
             await transition_status(package.application_id, "APPLICATION_STARTED")
 
             # ── STEP 5: Navigate ──
+            # Expose the candidate profile to the adapter for adapters that own
+            # a deterministic pre-form gate (e.g. Talent.com fills the email +
+            # clicks Continue to trigger the OTP before the AgentLoop takes
+            # over). Duck-typed + backward-compatible — adapters that don't read
+            # it simply ignore the attribute.
+            try:
+                adapter.candidate_profile = package.candidate_profile
+            except Exception:
+                pass
             await adapter.navigate_to_application(page, package.job_url)
 
             if await check_page_indicates_expired(page, package.job_url):

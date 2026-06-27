@@ -19,6 +19,12 @@ from module3.utils.storage import safe_filename
 
 logger = logging.getLogger("resume_tailor")
 
+def _first_non_blank(*values) -> str:
+    for value in values:
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
 class TailoredResume(BaseModel):
     candidate_id: str
     job_id: str
@@ -84,14 +90,19 @@ async def tailor_resume(
     current_ats_score = ats_score_before
     current_missing_keywords = ats_score_before_obj.missing_keywords
     
+    # Constructing the initial payload for the LLM
     resume_json = {
         "basics": {
-            "name": candidate_profile.get("name", "Candidate"),
+            "name": _first_non_blank(candidate_profile.get("name"), "Candidate"),
             "headline": "",
-            "email": candidate_profile.get("email", ""),
-            "phone": candidate_profile.get("phone", ""),
-            "location": candidate_profile.get("location", ""),
-            "linkedin": candidate_profile.get("linkedin_url", ""),
+            "email": _first_non_blank(candidate_profile.get("email"), getattr(resume.sections, "email", None)),
+            "phone": _first_non_blank(candidate_profile.get("phone"), getattr(resume.sections, "phone", None)),
+            "location": _first_non_blank(candidate_profile.get("location")),
+            "linkedin": _first_non_blank(
+                candidate_profile.get("linkedin_url"),
+                getattr(resume.sections, "linkedin_url", None),
+                getattr(resume.sections, "website", None),
+            ),
             "github_portfolio": ""
         },
         "summary": resume.sections.summary,
@@ -109,7 +120,8 @@ async def tailor_resume(
         "education": [
             {
                 "institution": edu.institution,
-                "degree": edu.degree,
+                # FIX: Combining degree and field here so it isn't dropped before going to the LLM
+                "degree": f"{edu.degree} in {edu.field}" if edu.field else edu.degree,
                 "date": str(edu.graduation_year) if edu.graduation_year else None
             } for edu in resume.sections.education
         ],
@@ -185,7 +197,7 @@ async def tailor_resume(
             temp_edu.append(EducationEntry(
                 institution=edu.get("institution", ""),
                 degree=edu.get("degree", ""),
-                field="",
+                field="", 
                 graduation_year=int(digits[0]) if digits else None
             ))
             
@@ -234,7 +246,7 @@ async def tailor_resume(
         digits = re.findall(r'\d{4}', str(date_str))
         final_education.append(EducationEntry(
             institution=edu.get("institution", "Institution"),
-            degree=edu.get("degree", ""),
+            degree=edu.get("degree", ""), 
             field="",
             graduation_year=int(digits[0]) if digits else None
         ))
@@ -265,7 +277,7 @@ async def tailor_resume(
         experience=pdf_experience,
         education=pdf_education,
         certifications=final_resume_json.get("certifications", []),
-        projects=pdf_projects  # Used for rendering, discarded from return payload
+        projects=pdf_projects 
     )
 
     return TailoredResume(

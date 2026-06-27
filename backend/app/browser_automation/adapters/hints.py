@@ -65,7 +65,7 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "Uses react-select custom dropdowns — target the combobox <input> inside, not the wrapper div.",
             "Phone country-picker (.iti widget) looks like a select — do NOT fill it; it is not a form field.",
             "File inputs are hidden; after upload, Greenhouse replaces them with a filename-display element.",
-            "EEO / demographic fields (gender, race, veteran, disability) appear at the bottom; pick 'Decline to self-identify' options.",
+            "EEO / demographic fields (gender, race, veteran, disability) appear at the bottom — answer them using the candidate's DECLARED values in the identity card (do NOT auto-decline): gender inferred from first name, race=South Asian (else Asian), veteran=No, disability=No, transgender=No.",
             "Multi-step: some forms have a 'Continue' button between sections — use next_step action.",
         ],
     },
@@ -359,7 +359,7 @@ _HINTS: Dict[str, Dict[str, Any]] = {
     },
 
     "remoterocketship": {
-        "verify_gate_limit": 15,
+        "verify_gate_limit": 20,
         "apply_selectors": [
             "button[aria-label='Apply']",
             "button:has-text('Apply')",
@@ -395,7 +395,7 @@ _HINTS: Dict[str, Dict[str, Any]] = {
     },
 
     "remote100k": {
-        "verify_gate_limit": 15,
+        "verify_gate_limit": 20,
         "apply_selectors": [
             "a:has-text('Apply for This Job')",
             "a:has-text('Apply for this Job')",
@@ -424,6 +424,62 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "Listing page has NO form fields — only a job description and an Apply button.",
             "The 'underlying' ATS host determines the actual form layout; treat that ATS's quirks as authoritative.",
             "If you ever land on a remote100k.com URL during fill, the HTTP pre-resolve failed — abort or click Apply with the vision agent.",
+        ],
+    },
+
+    "talent": {
+        "container": "main",
+        "apply_selectors": [
+            "button:has-text('Easy Apply')",
+            "a:has-text('Easy Apply')",
+            "button:has-text('Apply Now')",
+            "a:has-text('Apply Now')",
+            "button:has-text('Quick Apply')",
+            "button:has-text('Apply')",
+            "[data-testid*='apply']",
+        ],
+        "submit_selectors": [
+            "button:has-text('Send application')",
+            "button:has-text('Send Application')",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "application sent",
+            "thank you",
+            "your application has been sent",
+            "we've received your application",
+            "successfully applied",
+        ],
+        "url_hint": (
+            "Talent.com native Easy Apply. Job pages live on www.talent.com "
+            "(/jobs?...&id=<id>). The 'Apply Now' / 'Easy Apply' button on the "
+            "job page is clicked by the TalentAdapter BEFORE the loop runs, which "
+            "redirects to the apply flow (may briefly show a near-blank page with "
+            "a captcha while it loads). Validate which page you're on by HEADING "
+            "and STEP INDICATOR text — NEVER by URL/ids/query params."
+        ),
+        "quirks": [
+            "FLOW IS FORWARD-ONLY: Apply -> (captcha, auto-handled) -> Email verification ('Check your email') -> OTP code (6 boxes, AUTO-FILLED by the runner from Gmail) -> Step 1 of 2 'Add your contact information' -> Step 2 of 2 'Review and send application' -> Submit -> Success. Never navigate_url BACK to a page you already passed.",
+            "PAGE IDENTIFICATION (lowercased heading / step text): 'sign in to apply' / 'check your email' => email-verification step; a row of 6 single-character boxes / 'verification code' / 'enter the code' => OTP step; 'step 1 of 2' + 'add your contact information' => contact step; 'step 2 of 2' + 'review and send application' => review step.",
+            "NEVER USE GOOGLE / SSO SIGN-IN. Do NOT click 'Continue with Google', 'Sign in with Google', or any SSO button, and NEVER navigate to accounts.google.com. The application uses EMAIL + OTP only. If you ever land on a Google sign-in page, you took a wrong turn — do not enter anything there.",
+            "EMAIL-VERIFICATION STEP ('Sign in to apply' / 'Check your email'): the captcha AND the email entry are normally ALREADY handled for you by the adapter before you start — so you will usually begin at the OTP step or later. If (and only if) you still see an email <input> with a 'Continue' button: fill it with the candidate's EMAIL from the identity card, then click the button whose text is EXACTLY 'Continue' (use an exact-text match like button:text-is('Continue')) — NOT 'Continue with Google'. This emails the OTP.",
+            "OTP STEP — DO NOT FILL IT YOURSELF and DO NOT click 'Resend'. The runner detects the 6-box verification-code widget, fetches the code from the candidate's Gmail inbox automatically, fills the boxes, and submits for you. When you see the 'Check your email' / 'Enter the 6-digit code' screen (a row of 6 single-character boxes), return a `wait` action and KEEP returning `wait` for several turns — the runner needs time to fetch + fill + validate. NEVER click 'Resend', 'Back', 'Sign in', or navigate away while on this screen.",
+            "OTP BOX MISLABELING — IMPORTANT: in some Talent.com builds the 6 verification-code boxes are mislabeled 'Phone number' (type=tel). They are NOT a phone field. NEVER type a phone number into a row of 6 single-character boxes — that is the OTP widget, which the runner fills. Only treat a SINGLE wide phone input as a real phone field.",
+            "NEVER use the `navigate_url` action during the apply flow, and never click 'Back'/'Exit'/'Resend'/'Sign in'/'Sign in with Google'. The flow is forward-only: each step's primary orange button ('Continue' / 'Send application') advances it. If a step looks stuck, prefer `wait` over navigating or signing in.",
+            "CONTACT STEP (heading 'Add your contact information'; the step counter may read 'Step 1 of 2' OR 'Step 1 of 3' depending on the build): required fields are First Name, Last Name, and PHONE NUMBER. Email is usually pre-filled and disabled — leave it. Fill First/Last from the identity card. Fill the Phone field from the identity card. Then UPLOAD THE RESUME via the 'Upload Resume' control (upload_file action, value='resume') and VERIFY the resume filename appears.",
+            "PHONE FIELD is a react-tel-input widget (#phone-input, pre-set to '+1', placeholder like '1 (702) 123-4567') and is REQUIRED. It REFORMATS as you type (e.g. '+1 (341) 008-4746') — that reformatted display is CORRECT, do NOT consider it a failure and do NOT re-type it repeatedly. Fill it ONCE with the candidate's phone; if it shows the digits (in any format), it is done — move on. Never loop on the phone field.",
+            "CONTACT STEP — before Continue: confirm First Name, Last Name, Phone are populated AND the resume filename is visible AND there are no validation errors ('Required', 'Please enter', 'Invalid email'). Then click the orange primary 'Continue' button and wait for the next step.",
+            "COVER LETTER: Talent.com's native Easy Apply typically does NOT ask for a cover letter. If (and only if) a cover-letter upload control is present, upload it (upload_file value='cover_letter'); otherwise skip — do not block on it.",
+            "EMPLOYER-QUESTIONS STEP (may appear as 'Step 2 of 3', heading 'Answer employer questions'): a DYNAMIC set of fields — commonly Address, City, State, Postal/ZIP code and screening questions like 'Will you now or in the future require employer sponsorship for employment visa status?'. FILL EVERY VISIBLE FIELD using the candidate's location from the identity card and the PRE-RESOLVED ANSWERS block (the candidate is US-authorized → sponsorship = No, authorized to work in the US = Yes). DO NOT click 'Continue' until ALL fields on this step are filled — clicking with empty required fields just shows 'Required' and wastes turns. Work top-to-bottom: fill address, then city, then state, then postal/ZIP, then each question; THEN click Continue. Never invent a street address or ZIP that isn't in the profile/answers — if a required address value is genuinely unknown, abort with reason='MISSING_CANDIDATE_DATA' rather than guessing.",
+            "THERE IS NO CONSENT CHECKBOX TO TICK. Consent is IMPLICIT via the text 'By continuing/applying, I agree to Talent.com's Terms…'. There is a HIDDEN field named 'user_consent' in the DOM — it is display:none and NOT clickable. NEVER attempt to click 'user_consent' or hunt for an 'I agree' checkbox. Clicking it will fail repeatedly and get you stuck. To proceed from the contact step, just click 'Continue'; on the review step, just click 'Send application'.",
+            "REVIEW STEP (Step 2 of 2, heading 'Review and send application'): summarizes Contact Information (First Name, Last Name, Email, resume cv_id). NO editing and NO checkbox is needed. Your ONLY action here is to click the orange 'Send application' button. This is NOT the success page — the application is only sent AFTER clicking 'Send application'.",
+            "SUBMIT: the final button reads 'Send application' (getByRole button, name=/send application/i). NOTE: it may briefly be DISABLED while an invisible Cloudflare Turnstile bot-check settles (a hidden 'cf-turnstile-response' field). If 'Send application' is disabled, WAIT a few seconds for it to enable, then click it. After clicking, a SUBMITTING state follows (spinner / network / redirect). Wait for it.",
+            "SUCCESS is confirmed ONLY by a post-submit confirmation: page text 'Application Submitted' / 'Application Sent' / 'Thank you' / 'Success', or a URL change away from the review step. Reaching the Review page is NOT success. Emit `done` with the confirmation text only after you see one of these.",
+            "SELECTORS: Talent.com class names are generated/hashed and change between builds. Prefer accessible selectors in your reasoning — role, label, placeholder, visible text — over brittle CSS / nth-child / deep selectors.",
+            "Do not toggle marketing / 'save my answers' / job-alert / newsletter checkboxes unless the candidate policy explicitly opts in. Default them OFF.",
         ],
     },
 
