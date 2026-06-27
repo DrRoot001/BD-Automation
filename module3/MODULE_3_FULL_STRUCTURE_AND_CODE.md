@@ -1754,7 +1754,6 @@ def generate_cover_letter_pdf(
     /* ── Header ── */
     .header {
       text-align: center;
-      border-bottom: 1.5pt solid #000;
       padding-bottom: 8pt;
       margin-bottom: 12pt;
     }
@@ -1927,10 +1926,16 @@ def generate_cover_letter_pdf(
     <div class="section-title">Professional Experience</div>
     {% for job in resume.experience %}
     <div class="item-block">
-      <div class="item-header">
-        <div class="item-header-left">{{ job.company }} {% if job.location %} | {{ job.location }}{% endif %}</div>
-        <div class="item-header-right">{{ job.date }}</div>
-      </div>
+      <table style="width: 100%; margin-bottom: 2pt; border-collapse: collapse;">
+        <tr>
+          <td style="text-align: left; font-weight: bold; font-size: 10pt; padding: 0;">
+            {{ job.company }} {% if job.location %} | {{ job.location }}{% endif %}
+          </td>
+          <td style="text-align: right; font-size: 10pt; white-space: nowrap; padding: 0;">
+            {{ job.date }}
+          </td>
+        </tr>
+      </table>
       <div class="item-sub">{{ job.title }}</div>
       {% if job.technologies_used and job.technologies_used|length > 0 %}
       <div class="tech-used"><b>Technologies:</b> {{ job.technologies_used | join(', ') }}</div>
@@ -1985,13 +1990,17 @@ def generate_cover_letter_pdf(
   <div class="section">
     <div class="section-title">Education</div>
     {% for edu in resume.education %}
-    <div class="edu-block">
-      <div class="edu-left">
-        <b>{{ edu.institution }}</b><br>
-        {{ edu.degree }}
-      </div>
-      <div class="edu-right">{{ edu.date }}</div>
-    </div>
+    <table style="width: 100%; margin-bottom: 6pt; border-collapse: collapse;">
+      <tr>
+        <td style="text-align: left; font-size: 10pt; padding: 0;">
+          <b>{{ edu.institution }}</b><br>
+          {{ edu.degree }}
+        </td>
+        <td style="text-align: right; font-size: 10pt; vertical-align: top; white-space: nowrap; padding: 0;">
+          {{ edu.date }}
+        </td>
+      </tr>
+    </table>
     {% endfor %}
   </div>
   {% endif %}
