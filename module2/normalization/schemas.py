@@ -1,85 +1,56 @@
-"""Schemas for normalized job data.
-
-Defines the unified NormalizedJob schema that all adapters normalize to.
-"""
-
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Optional, List, Literal
+from datetime import datetime, timezone
+from pydantic import BaseModel, Field, ConfigDict
 
 
-@dataclass
-class NormalizedJob:
-    """Unified job format stored in the jobs table.
-    
-    All sources (Greenhouse, Lever, Indeed, LinkedIn, RSS, etc.) normalize to this schema.
-    This is the output of Submodule 2 (Normalization) and input to downstream modules.
-    """
-    
-    # Core fields (required)
+class NormalizedJob(BaseModel):
+    """Minimal normalized job schema compatible with module3 expectations."""
+
+    model_config = ConfigDict(extra="allow")
+
     title: str
     company: str
-    location: str  # e.g., "Remote", "New York, NY", "USA"
-    url: str  # Original job posting URL
-    description: str
-    source: str  # Adapter platform name (e.g., "greenhouse", "lever", "rss_generic")
-    
-    # Extracted fields
-    skills: List[str] = field(default_factory=list)  # Extracted keywords
-    salary_min: Optional[int] = None  # Minimum salary in cents or dollars
-    salary_max: Optional[int] = None  # Maximum salary
-    pay_period: Literal["hourly", "yearly"] = "yearly"
-    job_type: Literal["full-time", "contract", "part-time", "temporary", "internship"] = "full-time"
-    
-    # Metadata
-    posted_at: datetime = field(default_factory=datetime.utcnow)
-    canonical_url: str = ""  # URL with tracking params stripped
-    embedding: Optional[List[float]] = None  # 1536-dim vector (populated by Submodule 6)
-    source_url: str = ""  # Same as url (for clarity)
-    raw_source: Optional[Dict[str, Any]] = None  # Reference to raw adapter data
-    
-    # Internal tracking
-    job_id: Optional[str] = None  # Assigned on storage (Module 1)
-    normalized_at: datetime = field(default_factory=datetime.utcnow)
-    
-    def __post_init__(self):
-        """Validate and normalize fields."""
-        if not self.title or not self.company or not self.url:
-            raise ValueError("NormalizedJob requires title, company, and url")
-        
-        if not self.source_url:
-            self.source_url = self.url
-        
-        if not self.canonical_url:
-            self.canonical_url = self.url
-        
-        # Normalize title and company
-        self.title = self.title.strip()
-        self.company = self.company.strip()
-        self.location = self.location.strip() if self.location else "Unknown"
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary for serialization."""
-        return {
-            "title": self.title,
-            "company": self.company,
-            "location": self.location,
-            "url": self.url,
-            "description": self.description,
-            "source": self.source,
-            "skills": self.skills,
-            "salary_min": self.salary_min,
-            "salary_max": self.salary_max,
-            "pay_period": self.pay_period,
-            "job_type": self.job_type,
-            "posted_at": self.posted_at.isoformat(),
-            "canonical_url": self.canonical_url,
-            "embedding": self.embedding,
-            "job_id": self.job_id,
-        }
-    
-    def __repr__(self) -> str:
-        salary = f"${self.salary_min}-${self.salary_max}/{self.pay_period}" if self.salary_min else "Unknown"
-        return f"NormalizedJob(title={self.title!r}, company={self.company!r}, salary={salary}, type={self.job_type})"
+    location: str = "Remote"
+    source: str = "unknown"
+    source_url: str = ""
+    canonical_url: str = ""
+    description: str = ""
+    skills: List[str] = Field(default_factory=list)
+    salary_min: Optional[int] = None
+    salary_max: Optional[int] = None
+    pay_period: Literal["hourly", "yearly", "monthly", "daily", "unknown"] = "yearly"
+    job_type: Literal["full-time", "contract", "part-time", "full time", "full_time", "unknown"] = "full-time"
+    posted_at: Optional[datetime] = None
+    embedding: Optional[List[float]] = None
+    job_id: Optional[str] = None
+    url: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "NormalizedJob":
+        payload = dict(data or {})
+        if "url" in payload and "source_url" not in payload:
+            payload["source_url"] = payload["url"]
+        if "canonical_url" not in payload:
+            payload["canonical_url"] = payload.get("source_url", "")
+        if "posted_at" in payload and isinstance(payload["posted_at"], str):
+            try:
+                payload["posted_at"] = datetime.fromisoformat(payload["posted_at"])
+            except ValueError:
+                payload["posted_at"] = datetime.now(timezone.utc)
+        return cls(**payload)
+
+
+def normalize_job(raw_job: Any) -> NormalizedJob:
+    if isinstance(raw_job, NormalizedJob):
+        return raw_job
+    if isinstance(raw_job, dict):
+        return NormalizedJob.from_dict(raw_job)
+    if hasattr(raw_job, "model_dump"):
+        return NormalizedJob.from_dict(raw_job.model_dump())
+    raise TypeError(f"Unsupported job payload: {type(raw_job)!r}")
+
+
+def normalize_batch(raw_jobs: list[Any]) -> list[NormalizedJob]:
+    return [normalize_job(job) for job in raw_jobs]

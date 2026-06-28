@@ -1,0 +1,14 @@
+{
+  "name": "bd-automator-scraper",
+  "version": "1.0.0",
+  "description": "Mavericks-style fetchfox scraper, called as a subprocess by the Python backend",
+  "type": "module",
+  "main": "scrape.js",
+  "scripts": {
+    "scrape": "node scrape.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "fetchfox": "^0.0.40"
+  }
+}
