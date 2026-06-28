@@ -206,30 +206,68 @@ export default function JobImportPage() {
     return jobsList.map(job => {
       const errors: string[] = []
       
-      if (!job.title || typeof job.title !== 'string' || !job.title.trim()) {
+      const title = (job.title || '').trim()
+      const company = (job.company || '').trim()
+      const source_url = (job.source_url || '').trim()
+      
+      // Automatic fallback for source if missing but source_url exists
+      let source = (job.source || '').trim()
+      if (!source && source_url) {
+        try {
+          const url = new URL(source_url)
+          source = url.hostname.replace('www.', '')
+        } catch (e) {
+          source = 'imported'
+        }
+      }
+
+      if (!title) {
         errors.push("Title is required")
       }
-      if (!job.company || typeof job.company !== 'string' || !job.company.trim()) {
+      if (!company) {
         errors.push("Company is required")
       }
-      if (!job.source || typeof job.source !== 'string' || !job.source.trim()) {
+      if (!source) {
         errors.push("Source is required")
       }
-      if (!job.source_url || typeof job.source_url !== 'string' || !job.source_url.trim()) {
+      if (!source_url) {
         errors.push("Source URL is required")
       }
 
+      // skills parsing: support both array and comma-separated string
+      let skills: string[] = []
+      if (Array.isArray(job.skills)) {
+        skills = job.skills
+      } else if (typeof job.skills === 'string') {
+        skills = job.skills.split(',').map((s: string) => s.trim()).filter(Boolean)
+      }
+
+      // salary parsing: ensure numbers or null
+      let salary_min = null
+      if (job.salary_min !== undefined && job.salary_min !== null && job.salary_min !== '') {
+        salary_min = typeof job.salary_min === 'number' 
+          ? job.salary_min 
+          : parseInt(String(job.salary_min).replace(/[^0-9]/g, ''), 10) || null
+      }
+
+      let salary_max = null
+      if (job.salary_max !== undefined && job.salary_max !== null && job.salary_max !== '') {
+        salary_max = typeof job.salary_max === 'number' 
+          ? job.salary_max 
+          : parseInt(String(job.salary_max).replace(/[^0-9]/g, ''), 10) || null
+      }
+
       return {
-        title: job.title || '',
-        company: job.company || '',
+        title,
+        company,
         location: job.location || null,
-        source: job.source || '',
-        source_url: job.source_url || '',
+        source,
+        source_url,
         canonical_url: job.canonical_url || null,
         description: job.description || null,
-        skills: Array.isArray(job.skills) ? job.skills : [],
-        salary_min: job.salary_min || null,
-        salary_max: job.salary_max || null,
+        skills,
+        salary_min,
+        salary_max,
         pay_period: job.pay_period || null,
         job_type: job.job_type || null,
         posted_at: job.posted_at || null,
