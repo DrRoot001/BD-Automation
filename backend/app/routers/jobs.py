@@ -33,7 +33,7 @@ async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
     import httpx
     from module2.adapters import get_adapter
     from module2.normalization import normalize_batch
-    from app.module2.run_scrape import run_all
+    from module2.run_scrape import run_all
 
     SCRAPER_CONFIGS = [
         ("greenhouse", {"company": "stripe",      "retries": 3}, 25),

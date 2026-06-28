@@ -38,5 +38,14 @@
         "error": "JOB_EXPIRED: Job posting no longer exists or has been removed"
       }
     ]
+  },
+  "www.dice.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-06-27T16:38:15.235873",
+        "error": "BLOCKED: DICE_EMAIL / DICE_PASSWORD not configured \u2014 cannot log in to Dice (Easy Apply requires an authenticated seeker account)."
+      }
+    ]
   }
 }
