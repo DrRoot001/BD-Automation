@@ -86,6 +86,8 @@ async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
         for adapter_name, filters, cap in SCRAPER_CONFIGS:
             try:
                 cls = get_adapter(adapter_name)
+                if not cls:
+                    continue
                 adapter = cls()
                 jobs = await asyncio.wait_for(adapter.discover_jobs(filters), timeout=45.0)
                 total_discovered += len(jobs)
