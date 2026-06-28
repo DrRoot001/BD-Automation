@@ -24,8 +24,9 @@ try:
 except ImportError:
     from module2.links import get_links
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT_DIR / ".env")
+REPO_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(REPO_ROOT / "backend" / ".env")
+load_dotenv(REPO_ROOT / ".env")
 
 SCRAPER_DIR = Path(__file__).resolve().parent / "scraper"
 SCRAPER_ENTRYPOINT = SCRAPER_DIR / "scrape.js"
