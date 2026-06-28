@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Users, FileText, Briefcase,
-  ChevronLeft, ChevronRight, Menu,
+  ChevronLeft, ChevronRight, Menu, Search,
 } from 'lucide-react'
 
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -19,6 +19,7 @@ type NavItem = {
 
 const ADMIN_NAV_ITEMS: NavItem[] = [
   { id: 'admin-overview',   label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
+  { id: 'admin-discovery',  label: 'Job Discovery',    path: '/admin/discovery',    icon: Search },
   { id: 'admin-users',      label: 'User Management',  path: '/admin/users',        icon: Users },
   { id: 'admin-jobs',       label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
   { id: 'admin-apps',       label: 'All Applications', path: '/applications',       icon: FileText },

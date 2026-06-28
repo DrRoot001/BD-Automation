@@ -15,45 +15,10 @@ export default function AdminPage() {
   const [matchingError, setMatchingError] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
   
-  const [isDiscoveryRunning, setIsDiscoveryRunning] = useState(false)
-  const [discoveryStatus, setDiscoveryStatus] = useState<any>(null)
-
   const { data: candidates, isLoading: candidatesLoading } = useQuery({
     queryKey: ['admin-candidates'],
     queryFn: () => api.getCandidates(),
   })
-
-  // Poll discovery status
-  useQuery({
-    queryKey: ['admin-discovery-status'],
-    queryFn: async () => {
-      const res = await api.getDiscoveryStatus()
-      if (res.running) {
-        setIsDiscoveryRunning(true)
-      } else {
-        setIsDiscoveryRunning(false)
-        if (res.last_result && isDiscoveryRunning) {
-          setDiscoveryStatus(res.last_result)
-        }
-      }
-      return res
-    },
-    refetchInterval: isDiscoveryRunning ? 3000 : 15000,
-  })
-
-  const handleRunDiscovery = async () => {
-    setIsDiscoveryRunning(true)
-    setDiscoveryStatus(null)
-    setMatchingError(null)
-    try {
-      await api.triggerJobDiscovery()
-    } catch (err: any) {
-      console.error(err)
-      setIsDiscoveryRunning(false)
-      const detail = err.response?.data?.detail
-      setMatchingError(typeof detail === 'string' ? detail : 'Failed to start job discovery')
-    }
-  }
 
   const handleRunMatching = async () => {
     if (!selectedCandidateId) return
@@ -132,28 +97,6 @@ export default function AdminPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          {/* Job Discovery Trigger */}
-          <div className="flex items-center gap-3 bg-bg-secondary border border-bg-border p-3 rounded-xl shadow-sm">
-            <div className="text-xs font-semibold text-text-muted">Job Discovery:</div>
-            <button
-              onClick={handleRunDiscovery}
-              disabled={isDiscoveryRunning}
-              className="flex items-center gap-2 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-medium text-sm rounded-lg transition-colors shadow-sm"
-            >
-              {isDiscoveryRunning ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  Running...
-                </>
-              ) : (
-                <>
-                  <Search className="w-4 h-4" />
-                  Run Discovery
-                </>
-              )}
-            </button>
-          </div>
-
           {/* Manual Matching Trigger Control Panel */}
           <div className="flex items-center gap-3 bg-bg-secondary border border-bg-border p-3 rounded-xl shadow-sm">
             <div className="text-xs font-semibold text-text-muted mr-1">Manual Matching:</div>
@@ -201,29 +144,7 @@ export default function AdminPage() {
         </div>
       )}
 
-      {discoveryStatus && (
-        <div className={`flex items-start gap-3 p-4 rounded-xl text-sm animate-in slide-in-from-top duration-300 ${
-          discoveryStatus.status === 'completed' ? 'bg-green-500/10 border border-green-500/20 text-green-500' : 'bg-red-500/10 border border-red-500/20 text-red-500'
-        }`}>
-          {discoveryStatus.status === 'completed' ? <CheckCircle className="w-5 h-5 shrink-0 mt-0.5" /> : <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />}
-          <div className="flex-1 space-y-1">
-            <div className="font-semibold">Discovery {discoveryStatus.status}</div>
-            {discoveryStatus.status === 'completed' && (
-              <div className="text-xs opacity-90">
-                Discovered: {discoveryStatus.total_discovered} | Saved: {discoveryStatus.total_saved}
-              </div>
-            )}
-            {discoveryStatus.errors && discoveryStatus.errors.length > 0 && (
-              <div className="text-xs opacity-80 mt-2">
-                Errors: {discoveryStatus.errors.join(', ')}
-              </div>
-            )}
-          </div>
-          <button onClick={() => setDiscoveryStatus(null)} className="hover:opacity-70">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-      )}
+
 
       {/* KPI Cards */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
