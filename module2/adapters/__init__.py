@@ -1,27 +1,26 @@
-"""Submodule 1: Source Adapters
+"""Adapter registry compatibility package for module2."""
 
-Adapters for discovering jobs from external platforms (APIs, RSS, scrapers).
+from typing import Any
 
-All concrete adapters are imported here to auto-register via @register_adapter.
-"""
 
-from .base import BaseSourceAdapter, RawJobData, RateLimitConfig
-from .registry import ADAPTER_REGISTRY, register_adapter, get_adapter, list_adapters, is_adapter_registered
+class BaseSourceAdapter:
+    platform_name: str = "base"
+    ingestion_type: str = "api"
 
-# Import concrete adapters (triggers @register_adapter decorator)
-from . import mock_adapter
-from . import rss_adapter
-from . import greenhouse_adapter
-from . import lever_adapter
-from . import indeed_adapter
+    async def discover_jobs(self, filters: Any | None = None) -> list[dict[str, Any]]:
+        return []
 
-__all__ = [
-    "BaseSourceAdapter",
-    "RawJobData",
-    "RateLimitConfig",
-    "ADAPTER_REGISTRY",
-    "register_adapter",
-    "get_adapter",
-    "list_adapters",
-    "is_adapter_registered",
-]
+    async def get_job_detail(self, job_url: str) -> dict[str, Any]:
+        return {"url": job_url}
+
+
+ADAPTER_REGISTRY: dict[str, type[BaseSourceAdapter]] = {}
+
+
+def register_adapter(cls: type[BaseSourceAdapter]) -> type[BaseSourceAdapter]:
+    ADAPTER_REGISTRY[cls.platform_name] = cls
+    return cls
+
+
+def get_adapter(platform_name: str) -> type[BaseSourceAdapter] | None:
+    return ADAPTER_REGISTRY.get(platform_name)

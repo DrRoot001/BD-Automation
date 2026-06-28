@@ -1,35 +1,10 @@
-"""Submodule 2: Normalization Engine
+"""Normalization utilities for module2.
 
-Convert RawJobData (from adapters) into unified NormalizedJob schema.
+This package provides a lightweight compatibility layer so downstream modules,
+including module3, can import a normalized job schema from module2 without
+requiring the full backend-specific module2 implementation.
 """
 
-from .normalizer import Normalizer, get_normalizer, normalize, normalize_batch
-from .schemas import NormalizedJob
-from .helpers import (
-    normalize_text,
-    clean_title,
-    classify_job_type,
-    normalize_location,
-    canonicalize_url,
-    extract_required_years,
-    tokenize,
-    is_remote_job,
-    is_usa_location,
-)
+from .schemas import NormalizedJob, normalize_job, normalize_batch
 
-__all__ = [
-    "NormalizedJob",
-    "Normalizer",
-    "get_normalizer",
-    "normalize",
-    "normalize_batch",
-    "normalize_text",
-    "clean_title",
-    "classify_job_type",
-    "normalize_location",
-    "canonicalize_url",
-    "extract_required_years",
-    "tokenize",
-    "is_remote_job",
-    "is_usa_location",
-]
+__all__ = ["NormalizedJob", "normalize_job", "normalize_batch"]
