@@ -48,8 +48,8 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 SCRAPE_TIMEOUT_SECONDS = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "300"))
 
 
-def run_node_scraper(link: str) -> list[dict[str, Any]]:
-    """Run the Node scraper subprocess for a single link and return parsed items."""
+def run_node_scraper(link: str) -> tuple[list[dict[str, Any]], Optional[str]]:
+    """Run the Node scraper subprocess for a single link and return parsed items and error message if any."""
     try:
         result = subprocess.run(
             ["node", str(SCRAPER_ENTRYPOINT), link],
@@ -61,19 +61,23 @@ def run_node_scraper(link: str) -> list[dict[str, Any]]:
             timeout=SCRAPE_TIMEOUT_SECONDS,
             env={**os.environ},
         )
+    except FileNotFoundError:
+        return [], "Node.js executable ('node') not found in PATH."
     except subprocess.TimeoutExpired:
-        print(f"[run_scrape] TIMEOUT scraping {link}")
-        return []
+        return [], f"Scraper execution timed out after {SCRAPE_TIMEOUT_SECONDS}s."
+    except Exception as e:
+        return [], f"Subprocess execution error: {str(e)}"
 
     if result.returncode not in (0, 2):  # 2 = partial results, still usable
-        print(f"[run_scrape] scraper failed for {link}: {result.stderr.strip()[-500:]}")
-        return []
+        stderr_msg = result.stderr.strip()
+        if len(stderr_msg) > 300:
+            stderr_msg = stderr_msg[-300:]
+        return [], stderr_msg or f"Scraper process exited with code {result.returncode}"
 
     try:
-        return json.loads(result.stdout.strip() or "[]")
-    except json.JSONDecodeError:
-        print(f"[run_scrape] could not parse scraper output for {link}: {result.stdout[:300]}")
-        return []
+        return json.loads(result.stdout.strip() or "[]"), None
+    except json.JSONDecodeError as e:
+        return [], f"Failed to parse JSON output: {str(e)}"
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -145,13 +149,23 @@ def post_jobs(jobs: list[dict[str, Any]]) -> int:
         return 0
 
 
-def run_all() -> dict[str, int]:
-    """Scrape every link in LINKS, filter/map results, and post them. Returns summary stats."""
-    stats = {"scraped": 0, "kept": 0, "posted": 0}
+def run_all() -> dict[str, Any]:
+    """Scrape every link in LINKS, filter/map results, and post them. Returns summary stats and errors list."""
+    stats = {"scraped": 0, "kept": 0, "posted": 0, "errors": []}
+
+    # Verify if node_modules exists
+    if not (SCRAPER_DIR / "node_modules").is_dir():
+        stats["errors"].append("Scraper node_modules folder is missing. Please run 'npm install' inside module2/scraper.")
+        return stats
 
     for link in get_links():
         print(f"[run_scrape] scraping {link}")
-        raw_items = run_node_scraper(link)
+        raw_items, err = run_node_scraper(link)
+        if err:
+            stats["errors"].append(f"{link}: {err}")
+            print(f"[run_scrape] failed scraping {link}: {err}")
+            continue
+
         stats["scraped"] += len(raw_items)
 
         mapped = []

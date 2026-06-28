@@ -70,6 +70,8 @@ async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
         node_stats = await asyncio.to_thread(run_all)
         total_discovered += node_stats.get("scraped", 0)
         total_saved += node_stats.get("posted", 0)
+        if "errors" in node_stats and node_stats["errors"]:
+            errors.extend(node_stats["errors"])
     except Exception as e:
         logger.error(f"Node.js scraper pipeline failed: {e}")
         errors.append(f"node_scrapers: {str(e)}")
