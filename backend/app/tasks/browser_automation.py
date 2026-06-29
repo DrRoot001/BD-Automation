@@ -9,7 +9,11 @@ from celery.exceptions import Retry
 import redis.asyncio as aioredis
 
 from app.celery_app import celery_app
-from app.services.events import publish_event
+# NOTE: publish_event is intentionally NOT imported from app.services.events here.
+# This module defines its own publish_event below that broadcasts to BOTH the
+# "event:<name>" and "events:<name>" Redis channels. The WebSocket subscriber
+# (app/routers/websocket.py) listens on the "events:<name>" channels, so this
+# dual-publish is what delivers browser-automation progress to the frontend.
 from app.browser_automation.services.models import ApplicationPackage, ApplicationResult
 from app.browser_automation.services.executor import ApplicationExecutor
 
@@ -89,9 +93,19 @@ async def publish_application_failed(
         },
     )
     
-    # Transition the status in the database to FAILED or BLOCKED
+    # Transition the status in the database to FAILED or BLOCKED.
+    # Detect BLOCKED via the explicit failure_reason or the uppercase "BLOCKED:"
+    # marker that adapters raise — NOT a bare lowercase "blocked" substring, which
+    # matched unrelated error text (e.g. "...request was blocked by timeout...")
+    # and mislabeled ordinary failures as bot-detection.
     from app.browser_automation.services.state_machine import transition_status
-    status_to_set = "BLOCKED" if failure_reason == "BOT_DETECTED" or "blocked" in error.lower() else "FAILED"
+    err = error or ""
+    is_blocked = (
+        failure_reason in ("BOT_DETECTED", "BLOCKED_HUMAN_REQUIRED")
+        or "BLOCKED:" in err
+        or "BLOCKED_HUMAN_REQUIRED" in err
+    )
+    status_to_set = "BLOCKED" if is_blocked else "FAILED"
     
     metadata = {
         "error_message": error,
@@ -273,7 +287,42 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     })
     
     executor = ApplicationExecutor()
-    result = await executor.execute(package, retry_count=retry_count)
+    # HARD per-application deadline. The AgentLoop is bounded (~4 min) and the
+    # scripted path's steps are individually bounded, but a wedged network call
+    # or a hung page action could otherwise let one run sit until Celery's 60-min
+    # hard kill — which leaves the app to be reaped by the watchdog with the
+    # generic "worker died or never picked up task" message. Failing fast here
+    # with a clear reason frees the worker for the next queued application.
+    exec_timeout = float(os.getenv("APPLICATION_EXEC_TIMEOUT_S", "1200"))  # 20 min
+    try:
+        result = await asyncio.wait_for(
+            executor.execute(package, retry_count=retry_count),
+            timeout=exec_timeout,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            f"[M4] Application {package.application_id} exceeded {exec_timeout:.0f}s "
+            "execution deadline — marking FAILED (APPLICATION_TIMEOUT)"
+        )
+        from app.browser_automation.services.state_machine import transition_status
+        await transition_status(
+            package.application_id, "FAILED",
+            {"error_message": f"APPLICATION_TIMEOUT: exceeded {int(exec_timeout)}s execution deadline"},
+            failure_reason="INFRA_ERROR",
+        )
+        await publish_event("pipeline.progress", {
+            "application_id": str(package.application_id),
+            "candidate_id": str(package.candidate_id),
+            "step": "failed",
+            "message": f"Execution exceeded {int(exec_timeout)}s deadline — stopped",
+        })
+        return ApplicationResult(
+            application_id=str(package.application_id),
+            status="FAILED",
+            error_message=f"APPLICATION_TIMEOUT: exceeded {int(exec_timeout)}s execution deadline",
+            execution_time_seconds=exec_timeout,
+            retry_count=retry_count,
+        )
     
     if result.status == "SUBMITTED":
         await publish_event("pipeline.progress", {
@@ -341,6 +390,12 @@ def execute_application(self, package_dict: dict):
                     retry_eligible=False,
                     failure_reason="JOB_EXPIRED"
                 ))
+                return result.dict()
+            # A deadline timeout is terminal — retrying would just re-hang for
+            # another full deadline (up to 3×). The app is already marked FAILED
+            # with a clear reason; the operator can re-queue it from the UI.
+            if result.error_message and "APPLICATION_TIMEOUT" in result.error_message:
+                logger.warning(f"[M4] APPLICATION_TIMEOUT for {package_dict.get('application_id')} — not retrying")
                 return result.dict()
             raise Exception(f"Execution failed: {result.error_message}")
             

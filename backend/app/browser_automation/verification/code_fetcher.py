@@ -587,7 +587,16 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
             ).scalar_one_or_none()
             if not row:
                 return None
-            return row.google_refresh_token or None
+            token = row.google_refresh_token or None
+            if not token:
+                return None
+            # Stored encrypted (Fernet) in production — decrypt before use.
+            # decrypt_token() is a safe no-op for plaintext/dev values.
+            try:
+                from app.services.crypto import decrypt_token
+                return decrypt_token(token)
+            except Exception:
+                return token
     except Exception as exc:
         logger.warning(f"[verify] refresh-token query failed: {exc}")
         return None

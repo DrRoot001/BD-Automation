@@ -58,8 +58,13 @@ async def scan_candidate_inbox(candidate_id: str, db_session) -> int:
         since = datetime.utcnow() - timedelta(hours=24)
 
     # 3. Refresh access token and fetch emails
+    # The refresh token is stored ENCRYPTED (Fernet) when ENCRYPTION_KEY is set.
+    # It MUST be decrypted before use, otherwise Gmail returns invalid_grant in
+    # production. decrypt_token() is a safe no-op for plaintext/dev values.
+    from app.services.crypto import decrypt_token
+    refresh_token = decrypt_token(row.google_refresh_token)
     try:
-        access_token = await refresh_access_token(row.google_refresh_token)
+        access_token = await refresh_access_token(refresh_token)
         emails = await fetch_emails_since(access_token, since)
     except Exception as e:
         logger.error(f"[Scanner] Gmail fetch failed for {candidate_id}: {e}")

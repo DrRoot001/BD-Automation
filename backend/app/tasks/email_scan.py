@@ -92,9 +92,14 @@ def scan_single_candidate_interviews(self, candidate_id: str):
                 
             # Look back 7 days to cover weekends/holidays
             since = datetime.utcnow() - timedelta(days=7)
-            
+
+            # Decrypt the stored refresh token (Fernet) before use — safe no-op
+            # for plaintext/dev. Without this, Gmail returns invalid_grant when
+            # ENCRYPTION_KEY is set in production.
+            from app.services.crypto import decrypt_token
+            refresh_token = decrypt_token(row.google_refresh_token)
             try:
-                access_token = await refresh_access_token(row.google_refresh_token)
+                access_token = await refresh_access_token(refresh_token)
                 emails = await fetch_emails_since(access_token, since)
             except Exception as e:
                 logger.error(f"[InterviewScan] Gmail fetch failed for candidate {candidate_id}: {e}")

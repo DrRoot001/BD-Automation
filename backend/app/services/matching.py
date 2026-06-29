@@ -223,7 +223,17 @@ async def run_matching_for_candidate(
     # manual_limit overrides the daily cap (used when BD user manually clicks "Run Now")
     t0 = time.time()
     max_daily = None  # initialized here so it's always defined in the loop below
-    if manual_limit is not None:
+
+    # Application limits (manual active-cap + daily cap) can be globally disabled
+    # via DISABLE_APPLICATION_LIMITS. Defaults to DISABLED so testing isn't
+    # blocked by a "X jobs already pending/queued" cap. To re-enable the caps,
+    # set DISABLE_APPLICATION_LIMITS=false.
+    _limits_disabled = os.getenv("DISABLE_APPLICATION_LIMITS", "true").lower() in ("1", "true", "yes", "on")
+
+    if _limits_disabled:
+        remaining_slots = 1_000_000
+        logger.info(f"[Matching] Candidate {candidate.name}: application limits DISABLED (DISABLE_APPLICATION_LIMITS) — no cap applied")
+    elif manual_limit is not None:
         active_count = await get_active_application_count(candidate_id, session)
         remaining_slots = max(0, manual_limit - active_count)
         logger.info(f"[Matching] active count done in {time.time()-t0:.2f}s")
@@ -235,12 +245,12 @@ async def run_matching_for_candidate(
         max_daily = getattr(candidate, "max_daily_apps_override", None)
         if max_daily is None:
             max_daily = settings.max_daily_applications_per_candidate
-            
+
         time_24h_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        
+
         already_applied_today = await get_active_application_count(candidate_id, session, since_datetime=time_24h_ago)
         remaining_slots = max(0, max_daily - already_applied_today)
-        
+
         logger.info(f"[Matching] Candidate {candidate.name}: applied today={already_applied_today}, remaining={remaining_slots}")
 
 
@@ -496,6 +506,12 @@ async def run_matching_for_candidate(
             "[Matching] Orchestrating package for job %s at %s (score=%.1f, will_auto_apply=%s)",
             job.title, job.company, score, passed_llm
         )
+        # ALWAYS enforce the fit-score apply-gate: a job whose combined match
+        # score is below the threshold (APPLY_SCORE_THRESHOLD, default 70) must
+        # NOT be applied to — the orchestrator transitions it to ANALYZED and the
+        # browser automation never runs. This is independent of
+        # DISABLE_APPLICATION_LIMITS (which only relaxes the volume caps / rate
+        # limiter, never the quality gate).
         try:
             result = await asyncio.wait_for(
                 orchestrate_application_package(

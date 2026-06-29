@@ -452,13 +452,25 @@ async def fill_form_with_llm(
             filled += 1
             logger.info(f"[LLMFill] FILLED [{field.field_type}/{source}] "
                         f"'{field.label}' = '{str(value)[:60]}'")
-            # Persist to memory unless it's a file path (varies per run) or already memory
+            # Persist to memory unless it's a file path (varies per run) or already memory.
+            # Parse the confidence out of the source tag (e.g. "llm:0.30") so the
+            # memory layer can refuse to persist low-confidence guesses — a 0.30
+            # guess written to memory would be replayed verbatim forever.
             if (
                 field.field_type != "file"
                 and source not in ("memory",)
             ):
+                conf: Optional[float] = None
+                if isinstance(source, str) and source.startswith("llm:"):
+                    try:
+                        conf = float(source.split(":", 1)[1])
+                    except (ValueError, IndexError):
+                        conf = None
                 try:
-                    field_memory.remember(field.label, field.field_type, str(value), source, candidate_id=candidate_id)
+                    field_memory.remember(
+                        field.label, field.field_type, str(value), source,
+                        candidate_id=candidate_id, confidence=conf,
+                    )
                 except Exception:
                     pass
             await asyncio.sleep(random.uniform(0.1, 0.4))
@@ -738,9 +750,13 @@ async def _read_field_value(page: Page, field: FormField) -> str:
 
 def _values_match(expected: str, actual: str) -> bool:
     """Loose equality for verification — case-insensitive, ignores surrounding
-    whitespace and trailing punctuation, and accepts substring matches both
-    ways. React-select often shows the option label exactly; native inputs
-    sometimes normalize spaces/case.
+    whitespace and trailing punctuation.
+
+    Substring matching is allowed ONLY for longer tokens. For short answers
+    (< 4 chars, e.g. "Yes"/"No") substring matching is dangerous: expecting
+    "No" would wrongly accept an actual value of "Not authorized" ("no" ⊂
+    "not"), so a wrong value passes verification. Short answers must match by
+    whole word or exactly.
     """
     if not actual:
         return False
@@ -750,6 +766,11 @@ def _values_match(expected: str, actual: str) -> bool:
         return True  # no expectation, no failure
     if e == a:
         return True
-    if e in a or a in e:
-        return True
-    return False
+    # Short tokens: require a whole-word match, not a loose substring. \bno\b
+    # matches "No, I am" but NOT "Not authorized", so a wrong value can't pass.
+    if len(e) < 4 or len(a) < 4:
+        import re as _re
+        return bool(_re.search(rf"\b{_re.escape(e)}\b", a))
+    # Longer tokens: substring either way is acceptable (react-select labels,
+    # space/case normalization on native inputs).
+    return e in a or a in e
