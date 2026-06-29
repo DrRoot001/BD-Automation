@@ -8,8 +8,8 @@ import re
 import pdfplumber
 import pypdfium2 as pdfium
 from PIL import Image
-from typing import List, Optional
-from pydantic import BaseModel, Field, field_validator
+from typing import List, Optional, Union
+from pydantic import BaseModel, Field, field_validator, model_validator
 from google import genai
 from google.genai import types
 
@@ -18,14 +18,36 @@ class ExperienceEntry(BaseModel):
     title: str = Field(description="Job title")
     start_date: str = Field(description="Start date of employment (e.g., 'Jan 2020' or '2020')")
     end_date: Optional[str] = Field(None, description="End date of employment or None/Present if current")
-    description: str = Field(description="Work description or responsibilities")
+    description: str = Field(default="", description="Work description or responsibilities")
     technologies: List[str] = Field(default_factory=list, description="Technologies, programming languages, or tools used in this job")
+    bullets: List[str] = Field(default_factory=list, description="Individual bullet points of the work description")
+
+    @model_validator(mode="after")
+    def populate_bullets_and_description(self) -> ExperienceEntry:
+        if not self.bullets and self.description:
+            lines = []
+            for line in self.description.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                # strip common bullets like •, *, -, etc.
+                cleaned = re.sub(r"^[•\-\*\s·]+", "", line).strip()
+                if cleaned:
+                    lines.append(cleaned)
+            self.bullets = lines
+        elif self.bullets and not self.description:
+            self.description = "\n".join(f"• {b}" for b in self.bullets)
+        return self
 
 class EducationEntry(BaseModel):
     institution: str = Field(description="Name of the school, university, or college")
     degree: str = Field(description="Degree name (e.g., 'Bachelor of Science' or 'BS')")
     field: str = Field(description="Field of study (e.g., 'Computer Science')")
     graduation_year: Optional[int] = Field(None, description="Graduation year (4-digit integer)")
+
+class SkillGroup(BaseModel):
+    category: str = Field(description="Name of the skill category (e.g., 'Languages', 'Frameworks')")
+    keywords: List[str] = Field(description="List of skills or keywords in this category")
 
 class ResumeSection(BaseModel):
     summary: str = Field(default="", description="Professional summary or profile description")
@@ -44,10 +66,22 @@ class ResumeSection(BaseModel):
     salary_expectation: Optional[str] = Field(None, description="Any mention of salary expectations or current salary. Return None if absent.")
     website: Optional[str] = Field(None, description="Personal website, portfolio, GitHub, or LinkedIn URL extracted from contact info. Return None if absent.")
     skills: List[str] = Field(default_factory=list, description="Technical and soft skills")
+    skills_categorized: List[SkillGroup] = Field(default_factory=list, description="Categorized technical and soft skills")
     keywords: List[str] = Field(default_factory=list, description="Core keywords extracted from summary + skills + experience")
     experience: List[ExperienceEntry] = Field(default_factory=list, description="Employment and work experience details")
     education: List[EducationEntry] = Field(default_factory=list, description="Education details")
     certifications: List[str] = Field(default_factory=list, description="List of professional certifications")
+
+    @model_validator(mode="after")
+    def populate_skills_categorized(self) -> ResumeSection:
+        if not self.skills_categorized and self.skills:
+            self.skills_categorized = [SkillGroup(category="Core Skills", keywords=self.skills)]
+        elif self.skills_categorized and not self.skills:
+            flat = []
+            for sg in self.skills_categorized:
+                flat.extend(sg.keywords)
+            self.skills = flat
+        return self
 
 class ResumeData(BaseModel):
     candidate_id: Optional[str] = None
@@ -149,7 +183,11 @@ async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resum
         "You are an expert resume parsing system. Analyze the following candidate's resume "
         "and structure it into the requested JSON schema. Make sure to ground all work experience, dates, "
         "institution names, and degrees strictly in the provided content. Do not make up any certifications, "
-        "work experience, or education details."
+        "work experience, or education details. For the skills section, extract all skills/keywords "
+        "by preserving their original categories (e.g. 'Salesforce Clouds', 'DevOps & Deployment') "
+        "under `skills_categorized`, and also populate a flattened list of all unique skills under `skills`. "
+        "For experience descriptions, split any bullet points and populate them in the `bullets` list, "
+        "and combine/keep them in the `description` string."
     )
 
     # Decide if we need multimodal parsing

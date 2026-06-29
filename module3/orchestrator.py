@@ -313,6 +313,7 @@ async def orchestrate_application_package(
             "parsed_json": {
                 "summary": tailored_resume.modified_summary,
                 "skills": tailored_resume.modified_skills,
+                "skills_categorized": [sg.model_dump() for sg in tailored_resume.modified_skills_categorized] if tailored_resume.modified_skills_categorized else [],
                 "keywords": tailored_resume.modified_keywords,
                 "experience": [exp.model_dump() for exp in tailored_resume.experience],
                 "education": [edu.model_dump() for edu in tailored_resume.education],
@@ -641,6 +642,7 @@ async def prepare_package_for_live_application(
             "parsed_json": {
                 "summary": tailored_resume.modified_summary,
                 "skills": tailored_resume.modified_skills,
+                "skills_categorized": [sg.model_dump() for sg in tailored_resume.modified_skills_categorized] if tailored_resume.modified_skills_categorized else [],
                 "keywords": tailored_resume.modified_keywords,
                 "experience": [exp.model_dump() for exp in tailored_resume.experience],
                 "education": [edu.model_dump() for edu in tailored_resume.education],
