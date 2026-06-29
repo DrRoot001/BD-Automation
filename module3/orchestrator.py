@@ -292,54 +292,49 @@ async def orchestrate_application_package(
         # Cover letter (+ screening answers) are produced regardless of tailoring.
         aux_tasks = [generate_cover_letter(resume_data, job, candidate)]
         if screening_questions:
-            aux_tasks.append(answer_screening_questions(screening_questions, resume_data, job, candidate))
-
-        if tailor_needed:
-            gathered = await asyncio.gather(
-                tailor_resume(resume_data, job, candidate, version=next_version),
-                *aux_tasks,
-            )
-            tailored_resume = gathered[0]
-            cover_letter = gathered[1]
-            screening_answers = gathered[2] if screening_questions else {}
-            print(f"[ORCHESTRATOR] Resume tailored. ATS {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
-
-            candidate_name = candidate.get("name") or candidate_id
-            tailored_resume.pdf_url = await upload_file_to_supabase(
-                tailored_resume.pdf_url,
-                "updated_resume",
-                f"{safe_filename(candidate_name, default=candidate_id, extension='')}_resume_v{next_version}.pdf"
-            )
-            resume_pdf_url = tailored_resume.pdf_url
-
-            tailored_payload = {
-                "candidate_id": candidate_id,
-                "version": next_version,
-                "file_url": tailored_resume.pdf_url,
-                "parsed_json": {
-                    "summary": tailored_resume.modified_summary,
-                    "skills": tailored_resume.modified_skills,
-                    "keywords": tailored_resume.modified_keywords,
-                    "experience": [exp.model_dump() for exp in tailored_resume.experience],
-                    "education": [edu.model_dump() for edu in tailored_resume.education],
-                    "certifications": resume_data.sections.certifications
-                },
-                "is_base": False,
-                "tailored_for_job_id": job_id
-            }
-            resp = await client.post("/api/resumes", json=tailored_payload)
-            if resp.status_code != 201:
-                raise ValueError(f"Failed to save tailored resume: {resp.text}")
-            resume_id_for_app = resp.json()["id"]
-            ats_before, ats_after = tailored_resume.ats_score_before, tailored_resume.ats_score_after
-        else:
-            gathered = await asyncio.gather(*aux_tasks)
-            cover_letter = gathered[0]
-            screening_answers = gathered[1] if screening_questions else {}
-            resume_id_for_app = base_resume_id
-            resume_pdf_url = base_resume_file_url
-            ats_before = ats_after = _base_ats
-            print(f"[ORCHESTRATOR] Using base resume (ID: {base_resume_id}); no tailoring needed.")
+            tasks.append(answer_screening_questions(screening_questions, resume_data, job, candidate))
+            
+        results = await asyncio.gather(*tasks)
+        
+        tailored_resume = results[0]
+        cover_letter = results[1]
+        screening_answers = results[2] if screening_questions else {}
+        
+        print(f"[ORCHESTRATOR] Resume tailored. ATS Score improved from {tailored_resume.ats_score_before} to {tailored_resume.ats_score_after}")
+        
+        # Upload Tailored Resume to the CORRECT Bucket
+        candidate_name = candidate.get("name") or candidate_id
+        remote_resume_url = await upload_file_to_supabase(
+            tailored_resume.pdf_url,
+            "updated_resume",
+            f"{safe_filename(candidate_name, default=candidate_id, extension='')}_resume_v{next_version}.pdf"
+        )
+        resume_pdf_url = remote_resume_url
+        tailored_resume.pdf_url = remote_resume_url
+        
+        # Upload Tailored Resume version to central DB
+        print("[ORCHESTRATOR] Uploading tailored resume version to database...")
+        tailored_payload = {
+            "candidate_id": candidate_id,
+            "version": tailored_resume.version,
+            "file_url": tailored_resume.pdf_url,
+            "parsed_json": {
+                "summary": tailored_resume.modified_summary,
+                "skills": tailored_resume.modified_skills,
+                "skills_categorized": [sg.model_dump() for sg in tailored_resume.modified_skills_categorized] if tailored_resume.modified_skills_categorized else [],
+                "keywords": tailored_resume.modified_keywords,
+                "experience": [exp.model_dump() for exp in tailored_resume.experience],
+                "education": [edu.model_dump() for edu in tailored_resume.education],
+                "certifications": resume_data.sections.certifications
+            },
+            "is_base": False,
+            "tailored_for_job_id": job_id
+        }
+        resp = await client.post("/api/resumes", json=tailored_payload)
+        if resp.status_code != 201:
+            raise ValueError(f"Failed to save tailored resume: {resp.text}")
+        tailored_db_resume = resp.json()
+        tailored_resume_id = tailored_db_resume["id"]
         
         cover_letter_url = cover_letter.pdf_url
         print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
@@ -592,6 +587,7 @@ async def prepare_package_for_live_application(
             "parsed_json": {
                 "summary": tailored_resume.modified_summary,
                 "skills": tailored_resume.modified_skills,
+                "skills_categorized": [sg.model_dump() for sg in tailored_resume.modified_skills_categorized] if tailored_resume.modified_skills_categorized else [],
                 "keywords": tailored_resume.modified_keywords,
                 "experience": [exp.model_dump() for exp in tailored_resume.experience],
                 "education": [edu.model_dump() for edu in tailored_resume.education],

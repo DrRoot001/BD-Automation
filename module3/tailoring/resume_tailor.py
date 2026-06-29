@@ -6,13 +6,13 @@ import json
 import asyncio
 import re
 import logging
-from typing import List
+from typing import List, Union
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types as genai_types
 
 from module2.normalization.schemas import NormalizedJob
-from module3.parser.resume_parser import ResumeData, ExperienceEntry, EducationEntry
+from module3.parser.resume_parser import ResumeData, ExperienceEntry, EducationEntry, SkillGroup
 from module3.scoring.ats_scorer import calculate_ats_score
 from module3.tailoring.pdf_generator import generate_resume_pdf
 from module3.utils.storage import safe_filename
@@ -32,6 +32,7 @@ class TailoredResume(BaseModel):
     original_resume_id: str
     modified_summary: str
     modified_skills: List[str]
+    modified_skills_categorized: List[SkillGroup] = Field(default_factory=list)
     modified_keywords: List[str]
     experience: List[ExperienceEntry]
     education: List[EducationEntry]
@@ -55,12 +56,12 @@ You MUST follow these STRICT GUARDRAILS. Violating them is FORBIDDEN:
 
 3. SUMMARY & SKILLS:
    - SUMMARY: Edit and rewrite the summary block to naturally weave in missing ATS keywords to guarantee a high score.
-   - SKILLS: You may ADD missing ATS keywords to the skills section, but do not erase the candidate's core baseline skills.
+   - SKILLS: You must retain all existing skill categories and their keywords. You may ADD missing ATS keywords to the skills section, but you must place them into the most appropriate category (e.g. programming languages under a languages category, database tools under databases, etc.). If no existing category is appropriate, you may create a new category.
 
 4. EXPERIENCE (STRICT NO-FABRICATION RULE):
    - COMPANIES & DATES: You MUST keep the exact company names and dates as listed in the original resume. DO NOT invent new companies.
    - PRESENT ROLE: You are permitted to change the TITLE of the most recent/present role to better align with the target job.
-   - BULLET POINTS: You MUST enhance the descriptions of both present and past roles using the XYZ/STAR method. You must weave missing ATS keywords NATURALLY into these sentences.
+   - BULLET POINTS: You MUST enhance the descriptions of both present and past roles using the STAR/XYZ method. For each work experience entry, you MUST output at most 4 concise, high-impact bullet points in the `bullets` list. Each bullet point should start with a strong action verb and naturally weave in missing keywords. Do NOT combine these into a single paragraph or string; they must remain separate items in `bullets`.
 
 5. PROJECTS:
    - If projects are provided, enhance their descriptions and listed technologies so they heavily match the job description and requirements.
@@ -106,7 +107,12 @@ async def tailor_resume(
             "github_portfolio": ""
         },
         "summary": resume.sections.summary,
-        "skills": [{"category": "General", "keywords": resume.sections.skills}],
+        "skills": [
+            {
+                "category": sg.category,
+                "keywords": sg.keywords
+            } for sg in resume.sections.skills_categorized
+        ] if resume.sections.skills_categorized else [{"category": "Core Skills", "keywords": resume.sections.skills}],
         "experience": [
             {
                 "company": exp.company,
@@ -114,7 +120,7 @@ async def tailor_resume(
                 "location": None,
                 "date": f"{exp.start_date} - {exp.end_date or 'Present'}",
                 "technologies_used": exp.technologies,
-                "bullets": [exp.description]
+                "bullets": exp.bullets if exp.bullets else [exp.description]
             } for exp in resume.sections.experience
         ],
         "education": [
@@ -186,6 +192,7 @@ async def tailor_resume(
                 title=exp.get("title", ""),
                 start_date=parts[0].strip() if len(parts) > 0 else "",
                 end_date=parts[1].strip() if len(parts) > 1 else "Present",
+                bullets=exp.get("bullets", []),
                 description=" ".join(exp.get("bullets", [])),
                 technologies=exp.get("technologies_used", [])
             ))
@@ -222,8 +229,12 @@ async def tailor_resume(
         loop_count += 1
 
     flat_skills = []
+    final_skills_categorized = []
     for sg in final_resume_json.get("skills", []):
-        flat_skills.extend(sg.get("keywords", []))
+        cat_name = sg.get("category", "General")
+        kw_list = sg.get("keywords", [])
+        flat_skills.extend(kw_list)
+        final_skills_categorized.append(SkillGroup(category=cat_name, keywords=kw_list))
         
     final_experience = []
     pdf_experience = []
@@ -235,6 +246,7 @@ async def tailor_resume(
             title=exp.get("title", "Position"),
             start_date=parts[0].strip() if len(parts) > 0 else "",
             end_date=parts[1].strip() if len(parts) > 1 else "Present",
+            bullets=exp.get("bullets", []),
             description=" ".join(exp.get("bullets", [])),
             technologies=exp.get("technologies_used", [])
         ))
@@ -289,7 +301,7 @@ async def tailor_resume(
         location=basics.get("location", ""),
         linkedin_url=basics.get("linkedin", ""),
         summary=final_resume_json.get("summary", ""),
-        skills=flat_skills,
+        skills=final_resume_json.get("skills", []),
         experience=pdf_experience,
         education=pdf_education,
         certifications=final_resume_json.get("certifications", []),
@@ -303,6 +315,7 @@ async def tailor_resume(
         original_resume_id=resume.resume_id or "resume-unknown",
         modified_summary=final_resume_json.get("summary", ""),
         modified_skills=flat_skills,
+        modified_skills_categorized=final_skills_categorized,
         modified_keywords=flat_skills,
         experience=final_experience,
         education=final_education,
