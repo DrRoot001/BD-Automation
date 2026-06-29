@@ -203,12 +203,19 @@ def _options_ok(answer: str, options: Optional[List[str]]) -> bool:
     return answer.lower().strip() in opts_lower
 
 
+# Answers learned below this confidence are NOT persisted. A low-confidence LLM
+# guess (e.g. 0.30) written to memory gets recalled verbatim forever on future
+# runs — one bad guess becomes permanent. Memory is for answers we trust.
+_MIN_REMEMBER_CONFIDENCE = float(os.getenv("MEMORY_MIN_CONFIDENCE", "0.6"))
+
+
 def remember(
     label: str,
     field_type: str,
     value: str,
     source: str = "fill",
     candidate_id: Optional[str] = None,
+    confidence: Optional[float] = None,
 ) -> None:
     """Record a successful fill so future runs can reuse it.
 
@@ -216,8 +223,18 @@ def remember(
     Non-identity answers persist to the per-candidate file (so the same
     candidate gets a fast-path on repeat runs) AND to the global file (so
     other candidates benefit from learnings about Yes/No EEO defaults etc).
+
+    CONFIDENCE GATE: if `confidence` is provided and below
+    `_MIN_REMEMBER_CONFIDENCE`, the answer is used for THIS run but NOT
+    persisted — preventing a low-confidence guess from poisoning memory.
     """
     if not label or not value:
+        return
+    if confidence is not None and confidence < _MIN_REMEMBER_CONFIDENCE:
+        logger.info(
+            f"[Memory] NOT persisting low-confidence ({confidence:.2f}) answer "
+            f"for {label!r} — used this run only"
+        )
         return
     key = _normalize_label(label)
     is_identity = _is_identity_field(key)

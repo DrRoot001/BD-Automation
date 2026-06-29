@@ -13,15 +13,30 @@ DATABASE_URL = settings.database_url
 if not DATABASE_URL.startswith("postgresql+asyncpg://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://")
 
+import os as _os
+
+# Supabase's session-mode pooler caps TOTAL clients at 15. The backend AND the
+# Celery worker each create this engine in their own process, so the SUM of both
+# pools' max connections must stay under 15 — otherwise the pooler rejects with
+# "(EMAXCONNSESSION) max clients reached in session mode". The OLD config
+# (pool_size=5 + max_overflow=10 = 15 PER PROCESS) blew past that the moment the
+# dashboard fired its parallel queries while the worker held a connection.
+# pool_size=4 + max_overflow=2 = 6 max/process → backend(6) + worker(6) = 12 < 15,
+# leaving headroom for the NullPool task_session bursts. Override via env if your
+# Supabase plan allows more clients.
+_DB_POOL_SIZE = int(_os.getenv("DB_POOL_SIZE", "4"))
+_DB_MAX_OVERFLOW = int(_os.getenv("DB_MAX_OVERFLOW", "2"))
+
 engine = create_async_engine(
     DATABASE_URL,
     # echo=True logs every SQL query — never enable in production
     echo=settings.environment == "development",
     future=True,
     pool_pre_ping=True,       # Verify connections before use (handles dropped TCP)
-    pool_recycle=1800,         # Recycle connections after 30 min (prevents Supabase idle timeout)
-    pool_size=5,               # Base pool size (1 celery worker → 5 is plenty for testing)
-    max_overflow=10,           # Allow burst connections beyond pool_size
+    pool_recycle=1800,        # Recycle connections after 30 min (prevents Supabase idle timeout)
+    pool_size=_DB_POOL_SIZE,
+    max_overflow=_DB_MAX_OVERFLOW,
+    pool_timeout=30,          # Wait up to 30s for a free connection instead of erroring under burst
 )
 
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

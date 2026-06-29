@@ -5,7 +5,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, func
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models.resume import Resume
@@ -52,19 +53,50 @@ def _generate_resume_embedding_from_json(parsed: dict) -> Optional[List[float]]:
 
 @router.post("", response_model=ResumeResponse, status_code=201)
 async def create_resume(resume: ResumeCreate, db: AsyncSession = Depends(get_db)):
-    db_resume = Resume(**resume.model_dump(exclude={"embedding"}))
-    if resume.embedding:
-        db_resume.embedding = resume.embedding
-    elif resume.parsed_json:
+    payload = resume.model_dump(exclude={"embedding"})
+
+    # Compute the embedding ONCE (expensive) outside the insert-retry loop.
+    embedding = resume.embedding
+    if not embedding and resume.parsed_json:
         # Run off the event loop: the embedding path can make a blocking
         # network call (OpenAI) that would otherwise freeze the whole server.
-        db_resume.embedding = await run_in_threadpool(
+        embedding = await run_in_threadpool(
             _generate_resume_embedding_from_json, resume.parsed_json
         )
-    db.add(db_resume)
-    await db.commit()
-    await db.refresh(db_resume)
-    return db_resume
+
+    # COLLISION-SAFE version assignment. Module 3 computes `version` as
+    # MAX(version)+1 client-side, but two concurrent tailoring runs for the same
+    # candidate (e.g. clicking Auto-Apply on two jobs at once) both read the same
+    # MAX and POST the same version → "duplicate key ... resumes_candidate_id_version_key".
+    # We retry on that unique violation, recomputing the next free version
+    # server-side each time so concurrent inserts serialize cleanly.
+    candidate_id = payload.get("candidate_id")
+    last_err: Exception | None = None
+    for _attempt in range(8):
+        db_resume = Resume(**payload)
+        if embedding:
+            db_resume.embedding = embedding
+        db.add(db_resume)
+        try:
+            await db.commit()
+            await db.refresh(db_resume)
+            return db_resume
+        except IntegrityError as exc:
+            last_err = exc
+            await db.rollback()
+            msg = str(getattr(exc, "orig", exc))
+            # Only the (candidate_id, version) collision is retryable here.
+            if "resumes_candidate_id_version" in msg or ("version" in msg and "duplicate key" in msg.lower()):
+                mx = (await db.execute(
+                    select(func.max(Resume.version)).where(Resume.candidate_id == candidate_id)
+                )).scalar()
+                payload["version"] = int(mx or 0) + 1
+                continue
+            raise HTTPException(status_code=409, detail=f"Resume insert conflict: {msg[:200]}")
+    raise HTTPException(
+        status_code=500,
+        detail=f"Could not assign a unique resume version after retries: {last_err}",
+    )
 
 
 @router.patch("/{resume_id}", response_model=ResumeResponse)

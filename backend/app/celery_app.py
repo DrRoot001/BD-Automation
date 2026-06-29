@@ -23,6 +23,7 @@
 #     pass
 
 
+import os
 import ssl
 from celery import Celery
 from celery.schedules import crontab
@@ -97,6 +98,15 @@ celery_app.conf.worker_prefetch_multiplier = 1
 # acks_late=True: task is acknowledged only after it completes (or explicitly
 # fails), so a worker crash doesn't silently drop a task.
 celery_app.conf.task_acks_late = True
+
+# worker_max_tasks_per_child: recycle each worker process after N tasks. Browser
+# automation spawns Chrome per application; even with explicit cleanup, recycling
+# the process periodically reclaims any leaked browser handles / memory so a
+# long-lived worker doesn't degrade into resource exhaustion (a prior cause of
+# applications hanging until the watchdog reaped them as "worker died").
+celery_app.conf.worker_max_tasks_per_child = int(
+    os.getenv("CELERY_MAX_TASKS_PER_CHILD", "20")
+)
 
 # Serialisation
 celery_app.conf.task_serializer = "json"

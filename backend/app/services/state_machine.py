@@ -89,7 +89,15 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             # 60 min prevents watchdog from killing apps before they reach APPLICATION_STARTED.
             threshold_min = 60
         else:
-            threshold_min = 30
+            # APPLICATION_STARTED / FORM_COMPLETED == a browser run is in flight.
+            # The Celery task hard limit is 60 min (task_time_limit=3600). A
+            # legitimate long run (login + OTP + multi-step ATS + captcha) can
+            # approach that. The OLD 30-min threshold marked live runs FAILED
+            # mid-flight, then the executor's own SUBMITTED PATCH landed after —
+            # producing conflicting terminal states. Set the threshold ABOVE the
+            # hard limit so the watchdog only ever catches a worker that Celery
+            # already killed (i.e. genuinely dead), never one still working.
+            threshold_min = 70
             
         time_limit = now - timedelta(minutes=threshold_min)
         

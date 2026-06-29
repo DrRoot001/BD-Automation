@@ -378,24 +378,31 @@ def _smart_infer_answer(label: str, field_type: str, options: List[str], profile
                 match_found = True
                 break
 
-        # ── US-job-targeting heuristic ─────────────────────────────────────
-        # This pipeline targets US jobs exclusively. If the candidate is
-        # US-based (by location or work-auth) AND the question references a
-        # location, we treat that location as a US locale (per the operator's
-        # constraint: "we are only capturing US jobs"). This is intelligence
-        # driven by the pipeline's targeting policy, not a hardcoded answer.
+        # ── US-job-targeting heuristic (CORRECTED) ─────────────────────────
+        # This pipeline targets US jobs, and most candidates are US-based. A
+        # location question should only resolve to "Yes" when the question is
+        # actually asking about the US (or the candidate's own locale matched
+        # above). The previous logic presumed ANY named location was the US for
+        # a US candidate — so "Do you currently live in India?" wrongly answered
+        # "Yes". We now only presume a match when the question itself names a US
+        # indicator; a question naming a specific NON-US location stays "No".
         us_indicators = ("us", "usa", "united states", "u.s.", "america", "u.s.a")
         candidate_is_us = (
             any(u == candidate_location.strip() or u in candidate_country
                 for u in us_indicators)
             or any(u in candidate_authorized for u in us_indicators)
         )
-        if not match_found and candidate_is_us and question_locations:
-            # If the question names a location AND we're targeting US jobs only,
-            # the location is presumed US → candidate matches.
+        question_names_us = any(
+            ql in us_indicators or any(u in ql for u in ("usa", "united", "america"))
+            for ql in question_locations
+        )
+        if not match_found and candidate_is_us and question_names_us:
             match_found = True
-            logger.info(f"[SmartInfer] US-targeting policy: candidate_is_us={candidate_is_us}, "
-                        f"question_locations={question_locations} → presume US match → Yes")
+            logger.info(f"[SmartInfer] question names US ({question_locations}) and "
+                        f"candidate is US → match → Yes")
+        elif not match_found and question_locations:
+            logger.info(f"[SmartInfer] question names non-US location {question_locations}; "
+                        f"candidate location={candidate_location!r} → No")
 
         target_word = "yes" if match_found else "no"
         target_values = ("yes", "yes.", "true", "1") if match_found else ("no", "no.", "false", "0")
