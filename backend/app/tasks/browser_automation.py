@@ -324,7 +324,17 @@ def execute_application(self, package_dict: dict):
                 retry_eligible=False,
                 failure_reason="BOT_DETECTED"
             ))
-        elif result.status in ["FAILED", "CAPTCHA_FAILED"]:
+        elif result.status == "CAPTCHA_FAILED":
+            # Captcha solver exhausted all attempts — retrying will hit the same wall.
+            # Treat identically to BLOCKED: mark as BOT_DETECTED, no Celery retry.
+            logger.error(f"Captcha solving failed — marking as blocked (no retry): {result.error_message}")
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=result.error_message or "Captcha solving exhausted all attempts",
+                retry_eligible=False,
+                failure_reason="BOT_DETECTED"
+            ))
+        elif result.status == "FAILED":
             logger.info(f"Automation execution completed: {result.status}")
             if result.error_message and "ROBOTS_BLOCKED" in result.error_message:
                 asyncio.run(publish_application_failed(
@@ -375,6 +385,16 @@ def execute_application(self, package_dict: dict):
                 failure_reason="INFRA_ERROR"
             ))
             return {"status": "FAILED", "error": err_msg}
+
+        if "captcha" in err_msg.lower() and ("no solver" in err_msg.lower() or "BLOCKED:" in err_msg):
+            # Captcha with no solver configured — never retry, same as BLOCKED result.
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="BOT_DETECTED"
+            ))
+            return {"status": "BLOCKED", "error": err_msg}
 
         if self.request.retries >= self.max_retries:
             # Determine appropriate failure reason
@@ -438,7 +458,6 @@ def recover_stuck_applications():
     browser-automation tasks on queue:application_execution.
     """
     import asyncio
-    from app.database import AsyncSessionLocal
     from app.services.state_machine import recover_stuck_applications_async
     
     async def run_recovery():

@@ -10,7 +10,7 @@ import logging
 from uuid import UUID
 
 from app.celery_app import celery_app
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.services.matching import run_matching_for_candidate
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ def match_single_candidate(self, candidate_id: str, is_beat_task: bool = False):
 
     async def _match():
         cid = UUID(candidate_id)
-        async with AsyncSessionLocal() as session:
+        async with task_session() as session:
             return await run_matching_for_candidate(cid, session, is_beat_task=is_beat_task)
 
     try:

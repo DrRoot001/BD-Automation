@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, text
 from app.celery_app import celery_app
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.models.resume import Resume
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def cleanup_old_resumes():
         deleted_count = 0
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=30)
         
-        async with AsyncSessionLocal() as session:
+        async with task_session() as session:
             # Find tailored resumes older than 30 days
             stmt = select(Resume).where(
                 Resume.is_base == False,

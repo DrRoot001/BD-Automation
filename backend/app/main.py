@@ -49,11 +49,15 @@ async def lifespan(app: FastAPI):
     from sqlalchemy import text
     
     async def _run_startup_watchdog():
+        # Brief delay so the DB pool is ready before we query
+        await asyncio.sleep(2)
         try:
+            logger.info("[Startup] Running watchdog to recover stuck applications from prior crashes...")
             async with AsyncSessionLocal() as session:
                 await recover_stuck_applications_async(session)
+            logger.info("[Startup] Watchdog complete.")
         except Exception as e:
-            logger.error(f"[Startup] Watchdog failed: {e}")
+            logger.error(f"[Startup] Watchdog failed: {e}", exc_info=True)
             
     async def _init_db_tables():
         try:

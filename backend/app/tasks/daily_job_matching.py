@@ -5,7 +5,7 @@ import asyncio
 import logging
 
 from app.celery_app import celery_app
-from app.database import AsyncSessionLocal
+from app.database import task_session
 from app.tasks.match_single_candidate import match_single_candidate
 from celery import chord
 
@@ -51,7 +51,7 @@ def daily_job_matching(self):
     
     async def _fetch_candidates():
         from sqlalchemy import text
-        async with AsyncSessionLocal() as session:
+        async with task_session() as session:
             result = await session.execute(text("SELECT id FROM candidates"))
             return [str(row[0]) for row in result.fetchall()]
 

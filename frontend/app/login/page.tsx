@@ -1,39 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { useState } from 'react'
 import { Loader2 } from 'lucide-react'
 import { loginAction } from '@/app/actions/auth'
-import { getQueryClient } from '@/lib/providers'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
-  const router = useRouter()
-
-  // Clear any stale cache when the login page mounts
-  // This handles the case where a user lands on /login without going through logout
-  useEffect(() => {
-    const qc = getQueryClient()
-    if (qc) qc.clear()
-  }, [])
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
     setError(null)
-
-    // Clear caches BEFORE login request
-    if (typeof window !== 'undefined') {
-      localStorage.clear()
-      sessionStorage.clear()
-    }
-    const queryClient = getQueryClient()
-    if (queryClient) {
-      queryClient.clear()
-    }
 
     const result = await loginAction(email, password)
 
@@ -43,17 +23,10 @@ export default function LoginPage() {
       return
     }
 
-    // Clear caches AFTER success, before redirect
-    if (typeof window !== 'undefined') {
-      localStorage.clear()
-      sessionStorage.clear()
-    }
-    if (queryClient) {
-      queryClient.clear()
-    }
-
+    // Full browser navigation — clears Next.js router cache, React Query cache,
+    // and all module-level state so no previous user's data leaks into the new session.
     if (result.redirect) {
-      router.replace(result.redirect)
+      window.location.href = result.redirect
     }
   }
 

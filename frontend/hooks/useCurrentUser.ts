@@ -18,7 +18,7 @@ export function useCurrentUser() {
       // Fetch user using server action to read httpOnly cookie
       return await getCurrentUserAction();
     },
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 0, // always re-fetch on mount so a new session never shows a previous user's identity
     retry: false
   })
 }

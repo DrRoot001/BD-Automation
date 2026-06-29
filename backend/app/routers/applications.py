@@ -348,5 +348,20 @@ async def retry_application(
         "screening_answers": screening_answers
     }
     execute_application.apply_async(args=[package], queue="queue:application_execution")
-    
+
     return app
+
+
+@router.post("/admin/fail-stuck")
+async def admin_fail_stuck_applications(
+    hours: int = 5,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    """Admin endpoint: force-fail all non-terminal applications created in the last N hours."""
+    if current_user.role != UserRole.admin:
+        raise HTTPException(status_code=403, detail="Admin only")
+
+    from app.services.state_machine import fail_applications_in_window_async
+    count = await fail_applications_in_window_async(db, hours=hours)
+    return {"failed_count": count, "hours": hours}

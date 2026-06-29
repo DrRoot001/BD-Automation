@@ -20,8 +20,12 @@ engine = create_async_engine(
     future=True,
     pool_pre_ping=True,       # Verify connections before use (handles dropped TCP)
     pool_recycle=1800,         # Recycle connections after 30 min (prevents Supabase idle timeout)
-    pool_size=5,               # Base pool size (1 celery worker → 5 is plenty for testing)
-    max_overflow=10,           # Allow burst connections beyond pool_size
+    # Supabase PgBouncer (session mode) caps at 15 total connections.
+    # FastAPI + Celery workers must share that budget. Keep FastAPI's pool
+    # small so Celery task_session() calls (NullPool, 1 conn per task) have room.
+    # Budget: FastAPI idle=3, FastAPI burst=+3 → max 6. Celery workers ~2-4. Total ≤ 10.
+    pool_size=3,
+    max_overflow=3,
 )
 
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)

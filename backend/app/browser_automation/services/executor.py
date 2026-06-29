@@ -520,6 +520,14 @@ class ApplicationExecutor:
                     elif loop_result.status in ("WRONG_PAGE", "ABORTED"):
                         raise Exception(f"AgentLoop aborted: {loop_result.error}")
 
+                    elif loop_result.status == "VERIFICATION_FAILED":
+                        # Email verification wall — Gmail not connected or code never arrived.
+                        # Retrying opens the same wall every time. Stop immediately as BLOCKED.
+                        raise Exception(
+                            f"BLOCKED: Email verification required but could not retrieve code "
+                            f"(Gmail not connected?). {loop_result.error or ''}"
+                        )
+
                     else:
                         # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR — fall back
                         logger.warning(
@@ -750,23 +758,44 @@ class ApplicationExecutor:
                 key_configured = bool(raw_key) and not raw_key.lower().startswith("your_")
 
                 if form.has_captcha:
-                    if dry_run or not key_configured:
+                    if dry_run:
                         logger.warning(
-                            f"[M4] Captcha detected ({form.captcha_type}) — skipping solve "
-                            f"(dry_run={dry_run}, solver_configured={key_configured})"
+                            f"[M4] Captcha detected ({form.captcha_type}) — skipping solve (dry_run=True)"
+                        )
+                    elif not key_configured:
+                        # No solver API key — stop immediately. Retrying will just hit the
+                        # same captcha wall again. Mark as BLOCKED so Celery does not retry.
+                        error_message = (
+                            f"BLOCKED: {form.captcha_type} captcha detected on {package.platform} "
+                            f"but no solver API key is configured "
+                            f"(set TWO_CAPTCHA_API_KEY or ANTI_CAPTCHA_API_KEY)"
+                        )
+                        logger.error(f"[M4] {error_message}")
+                        try:
+                            screenshot_path = await capture_and_store_screenshot(page, package.application_id)
+                        except Exception:
+                            pass
+                        _cleanup_temp(_temp_resume, _temp_cover)
+                        return ApplicationResult(
+                            application_id=package.application_id,
+                            status="BLOCKED",
+                            screenshot_url=screenshot_path,
+                            error_message=error_message,
+                            execution_time_seconds=_elapsed(),
+                            retry_count=retry_count,
                         )
                     else:
                         captcha_svc = CaptchaService(provider=provider)
                         solution = await captcha_svc.solve(page, form.captcha_type)
                         if not solution.success:
                             status = "CAPTCHA_FAILED"
-                            error_message = f"Captcha solving exhausted all attempts: {form.captcha_type}"
+                            error_message = f"BLOCKED: Captcha solving exhausted all attempts: {form.captcha_type}"
                             screenshot_path = await capture_and_store_screenshot(page, package.application_id)
                             logger.error(f"[M4] {error_message}")
                             _cleanup_temp(_temp_resume, _temp_cover)
                             return ApplicationResult(
                                 application_id=package.application_id,
-                                status=status,
+                                status="BLOCKED",
                                 screenshot_url=screenshot_path,
                                 error_message=error_message,
                                 execution_time_seconds=_elapsed(),

@@ -213,6 +213,7 @@ async def create_jobs(
     created = []
     source_urls = [job.source_url for job in jobs if job.source_url]
     existing_urls = set()
+    skipped_duplicates = 0
 
     if source_urls:
         result = await db.execute(select(Job.source_url).where(Job.source_url.in_(source_urls)))
@@ -240,6 +241,7 @@ async def create_jobs(
             continue
 
         if job_dict.get('source_url') in existing_urls:
+            skipped_duplicates += 1
             continue
 
         job = Job(**job_dict)
@@ -247,7 +249,15 @@ async def create_jobs(
         created.append(job)
 
     if not created:
-        return []
+        from fastapi.responses import Response
+        import json as _json
+        body = _json.dumps([]).encode()
+        return Response(
+            content=body,
+            media_type="application/json",
+            status_code=201,
+            headers={"X-Skipped-Duplicates": str(skipped_duplicates)}
+        )
 
     try:
         await db.commit()
@@ -257,14 +267,22 @@ async def create_jobs(
 
     for job in created:
         await db.refresh(job)
-        # Dispatch async embedding generation if missing
         if not job.embedding:
             from app.tasks.embedding_generation import generate_job_embedding
             generate_job_embedding.delay(str(job.id))
 
     await _append_jobs_to_json_log(created)
 
-    return created
+    from fastapi.responses import Response as _Resp
+    import json as _json
+    from app.schemas.job import JobResponse as _JobResp
+    body = _json.dumps([_JobResp.model_validate(j).model_dump(mode="json") for j in created]).encode()
+    return _Resp(
+        content=body,
+        media_type="application/json",
+        status_code=201,
+        headers={"X-Skipped-Duplicates": str(skipped_duplicates)}
+    )
 
 
 async def _append_jobs_to_json_log(created_jobs: List[Job]) -> None:

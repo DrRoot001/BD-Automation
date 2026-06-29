@@ -22,7 +22,7 @@ export async function middleware(request: NextRequest) {
 
   try {
     const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 8000)
+    const timeout = setTimeout(() => controller.abort(), 3000)
     const meRes = await fetch(`${API_BASE}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
@@ -44,14 +44,20 @@ export async function middleware(request: NextRequest) {
 
   // 3. Action based on auth validation
   if (!user) {
-    if (isUnauthorized || !isTransientError) {
+    if (isUnauthorized) {
       const response = NextResponse.redirect(new URL('/login', request.url))
       response.cookies.delete('auth_token')
       return response
-    } else {
-      // Transient network timeout or server error. Redirect to login, but DO NOT delete token.
-      return NextResponse.redirect(new URL('/login', request.url))
     }
+    // Transient error (network timeout, backend restart): pass through rather than
+    // forcing a login redirect — the page-level queries will show their own error states.
+    if (isTransientError) {
+      return NextResponse.next()
+    }
+    // Unknown state (shouldn't happen): clear and redirect
+    const response = NextResponse.redirect(new URL('/login', request.url))
+    response.cookies.delete('auth_token')
+    return response
   }
 
   // 4. Role-based routing

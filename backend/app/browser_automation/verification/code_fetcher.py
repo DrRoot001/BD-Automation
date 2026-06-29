@@ -572,16 +572,16 @@ async def fetch_verification_code(
 
 
 async def _load_refresh_token(candidate_id: str) -> Optional[str]:
-    """Read `candidates.google_refresh_token` via the existing async session."""
+    """Read `candidates.google_refresh_token` via a NullPool session safe for Celery workers."""
     try:
         from sqlalchemy import select
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from app.models.candidate import Candidate
     except Exception as exc:
         logger.warning(f"[verify] cannot import DB session: {exc}")
         return None
     try:
-        async with AsyncSessionLocal() as s:
+        async with task_session() as s:
             row = (
                 await s.execute(select(Candidate).where(Candidate.id == candidate_id))
             ).scalar_one_or_none()

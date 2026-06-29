@@ -23,8 +23,15 @@
 #     pass
 
 
+import os
 import ssl
 from celery import Celery
+
+# macOS: Python's datetime/timezone operations load Apple's NSTimeZone ObjC class.
+# When billiard forks worker processes, the ObjC runtime detects the class was
+# mid-initialization and crashes the child with SIGABRT. This env var disables
+# that safety check, which is safe for fork-based worker pools in development.
+os.environ.setdefault('OBJC_DISABLE_INITIALIZE_FORK_SAFETY', 'YES')
 from celery.schedules import crontab
 from app.config import get_settings
 from app.logging_config import configure_logging

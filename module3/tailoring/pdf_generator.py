@@ -28,7 +28,7 @@ def generate_resume_pdf(
     location: str,
     linkedin_url: str,
     summary: str,
-    skills: list[str],
+    skills: list[dict] | list[str],
     experience: list[dict],
     education: list[dict],
     certifications: list[str],
@@ -42,6 +42,14 @@ def generate_resume_pdf(
     env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
     template = env.get_template("resume_template.html")
     
+    # Coerce/convert skills if it is a list of strings
+    formatted_skills = []
+    if skills:
+        if isinstance(skills[0], str):
+            formatted_skills = [{"category": "Core Skills", "keywords": skills}]
+        else:
+            formatted_skills = skills
+            
     resume_data = {
         "basics": {
             "name": name,
@@ -53,7 +61,7 @@ def generate_resume_pdf(
             "github_portfolio": ""
         },
         "summary": summary,
-        "skills": [{"category": "Core Skills", "keywords": skills}] if skills else [],
+        "skills": formatted_skills,
         "experience": experience,
         "education": education,
         "certifications": certifications,
