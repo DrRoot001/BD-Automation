@@ -91,13 +91,14 @@ async def orchestrate_application_package(
 ) -> Dict[str, any]:
     """
     Orchestrate candidate application flow:
-    Tailor Resume -> Generate Cover Letter -> QA -> Gate Check -> Queue.
+    Score -> (tailor resume IF resume<->JD ATS < threshold, else use base) ->
+    Cover Letter -> QA -> Queue for browser automation.
 
-    The gate check runs AFTER tailoring so the tailored resume and cover letter
-    are always saved regardless of the fit score.  When the score is below the
-    threshold and skip_gate is False the application is transitioned to ANALYZED
-    (with the tailored docs attached).  When skip_gate is True the gate is
-    bypassed entirely (used for forced/manual applications).
+    There is NO apply-gate: every matched job is queued for browser automation.
+    The score threshold (TAILOR_ATS_THRESHOLD, default 70) ONLY decides whether
+    the resume is tailored to the posting or the base resume is used as-is.
+    (`skip_gate` is retained for backwards-compat but no longer has any effect,
+    since the gate has been removed.)
 
     If existing_app_id is provided the orchestrator reuses that record instead
     of creating a new one (prevents duplicates when matching.py pre-creates it).
@@ -260,9 +261,9 @@ async def orchestrate_application_package(
                 f"Combined: {match_result.combined_score}"
             )
 
-        # Gate check is deferred to AFTER tailoring (see below) so the tailored
-        # resume and cover letter are always generated and saved.
-        print("[ORCHESTRATOR] Proceeding with resume tailoring and cover letter generation...")        
+        # There is NO apply-gate: every matched job proceeds to browser automation.
+        # The score only decides resume tailoring (see the ATS check below).
+        print("[ORCHESTRATOR] Preparing application package (cover letter + conditional resume tailoring)...")
 
         # Query existing resumes for this candidate to calculate next version number
         all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")
@@ -275,14 +276,21 @@ async def orchestrate_application_package(
                     next_version = max(versions) + 1
         print(f"[ORCHESTRATOR] Calculated next tailored resume version: {next_version}")
 
-        # 6, 7, 8. Run Tailoring, Cover Letter, and Screening Answers concurrently
-        print("[ORCHESTRATOR] Running Tailoring, Cover Letter, and Screening Questions in parallel...")
-        
-        tasks = [
-            tailor_resume(resume_data, job, candidate, version=next_version),
-            generate_cover_letter(resume_data, job, candidate)
-        ]
-        
+        # ── Tailor-vs-base decision on the resume↔JD ATS match ────────────────
+        # The threshold is ONLY a resume decision, NOT a pipeline apply-gate:
+        #   ATS >= threshold  → base resume already matches this posting → APPLY
+        #                       with the base resume (skip tailoring)
+        #   ATS <  threshold  → tailor a new resume version, then APPLY
+        # Either way the job IS applied to (the score gate has been removed below).
+        import os as _os
+        _tailor_threshold = float(_os.getenv("TAILOR_ATS_THRESHOLD", "70"))
+        _base_ats = float(match_result.ats_score or 0)
+        tailor_needed = _base_ats < _tailor_threshold
+        print(f"[ORCHESTRATOR] Resume<->JD ATS={_base_ats} threshold={_tailor_threshold} -> "
+              f"{'TAILOR resume' if tailor_needed else 'USE BASE resume (skip tailoring)'}")
+
+        # Cover letter (+ screening answers) are produced regardless of tailoring.
+        aux_tasks = [generate_cover_letter(resume_data, job, candidate)]
         if screening_questions:
             tasks.append(answer_screening_questions(screening_questions, resume_data, job, candidate))
             
@@ -342,59 +350,22 @@ async def orchestrate_application_package(
         if screening_questions:
             print("[ORCHESTRATOR] Screening answers drafted successfully.")
 
-        # Gate check AFTER tailoring — tailored resume and cover letter are now saved
-        # regardless of the score.  The gate only decides whether to queue for
-        # browser automation.
-        if not match_result.should_apply and not skip_gate:
-            print(
-                f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below "
-                "gate threshold. Tailored docs saved. Transitioning to ANALYZED."
-            )
-            gate_failed_payload = {
-                "status": "ANALYZED",
-                "resume_id": tailored_resume_id,
-                "cover_letter_url": cover_letter_url,
-                "fit_score": match_result.fit_score,
-                "ats_score": match_result.ats_score,
-                "combined_score": match_result.combined_score,
-                "metadata": {
-                    "ats_score_before": tailored_resume.ats_score_before,
-                    "ats_score_after": tailored_resume.ats_score_after,
-                    "screening_answers": screening_answers,
-                    "explanation": match_result.reasoning,
-                    "gate_reason": "Combined score below threshold after tailoring"
-                }
-            }
-            _gate_resp = await client.patch(f"/api/applications/{app_id}/status", json=gate_failed_payload)
-            if _gate_resp.status_code not in (200, 201, 204):
-                raise ValueError(
-                    f"Failed to transition app {app_id} to ANALYZED: "
-                    f"{_gate_resp.status_code} {_gate_resp.text}"
-                )
-            return {
-                "status": "ANALYZED",
-                "application_id": app_id,
-                "match_result": match_result.model_dump(mode="json"),
-                "tailored_resume_id": tailored_resume_id,
-                "cover_letter_url": cover_letter_url,
-                "screening_answers": screening_answers
-            }
-
-        # Gate passed (or skip_gate=True) — queue for browser automation
-        print("[ORCHESTRATOR] Score meets threshold. Queuing application for browser automation...")
-
-        # Final consolidated status update: set tailored resume, scores, and cover letter in one patch
-        print("[ORCHESTRATOR] Application package complete. Updating application record...")
+        # NO APPLY-GATE. Per the operator's design the score threshold is ONLY a
+        # Module-3 tailoring decision (handled above: tailor when ATS < threshold,
+        # else use the base resume). Every matched job is applied to — we always
+        # queue it for browser automation regardless of fit/combined score.
+        print("[ORCHESTRATOR] Queuing application for browser automation (no score gate)...")
         final_update_payload = {
             "status": "QUEUED",
-            "resume_id": tailored_resume_id,
+            "resume_id": resume_id_for_app,
             "cover_letter_url": cover_letter_url,
             "fit_score": match_result.fit_score,
             "ats_score": match_result.ats_score,
             "combined_score": match_result.combined_score,
             "metadata": {
-                "ats_score_before": tailored_resume.ats_score_before,
-                "ats_score_after": tailored_resume.ats_score_after,
+                "ats_score_before": ats_before,
+                "ats_score_after": ats_after,
+                "tailored": tailor_needed,
                 "screening_answers": screening_answers,
                 "explanation": match_result.reasoning
             }
@@ -411,7 +382,7 @@ async def orchestrate_application_package(
             print("[ORCHESTRATOR] Publishing 'application.package_ready' event to Redis...")
             event_payload = {
                 "application_id": str(app_id),
-                "resume_url": tailored_resume.pdf_url,
+                "resume_url": resume_pdf_url,
                 "cover_letter_url": cover_letter_url,
                 "screening_answers": screening_answers
             }
@@ -424,7 +395,7 @@ async def orchestrate_application_package(
             "status": "QUEUED",
             "application_id": app_id,
             "match_result": match_result.model_dump(mode="json"),
-            "tailored_resume_id": tailored_resume_id,
+            "tailored_resume_id": resume_id_for_app,
             "resume_pdf_url": resume_pdf_url,
             "cover_letter_url": cover_letter_url,
             "screening_answers": screening_answers
@@ -566,38 +537,12 @@ async def prepare_package_for_live_application(
         match_result = await score_job_fit(candidate, resume_data, job)
         print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
         
-        # Check Gate Threshold
-        if not match_result.should_apply:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
-            
-            # Transition to ANALYZED
-            update_payload = {
-                "status": "ANALYZED",
-                "fit_score": match_result.fit_score,
-                "ats_score": match_result.ats_score,
-                "combined_score": match_result.combined_score,
-                "metadata": {"reason": "Combined score below threshold gate", "explanation": match_result.reasoning}
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-            
-            return {
-                "should_apply": False,
-                "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 70: {match_result.reasoning}"
-            }
-
-        # Transition to QUEUED since combined_score >= 70
-        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'QUEUED'...")
-        update_payload = {
-            "status": "QUEUED",
-            "fit_score": match_result.fit_score,
-            "ats_score": match_result.ats_score,
-            "combined_score": match_result.combined_score,
-            "metadata": {"explanation": match_result.reasoning}
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-
-        # Transition to QUEUED
-        print("[ORCHESTRATOR] Transitioning status to 'QUEUED'...")
+        # NO APPLY-GATE (operator design): the score never blocks applying — it
+        # only governs resume tailoring. This path is also invoked mid-flow by the
+        # executor for screening answers, so flipping a running app to ANALYZED on
+        # a low score (the old behavior) would wrongly abort an in-progress
+        # application. Always transition to QUEUED.
+        print("[ORCHESTRATOR] Transitioning status to 'QUEUED' (no score gate)...")
         update_payload = {
             "status": "QUEUED",
             "fit_score": match_result.fit_score,
