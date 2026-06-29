@@ -12,3 +12,8 @@ class ApplicationHistory(Base):
     to_status = Column(String(50), nullable=False)
     meta_data = Column(JSONB)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    def __init__(self, **kwargs):
+        if 'metadata' in kwargs:
+            kwargs['meta_data'] = kwargs.pop('metadata')
+        super().__init__(**kwargs)

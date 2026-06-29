@@ -1,26 +1,27 @@
 # Monkey patch redis.Redis and redis.client.PubSub to fix AttributeError: 'NoneType' object has no attribute '_sock'
 # compatibility bug in Celery/Kombu with newer redis versions
-try:
-    import redis
-    class RedisConnectionProperty:
-        def __get__(self, instance, owner):
-            if instance is None:
-                return self
-            val = getattr(instance, '_patched_connection', None)
-            if val is None:
-                try:
-                    val = instance.connection_pool.get_connection()
-                    instance._patched_connection = val
-                except Exception:
-                    pass
-            return val
-        def __set__(self, instance, value):
-            instance._patched_connection = value
+# try:
+#     import redis
+#     class RedisConnectionProperty:
+#         def __get__(self, instance, owner):
+#             if instance is None:
+#                 return self
+#             val = getattr(instance, '_patched_connection', None)
+#             if val is None:
+#                 try:
+#                     val = instance.connection_pool.get_connection()
+#                     instance._patched_connection = val
+#                 except Exception:
+#                     pass
+#             return val
+#         def __set__(self, instance, value):
+#             instance._patched_connection = value
+# 
+#     redis.Redis.connection = RedisConnectionProperty()
+#     redis.client.PubSub.connection = RedisConnectionProperty()
+# except Exception:
+#     pass
 
-    redis.Redis.connection = RedisConnectionProperty()
-    redis.client.PubSub.connection = RedisConnectionProperty()
-except Exception:
-    pass
 
 import ssl
 from celery import Celery
@@ -49,17 +50,18 @@ celery_app = Celery(
         "app.tasks.dynamic_apply",
         "app.tasks.daily_job_matching",
         "app.tasks.cleanup",
+        "app.tasks.embedding_generation",
     ]
 )
 
 # ── Queue definitions ─────────────────────────────────────────────────────────
 celery_app.conf.task_queues = [
-    Queue("celery"),
-    Queue("queue:job_discovery"),
-    Queue("queue:job_processing"),
-    Queue("queue:resume_generation"),
-    Queue("queue:application_execution"),
-    Queue("queue:email_scan"),
+    Queue("celery", routing_key="celery"),
+    Queue("queue:job_discovery", routing_key="queue:job_discovery"),
+    Queue("queue:job_processing", routing_key="queue:job_processing"),
+    Queue("queue:resume_generation", routing_key="queue:resume_generation"),
+    Queue("queue:application_execution", routing_key="queue:application_execution"),
+    Queue("queue:email_scan", routing_key="queue:email_scan"),
 ]
 
 # ── Task routing ──────────────────────────────────────────────────────────────
@@ -84,6 +86,7 @@ celery_app.conf.task_routes = {
     "task:scan_single_candidate_interviews": {"queue": "queue:email_scan"},
     "task:refresh_analytics":           {"queue": "queue:email_scan"},
     "task:cleanup_old_resumes":         {"queue": "celery"},
+    "task:recover_stuck_applications":  {"queue": "celery"},
 }
 
 # ── Worker reliability settings ───────────────────────────────────────────────

@@ -11,6 +11,12 @@ import os
 from typing import List
 
 try:
+    import google.generativeai as genai
+    GEMINI_AVAILABLE = True
+except Exception:
+    GEMINI_AVAILABLE = False
+
+try:
     import openai
     OPENAI_AVAILABLE = True
 except Exception:
@@ -37,9 +43,41 @@ def _pseudo_embedding(text: str, dim: int = EMBEDDING_DIM) -> List[float]:
 def generate_embedding(texts: List[str]) -> List[List[float]]:
     """Generate embeddings for a list of texts.
 
+    Tries Gemini first if GEMINI_API_KEY is set.
     Tries OpenAI if environment variable `OPENAI_API_KEY` is set and package available.
     Otherwise uses deterministic pseudo embeddings.
     """
+    if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
+        try:
+            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
+            result = genai.embed_content(
+                model="models/gemini-embedding-001",
+                content=texts,
+                task_type="retrieval_document"
+            )
+            embeddings = result.get("embedding", [])
+            
+            # Handle case where only a single embedding is returned (not wrapped in a list)
+            if embeddings and not isinstance(embeddings[0], list):
+                embeddings = [embeddings]
+                
+            padded_embeddings = []
+            for emb in embeddings:
+                # Handle dimension scaling (truncating or padding to 1536)
+                if len(emb) > EMBEDDING_DIM:
+                    emb = emb[:EMBEDDING_DIM]
+                elif len(emb) < EMBEDDING_DIM:
+                    emb = emb + [0.0] * (EMBEDDING_DIM - len(emb))
+                
+                # Re-normalize unit vector to ensure cosine distances are correct
+                norm = math.sqrt(sum(x * x for x in emb)) or 1.0
+                emb = [x / norm for x in emb]
+                padded_embeddings.append(emb)
+            return padded_embeddings
+        except Exception:
+            # Fallback to next methods
+            pass
+
     if OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
         # Use OpenAI embeddings API (text-embedding-3-small or similar)
         try:

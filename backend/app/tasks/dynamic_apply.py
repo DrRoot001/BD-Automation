@@ -56,7 +56,7 @@ def _score_job(candidate_keywords: Set[str], job: Dict[str, Any]) -> float:
     if not haystack:
         return 0.0
     overlap = candidate_keywords & haystack
-    return len(overlap) / max(len(haystack), 1)
+    return len(overlap) / max(len(candidate_keywords), 1)
 
 
 async def _fetch_candidate(client: httpx.AsyncClient, candidate_id: str) -> Optional[Dict[str, Any]]:
@@ -67,12 +67,12 @@ async def _fetch_candidate(client: httpx.AsyncClient, candidate_id: str) -> Opti
     return r.json()
 
 
-async def _fetch_open_jobs(client: httpx.AsyncClient, limit: int = 500) -> List[Dict[str, Any]]:
+async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: int = 500) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     skip = 0
     page_size = 100
     while skip < limit:
-        r = await client.get(f"{API_BASE}/jobs/for-matching", params={"skip": skip, "limit": page_size})
+        r = await client.get(f"{API_BASE}/jobs/for-matching", params={"skip": skip, "limit": page_size, "candidate_id": candidate_id})
         if r.status_code != 200:
             logger.error(f"[Dynamic] Failed to fetch jobs: HTTP {r.status_code} — {r.text}")
             raise RuntimeError(f"Failed to fetch jobs from API: HTTP {r.status_code}")
@@ -133,7 +133,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
             "message": "Fetching available jobs from database..."
         })
 
-        jobs = await _fetch_open_jobs(client)
+        jobs = await _fetch_open_jobs(client, candidate_id)
         if not jobs:
             return {"queued": [], "skipped": 0, "error": "no_jobs"}
 
@@ -238,28 +238,24 @@ def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None):
     from app.tasks.dynamic_apply import _run
     import asyncio
     
-    # Bypass Celery due to Upstash Redis limitations. Run directly in background.
-    def run_in_background():
-        import logging as _logging
-        _log = _logging.getLogger("dynamic_apply.bg")
-        _log.info(f"[BG] Starting auto-apply thread for candidate={candidate_id} max_apps={max_apps}")
+    logger.info(f"[Celery] Starting dynamic-apply for candidate={candidate_id} max_apps={max_apps}")
+    
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN))
+        logger.info(f"[Celery] Dynamic-apply completed for candidate={candidate_id}: {result}")
+        return result
+    except Exception as e:
+        logger.error(f"[Celery] Failed dynamic-apply for candidate={candidate_id}: {e}")
         try:
-            result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN))
-            _log.info(f"[BG] Auto-apply completed: {result}")
-        except Exception as e:
-            import traceback
-            _log.error(f"[BG] Failed background apply for candidate={candidate_id}: {e}")
-            _log.error(traceback.format_exc())
-            try:
-                from app.tasks.dynamic_apply import publish_event_sync
-                publish_event_sync("pipeline.progress", {
-                    "candidate_id": candidate_id,
-                    "step": "error",
-                    "message": f"Pipeline failed: {e}"
-                })
-            except Exception as ev_err:
-                _log.error(f"[BG] Failed to broadcast error event: {ev_err}")
-
-    import threading
-    threading.Thread(target=run_in_background, daemon=True).start()
-    return {"status": "started"}
+            from app.tasks.dynamic_apply import publish_event_sync
+            publish_event_sync("pipeline.progress", {
+                "candidate_id": candidate_id,
+                "step": "error",
+                "message": f"Pipeline failed: {e}"
+            })
+        except Exception as ev_err:
+            logger.error(f"[Celery] Failed to broadcast error event: {ev_err}")
+        raise e
+    finally:
+        loop.close()

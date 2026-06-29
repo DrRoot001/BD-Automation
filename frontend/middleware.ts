@@ -26,6 +26,7 @@ export async function middleware(request: NextRequest) {
     const meRes = await fetch(`${API_BASE}/api/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: controller.signal,
+      cache: 'no-store',
     })
     clearTimeout(timeout)
     if (meRes.ok) {

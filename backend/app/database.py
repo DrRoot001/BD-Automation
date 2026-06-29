@@ -1,5 +1,7 @@
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy.pool import NullPool
 from sqlalchemy.orm import declarative_base
 from fastapi import HTTPException
 from app.config import get_settings
@@ -26,6 +28,30 @@ AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_co
 async_session_maker = AsyncSessionLocal
 
 Base = declarative_base()
+
+
+@asynccontextmanager
+async def task_session():
+    """
+    Async DB session for Celery tasks.
+
+    Uses NullPool so that connections are never cached across event loops.
+    Celery workers call asyncio.run() / new_event_loop() for each task, which
+    closes the previous loop.  A pooled asyncpg connection is bound to the loop
+    that created it — reusing it in a new loop raises
+    "Future attached to a different loop".  NullPool opens and closes a fresh
+    connection for every session, completely sidestepping this.
+
+    Secondary benefit: avoids EMAXCONNSESSION on PgBouncer — connections are
+    released immediately after each session instead of sitting in a pool.
+    """
+    task_engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+    try:
+        maker = async_sessionmaker(task_engine, class_=AsyncSession, expire_on_commit=False)
+        async with maker() as session:
+            yield session
+    finally:
+        await task_engine.dispose()
 
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:

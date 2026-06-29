@@ -326,6 +326,14 @@ def execute_application(self, package_dict: dict):
             ))
         elif result.status in ["FAILED", "CAPTCHA_FAILED"]:
             logger.info(f"Automation execution completed: {result.status}")
+            if result.error_message and "ROBOTS_BLOCKED" in result.error_message:
+                asyncio.run(publish_application_failed(
+                    application_id=package_dict.get("application_id", ""),
+                    error="BLOCKED: Navigation disallowed by robots.txt policy",
+                    retry_eligible=False,
+                    failure_reason="ROBOTS_BLOCKED"
+                ))
+                return result.dict()
             if result.error_message and ("JOB_EXPIRED" in result.error_message or "job no longer exists" in result.error_message.lower()):
                 asyncio.run(publish_application_failed(
                     application_id=package_dict.get("application_id", ""),
@@ -341,6 +349,15 @@ def execute_application(self, package_dict: dict):
         raise
     except Exception as exc:
         err_msg = str(exc)
+        if "ROBOTS_BLOCKED" in err_msg or "robots.txt" in err_msg.lower():
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error="BLOCKED: Navigation disallowed by robots.txt policy",
+                retry_eligible=False,
+                failure_reason="ROBOTS_BLOCKED"
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
         if "JOB_EXPIRED" in err_msg or "job no longer exists" in err_msg.lower() or "job posting no longer exists" in err_msg.lower():
             asyncio.run(publish_application_failed(
                 application_id=package_dict.get("application_id", ""),
@@ -410,21 +427,24 @@ def verify_submission(application_id: str):
 
 @celery_app.task(
     name="task:recover_stuck_applications",
-    queue="queue:application_execution",
 )
 def recover_stuck_applications():
     """
     Watchdog task that runs periodically (every 10 minutes) to find applications
     stuck in QUEUED, APPLICATION_STARTED, or FORM_COMPLETED status for more than
     their respective thresholds. Marks them as FAILED.
+
+    Runs on the default 'celery' queue so it is not blocked by a backlog of
+    browser-automation tasks on queue:application_execution.
     """
     import asyncio
     from app.database import AsyncSessionLocal
     from app.services.state_machine import recover_stuck_applications_async
     
     async def run_recovery():
-        async with AsyncSessionLocal() as session:
+        from app.database import task_session
+        async with task_session() as session:
             await recover_stuck_applications_async(session)
-            
+
     asyncio.run(run_recovery())
 

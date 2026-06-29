@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { useQuery } from '@tanstack/react-query'
 import Link from 'next/link'
@@ -45,6 +45,7 @@ export default function CandidateDetailPage() {
   const [maxApps, setMaxApps] = useState(10)
   const [maxAppsError, setMaxAppsError] = useState<string | null>(null)
   const [progressLogs, setProgressLogs] = useState<{timestamp: string, message: string}[]>([])
+  const processedLogsRef = useRef<Set<string>>(new Set())
 
   const { toasts, dismiss, success: toastSuccess, error: toastError } = useToast()
 
@@ -53,9 +54,16 @@ export default function CandidateDetailPage() {
       const candidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (candidateId && candidateId !== id) return
       
+      const message = evt.data?.message as string
+      const timestamp = evt.timestamp || new Date().toISOString()
+      const logKey = `${timestamp}-${message}`
+      
+      if (processedLogsRef.current.has(logKey)) return
+      processedLogsRef.current.add(logKey)
+      
       setProgressLogs((prev) => [...prev, {
-        timestamp: evt.timestamp || new Date().toISOString(),
-        message: evt.data?.message as string
+        timestamp,
+        message
       }])
     }
   })
@@ -115,6 +123,7 @@ export default function CandidateDetailPage() {
     setMaxAppsError(null)
     setIsApplying(true)
     setProgressLogs([])
+    processedLogsRef.current.clear()
     try {
       await api.triggerApply(id as string, maxApps)
       toastSuccess('Auto-Apply started', `Running up to ${maxApps} applications in the background.`)

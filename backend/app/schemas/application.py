@@ -32,6 +32,7 @@ class FailureReason(str, Enum):
     BOT_DETECTED = "BOT_DETECTED"
     FORM_INCOMPLETE = "FORM_INCOMPLETE"
     JOB_EXPIRED = "JOB_EXPIRED"
+    ROBOTS_BLOCKED = "ROBOTS_BLOCKED"
 
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus

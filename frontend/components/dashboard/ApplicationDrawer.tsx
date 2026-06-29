@@ -87,12 +87,15 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
                     <span className="font-semibold">
-                      {application.failure_reason === 'JOB_EXPIRED' ? 'Job Posting Expired' : 'Application Incomplete / Failed'}
+                      {application.failure_reason === 'JOB_EXPIRED' ? 'Job Posting Expired' : 
+                       application.failure_reason === 'ROBOTS_BLOCKED' ? 'Robots Policy Block' : 'Application Incomplete / Failed'}
                     </span>
                   </div>
                   <span className="text-xs text-danger/80">
                     {application.failure_reason === 'JOB_EXPIRED' 
                       ? 'This job posting has been removed or expired. The position is no longer available.'
+                      : application.failure_reason === 'ROBOTS_BLOCKED'
+                      ? 'This job portal does not permit automated access. Please apply manually.'
                       : (application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity.")
                     }
                   </span>
@@ -111,7 +114,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
               )}
             </div>
             
-            {(application.status === 'FAILED' || application.status === 'BLOCKED') && (
+            {(application.status === 'FAILED' || application.status === 'BLOCKED') && application.failure_reason !== 'ROBOTS_BLOCKED' && (
               <button 
                 onClick={() => onRetry(application.application_id)}
                 className="flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors"

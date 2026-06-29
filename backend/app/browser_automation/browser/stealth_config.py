@@ -1,4 +1,5 @@
 import hashlib
+import random
 from pydantic import BaseModel
 from typing import Dict, List
 
@@ -38,18 +39,18 @@ class StealthConfig(BaseModel):
     webdriver_patch: bool
 
 def get_stealth_config(candidate_id: str) -> StealthConfig:
-    seed_hex = hashlib.sha256(candidate_id.encode()).hexdigest()
-    seed = int(seed_hex, 16)
-    
-    viewport = VIEWPORTS[seed % len(VIEWPORTS)]
-    user_agent = USER_AGENTS[seed % len(USER_AGENTS)]
-    timezone = TIMEZONES[seed % len(TIMEZONES)]
+    width = random.randint(1280, 1920)
+    height = random.randint(800, 1080)
+    viewport = {"width": width, "height": height}
+    timezone = random.choice(TIMEZONES)
+    locale = random.choice(["en-US", "en-GB", "en-CA", "en-AU"])
+    user_agent = random.choice(USER_AGENTS)
     
     return StealthConfig(
         viewport=viewport,
         user_agent=user_agent,
         timezone=timezone,
-        locale="en-US",
+        locale=locale,
         webgl_vendor="Intel Inc.",
         canvas_noise=True,
         webdriver_patch=True

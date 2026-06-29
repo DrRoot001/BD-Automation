@@ -24,9 +24,9 @@ def scan_single_inbox(self, candidate_id: str):
     Isolated Celery task to scan a single candidate's inbox.
     """
     async def _scan():
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from module5.scanner import scan_candidate_inbox as _scan_inbox
-        async with AsyncSessionLocal() as db:
+        async with task_session() as db:
             return await _scan_inbox(candidate_id, db)
 
     try:
@@ -45,9 +45,9 @@ def scan_candidate_inbox(self):
     Triggered every 15 minutes by Celery Beat.
     """
     async def _fetch_connected_candidates():
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from sqlalchemy import text
-        async with AsyncSessionLocal() as db:
+        async with task_session() as db:
             result = await db.execute(
                 text("SELECT id FROM candidates WHERE google_refresh_token IS NOT NULL")
             )
@@ -73,13 +73,13 @@ def scan_single_candidate_interviews(self, candidate_id: str):
     and saves them in interview_tracking.
     """
     async def _scan():
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from sqlalchemy import text
         from module5.gmail.client import refresh_access_token, fetch_emails_since
         from module5.gmail.matcher import match_email_to_application
         from datetime import datetime, timedelta
-        
-        async with AsyncSessionLocal() as db:
+
+        async with task_session() as db:
             # 1. Fetch candidate OAuth token
             result = await db.execute(
                 text("SELECT name, google_refresh_token FROM candidates WHERE id = :cid"),
@@ -166,9 +166,9 @@ def scan_interviews(self):
     Poll connected Gmail accounts for candidate interviews (runs every 30 minutes).
     """
     async def _fetch_connected_candidates():
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from sqlalchemy import text
-        async with AsyncSessionLocal() as db:
+        async with task_session() as db:
             result = await db.execute(
                 text("SELECT id FROM candidates WHERE google_refresh_token IS NOT NULL")
             )

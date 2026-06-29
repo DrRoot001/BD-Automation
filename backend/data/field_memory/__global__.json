@@ -80,10 +80,10 @@
     "value": "United States"
   },
   "are you currently bound by any agreements with a current or former employer that": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
     "label": "Are you currently bound by any agreements with a current or former employer that",
-    "last_seen": 1782467019,
+    "last_seen": 1782734949,
     "source": "agent_loop",
     "value": "No"
   },
@@ -110,6 +110,14 @@
     "last_seen": 1782027095,
     "source": "rules",
     "value": "Yes"
+  },
+  "are you open to working in person in our san francisco office 2-3 times a week": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Are you open to working in person in our San Francisco office 2-3 times a week?",
+    "last_seen": 1782735153,
+    "source": "screening",
+    "value": "Yes, I am open to working in person in the San Francisco office 2-3 times a week."
   },
   "are you open to working in person in our san francisco office 2-3 times a week?": {
     "count": 1,
@@ -439,6 +447,14 @@
     "source": "llm:0.95",
     "value": "Yes"
   },
+  "if yes, please provide further explanation below": {
+    "count": 1,
+    "field_type": "text",
+    "label": "If yes, please provide further explanation below.",
+    "last_seen": 1782735127,
+    "source": "screening",
+    "value": "Not applicable"
+  },
   "if you answered “yes,” please list the u.s. government entity you worked for. if": {
     "count": 1,
     "field_type": "text",
@@ -534,6 +550,62 @@
     "last_seen": 1782186240,
     "source": "agent_loop",
     "value": "123456"
+  },
+  "security input 1": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 1",
+    "last_seen": 1782735130,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "security input 2": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 2",
+    "last_seen": 1782735131,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "security input 3": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 3",
+    "last_seen": 1782735132,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "security input 4": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 4",
+    "last_seen": 1782735132,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "security input 5": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 5",
+    "last_seen": 1782735133,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "security input 6": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 6",
+    "last_seen": 1782735134,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "security input 7": {
+    "count": 1,
+    "field_type": "text",
+    "label": "security input 7",
+    "last_seen": 1782735135,
+    "source": "screening",
+    "value": "N/A"
   },
   "this role is a hands-on backend software engineering position requiring producti": {
     "count": 2,

@@ -329,6 +329,17 @@ class ApplicationExecutor:
             if not job_url_active:
                 raise Exception("JOB_EXPIRED: Job posting no longer exists or has been removed")
 
+            # ── PRE-FLIGHT 3: robots.txt compliance check ──
+            from .robots_validator import is_action_allowed
+            robots_allowed = True
+            try:
+                robots_allowed = await is_action_allowed(package.job_url)
+            except Exception as e:
+                logger.warning(f"Error checking robots.txt compliance: {e}")
+                
+            if not robots_allowed:
+                raise Exception("ROBOTS_BLOCKED: BLOCKED: Navigation disallowed by robots.txt policy")
+
             # ── STEP 1: Rate limit ──
             rate_limiter = RateLimiter()
             if not await rate_limiter.check_and_increment(package.platform, package.candidate_id):
@@ -907,15 +918,31 @@ class ApplicationExecutor:
             error_message = str(exc)
             logger.error(f"[M4] Application {package.application_id} error: {exc}", exc_info=True)
 
-            # Record platform failure
-            if "PLATFORM_NEEDS_REVIEW" not in error_message:
-                try:
-                    from .platform_review import record_platform_failure
-                    record_platform_failure(package.platform, error_message)
-                except Exception as p_exc:
-                    logger.warning(f"Failed to record platform failure: {p_exc}")
+            # Record platform-level failures only. Job-specific and infra errors
+            # (JOB_EXPIRED, ROBOTS_BLOCKED, browser crash) are filtered inside
+            # record_platform_failure and do NOT count toward the flag threshold.
+            try:
+                from .platform_review import record_platform_failure
+                record_platform_failure(package.platform, error_message)
+            except Exception as p_exc:
+                logger.warning(f"Failed to record platform failure: {p_exc}")
 
             if "PLATFORM_NEEDS_REVIEW" in error_message:
+                status = "FAILED"
+                if context_mgr and context:
+                    try:
+                        await context_mgr.destroy_context(context)
+                    except Exception:
+                        pass
+                _cleanup_temp(_temp_resume, _temp_cover)
+                return ApplicationResult(
+                    application_id=package.application_id,
+                    status="FAILED",
+                    error_message=error_message,
+                    execution_time_seconds=_elapsed(),
+                    retry_count=retry_count,
+                )
+            elif "ROBOTS_BLOCKED" in error_message:
                 status = "FAILED"
                 if context_mgr and context:
                     try:

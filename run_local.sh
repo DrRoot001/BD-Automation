@@ -35,7 +35,7 @@ sleep 2
 
 # 2. Start Celery Worker
 echo "👷 Starting Celery Worker..."
-(cd backend && $CELERY -A app.celery_app worker --loglevel=info -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan) &
+(cd backend && $CELERY -A app.celery_app worker --loglevel=info --hostname="worker@%h-$(date +%s)" -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan) &
 
 # 3. Start Celery Beat
 echo "⏱️ Starting Celery Beat Scheduler..."

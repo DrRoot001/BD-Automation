@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional, List, Literal
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 class NormalizedJob(BaseModel):
@@ -12,12 +12,12 @@ class NormalizedJob(BaseModel):
 
     title: str
     company: str
-    location: str = "Remote"
-    source: str = "unknown"
-    source_url: str = ""
-    canonical_url: str = ""
-    description: str = ""
-    skills: List[str] = Field(default_factory=list)
+    location: Optional[str] = "Remote"
+    source: Optional[str] = "unknown"
+    source_url: Optional[str] = ""
+    canonical_url: Optional[str] = ""
+    description: Optional[str] = ""
+    skills: Optional[List[str]] = Field(default_factory=list)
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     pay_period: Literal["hourly", "yearly", "monthly", "daily", "unknown"] = "yearly"
@@ -26,6 +26,30 @@ class NormalizedJob(BaseModel):
     embedding: Optional[List[float]] = None
     job_id: Optional[str] = None
     url: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_fields(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            # Normalize pay_period
+            pay_period = str(data.get("pay_period") or "").lower().strip()
+            if pay_period not in ["hourly", "yearly", "monthly", "daily"]:
+                pay_period = "unknown"
+            data["pay_period"] = pay_period
+
+            # Normalize job_type
+            job_type = str(data.get("job_type") or "").lower().strip().replace("_", "-").replace(" ", "-")
+            if job_type not in ["full-time", "contract", "part-time", "full-time", "full_time"]:
+                if "full" in job_type:
+                    job_type = "full-time"
+                elif "part" in job_type:
+                    job_type = "part-time"
+                elif "contract" in job_type or "temp" in job_type:
+                    job_type = "contract"
+                else:
+                    job_type = "unknown"
+            data["job_type"] = job_type
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "NormalizedJob":

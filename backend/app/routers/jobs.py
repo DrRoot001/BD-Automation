@@ -309,6 +309,7 @@ from app.schemas.job import JobMatchingResponse
 async def get_jobs_for_matching(
     skip: int = 0,
     limit: int = 100,
+    candidate_id: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -318,6 +319,8 @@ async def get_jobs_for_matching(
     """
     from sqlalchemy import select, or_, and_
     from sqlalchemy.orm import defer
+    from app.models.resume import Resume
+    from uuid import UUID
 
     exclusions = or_(
         Job.source == 'manual',
@@ -331,13 +334,31 @@ async def get_jobs_for_matching(
         and_(Job.title.ilike('%test%'), Job.company.ilike('%test%'))
     )
 
+    resume_embedding = None
+    if candidate_id:
+        try:
+            cand_uuid = UUID(candidate_id)
+            stmt_res = (
+                select(Resume)
+                .where(Resume.candidate_id == cand_uuid, Resume.is_base == True)
+                .order_by(Resume.version.desc())
+                .limit(1)
+            )
+            base_resume = (await db.execute(stmt_res)).scalars().first()
+            if base_resume and base_resume.embedding is not None:
+                resume_embedding = base_resume.embedding
+        except Exception as e:
+            logger.error(f"Error fetching resume embedding for candidate {candidate_id}: {e}")
+
+    stmt = select(Job).options(defer(Job.embedding), defer(Job.description)).where(~exclusions)
+    
+    if resume_embedding is not None:
+        stmt = stmt.order_by(Job.embedding.cosine_distance(resume_embedding).asc())
+    else:
+        stmt = stmt.order_by(Job.created_at.desc())
+
     result = await db.execute(
-        select(Job)
-        .options(defer(Job.embedding), defer(Job.description))
-        .where(~exclusions)
-        .order_by(Job.created_at.desc())
-        .offset(skip)
-        .limit(limit)
+        stmt.offset(skip).limit(limit)
     )
     return result.scalars().all()
 

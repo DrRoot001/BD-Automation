@@ -9,7 +9,7 @@
     ]
   },
   "remote100k": {
-    "needs_review": true,
+    "needs_review": false,
     "failures": [
       {
         "timestamp": "2026-06-27T01:12:35.537928",
@@ -27,6 +27,10 @@
       {
         "timestamp": "2026-06-27T01:36:30.219975",
         "error": "BLOCKED: Job-specific URL redirected to careers landing ('https://www.coinbase.com/careers'). Possible reasons: job is closed, gh_jid invalid, or anti-bot redirect."
+      },
+      {
+        "timestamp": "2026-06-29T12:13:21.469341",
+        "error": "Page.screenshot: Target page, context or browser has been closed"
       }
     ]
   },
@@ -45,6 +49,19 @@
       {
         "timestamp": "2026-06-27T16:38:15.235873",
         "error": "BLOCKED: DICE_EMAIL / DICE_PASSWORD not configured \u2014 cannot log in to Dice (Easy Apply requires an authenticated seeker account)."
+      }
+    ]
+  },
+  "www.remoterocketship.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-06-29T13:48:19.402095",
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
+      },
+      {
+        "timestamp": "2026-06-29T13:52:49.287050",
+        "error": "JOB_EXPIRED: Job posting no longer exists or has been removed"
       }
     ]
   }

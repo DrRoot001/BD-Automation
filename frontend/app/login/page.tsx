@@ -25,12 +25,31 @@ export default function LoginPage() {
     setLoading(true)
     setError(null)
 
+    // Clear caches BEFORE login request
+    if (typeof window !== 'undefined') {
+      localStorage.clear()
+      sessionStorage.clear()
+    }
+    const queryClient = getQueryClient()
+    if (queryClient) {
+      queryClient.clear()
+    }
+
     const result = await loginAction(email, password)
 
     if (result.error) {
       setError(result.error)
       setLoading(false)
       return
+    }
+
+    // Clear caches AFTER success, before redirect
+    if (typeof window !== 'undefined') {
+      localStorage.clear()
+      sessionStorage.clear()
+    }
+    if (queryClient) {
+      queryClient.clear()
     }
 
     if (result.redirect) {

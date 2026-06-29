@@ -212,6 +212,11 @@ export function TopBar() {
 
   const handleLogout = async () => {
     setShowProfileMenu(false)
+    // Clear localStorage and sessionStorage
+    if (typeof window !== 'undefined') {
+      localStorage.clear()
+      sessionStorage.clear()
+    }
     // 1. Clear ALL cached React Query data so the next user never sees stale data
     const qc = getQueryClient()
     if (qc) qc.clear()

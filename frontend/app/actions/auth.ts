@@ -29,6 +29,7 @@ export async function loginAction(email: string, password: string) {
 
     const meRes = await fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
+      cache: 'no-store',
     })
     if (!meRes.ok) return { error: 'Could not verify user after login' }
     const me = await meRes.json()

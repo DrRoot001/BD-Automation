@@ -87,14 +87,23 @@ async def orchestrate_application_package(
     api_base_url: str = "http://127.0.0.1:8000",
     skip_gate: bool = False,
     existing_app_id: Optional[str] = None,
+    prefetched_match_result: Optional[MatchResult] = None,
 ) -> Dict[str, any]:
     """
     Orchestrate candidate application flow:
-    Score -> Validate Gate -> Tailor Resume -> Generate Cover Letter -> QA -> Queue.
-    
-    If existing_app_id is provided (e.g. from matching.py which creates the record
-    before LLM scoring), the orchestrator reuses that record instead of creating
-    a new one. This prevents duplicate application records.
+    Tailor Resume -> Generate Cover Letter -> QA -> Gate Check -> Queue.
+
+    The gate check runs AFTER tailoring so the tailored resume and cover letter
+    are always saved regardless of the fit score.  When the score is below the
+    threshold and skip_gate is False the application is transitioned to ANALYZED
+    (with the tailored docs attached).  When skip_gate is True the gate is
+    bypassed entirely (used for forced/manual applications).
+
+    If existing_app_id is provided the orchestrator reuses that record instead
+    of creating a new one (prevents duplicates when matching.py pre-creates it).
+
+    If prefetched_match_result is provided the LLM scoring step is skipped and
+    the precomputed scores are used, avoiding a redundant second Gemini call.
     """
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
     
@@ -234,36 +243,26 @@ async def orchestrate_application_package(
             app_id = application["id"]
             print(f"[ORCHESTRATOR] Created application ID: {app_id}")
 
-        # 5. Run Fit Score & ATS match evaluation
-        print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
-        match_result = await score_job_fit(candidate, resume_data, job)
-        print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
-        
-        # Check Gate Threshold
-        if not match_result.should_apply and not skip_gate:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 70. Transitioning status to ANALYZED and STOPPING.")
-            
-            # Transition to ANALYZED
-            update_payload = {
-                "status": "ANALYZED",
-                "fit_score": match_result.fit_score,
-                "ats_score": match_result.ats_score,
-                "combined_score": match_result.combined_score,
-                "metadata": {"reason": "Combined score below threshold gate", "explanation": match_result.reasoning}
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-            
-            return {
-                "status": "ANALYZED",
-                "application_id": app_id,
-                "match_result": match_result.model_dump(mode="json"),
-                "tailored_resume_id": None,
-                "cover_letter_url": None,
-                "screening_answers": {}
-            }
+        # 5. Fit Score & ATS evaluation — skip if caller already computed the scores
+        if prefetched_match_result is not None:
+            match_result = prefetched_match_result
+            print(
+                f"[ORCHESTRATOR] Using prefetched scores — "
+                f"Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | "
+                f"Combined: {match_result.combined_score}"
+            )
+        else:
+            print("[ORCHESTRATOR] Evaluating candidate-job alignment & ATS compatibility...")
+            match_result = await score_job_fit(candidate, resume_data, job)
+            print(
+                f"[ORCHESTRATOR] Scores calculated — "
+                f"Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | "
+                f"Combined: {match_result.combined_score}"
+            )
 
-        # combined_score >= 70 — proceed with tailoring
-        print("[ORCHESTRATOR] Combined score matches threshold. Proceeding with resume tailoring...")        
+        # Gate check is deferred to AFTER tailoring (see below) so the tailored
+        # resume and cover letter are always generated and saved.
+        print("[ORCHESTRATOR] Proceeding with resume tailoring and cover letter generation...")        
 
         # Query existing resumes for this candidate to calculate next version number
         all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")
@@ -342,6 +341,47 @@ async def orchestrate_application_package(
         if screening_questions:
             print("[ORCHESTRATOR] Screening answers drafted successfully.")
 
+        # Gate check AFTER tailoring — tailored resume and cover letter are now saved
+        # regardless of the score.  The gate only decides whether to queue for
+        # browser automation.
+        if not match_result.should_apply and not skip_gate:
+            print(
+                f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below "
+                "gate threshold. Tailored docs saved. Transitioning to ANALYZED."
+            )
+            gate_failed_payload = {
+                "status": "ANALYZED",
+                "resume_id": tailored_resume_id,
+                "cover_letter_url": cover_letter_url,
+                "fit_score": match_result.fit_score,
+                "ats_score": match_result.ats_score,
+                "combined_score": match_result.combined_score,
+                "metadata": {
+                    "ats_score_before": tailored_resume.ats_score_before,
+                    "ats_score_after": tailored_resume.ats_score_after,
+                    "screening_answers": screening_answers,
+                    "explanation": match_result.reasoning,
+                    "gate_reason": "Combined score below threshold after tailoring"
+                }
+            }
+            _gate_resp = await client.patch(f"/api/applications/{app_id}/status", json=gate_failed_payload)
+            if _gate_resp.status_code not in (200, 201, 204):
+                raise ValueError(
+                    f"Failed to transition app {app_id} to ANALYZED: "
+                    f"{_gate_resp.status_code} {_gate_resp.text}"
+                )
+            return {
+                "status": "ANALYZED",
+                "application_id": app_id,
+                "match_result": match_result.model_dump(mode="json"),
+                "tailored_resume_id": tailored_resume_id,
+                "cover_letter_url": cover_letter_url,
+                "screening_answers": screening_answers
+            }
+
+        # Gate passed (or skip_gate=True) — queue for browser automation
+        print("[ORCHESTRATOR] Score meets threshold. Queuing application for browser automation...")
+
         # Final consolidated status update: set tailored resume, scores, and cover letter in one patch
         print("[ORCHESTRATOR] Application package complete. Updating application record...")
         final_update_payload = {
@@ -358,7 +398,12 @@ async def orchestrate_application_package(
                 "explanation": match_result.reasoning
             }
         }
-        await client.patch(f"/api/applications/{app_id}/status", json=final_update_payload)
+        _final_resp = await client.patch(f"/api/applications/{app_id}/status", json=final_update_payload)
+        if _final_resp.status_code not in (200, 201, 204):
+            raise ValueError(
+                f"Failed to transition app {app_id} to QUEUED: "
+                f"{_final_resp.status_code} {_final_resp.text}"
+            )
 
         # 10. Publish event to Redis event bus
         if HAS_EVENTS:
@@ -371,9 +416,9 @@ async def orchestrate_application_package(
             }
             await publish_event("application.package_ready", event_payload)
             print("[ORCHESTRATOR] Redis event published successfully.")
-            
+
         print(f"[ORCHESTRATOR] ✓ APPLICATION PACKAGE PREPARATION COMPLETE (App ID: {app_id})")
-        
+
         return {
             "status": "QUEUED",
             "application_id": app_id,

@@ -231,8 +231,12 @@ class BrowserContextManager:
         # add_init_script. Anything more turned out to make Greenhouse's
         # react-select refuse to open. Once dropdowns are working, we can
         # selectively re-add stealth signals that don't trip detection.
-        context_kwargs = dict(viewport=config.viewport)
-        logger.info(f"[Browser] BARE MINIMUM context — viewport={config.viewport}")
+        context_kwargs = dict(
+            viewport=config.viewport,
+            locale=config.locale,
+            timezone_id=config.timezone,
+        )
+        logger.info(f"[Browser] Randomize context — viewport={config.viewport}, locale={config.locale}, timezone={config.timezone}")
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
@@ -259,10 +263,8 @@ class BrowserContextManager:
 
         context = await self._browser.new_context(**context_kwargs)
 
-        # Inject stealth scripts — DISABLED while debugging react-select interaction.
-        # The chrome.runtime stub and webdriver patch were suspected as the cause
-        # of Greenhouse react-select widgets not opening; testing without them.
-        # await context.add_init_script(STEALTH_JS)
+        # Inject stealth scripts
+        await context.add_init_script(STEALTH_JS)
 
         if session_data and not storage_state_used:
             cookies = json.loads(session_data)

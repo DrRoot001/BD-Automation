@@ -126,7 +126,7 @@ export default function ApplicationDetailPage() {
             </p>
           </div>
           <div className="flex items-center gap-4">
-            <StatusBadge status={isCompleted(application.status) ? application.status : 'FAILED'} />
+            <StatusBadge status={application.status} />
           </div>
         </div>
       </div>
@@ -180,7 +180,7 @@ export default function ApplicationDetailPage() {
             </div>
           </div>
 
-          {!isCompleted(application.status) && (
+          {(application.status === 'FAILED' || application.status === 'BLOCKED') && (
             <div className="bg-danger/10 border border-danger/20 rounded-xl p-6 space-y-4">
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" />
