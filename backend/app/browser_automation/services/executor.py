@@ -26,20 +26,60 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
+# Hosts that sit behind a bot wall (Cloudflare / PerimeterX / login gate) and
+# will return 403 / a challenge / a redirect-to-login to a plain httpx GET — even
+# when the listing is perfectly live. For these hosts the lightweight pre-flight
+# check produces FALSE POSITIVES ("JOB_EXPIRED"), so we skip it and let the
+# real Playwright session (which has stealth + cookies) decide via
+# check_page_indicates_expired(). RR is the canonical case the user hit: a live
+# listing URL was being killed at pre-flight because httpx got bounced.
+_PREFLIGHT_SKIP_HOSTS = (
+    "remoterocketship.com",
+    "remote100k",
+    "myworkdayjobs.com",
+    "workday.com",
+    "linkedin.com",
+    "indeed.com",
+    "dice.com",
+    "talent.com",
+    "icims.com",
+    "smartrecruiters.com",
+)
+
+
 async def is_job_url_active(url: str) -> bool:
     try:
         if not url.startswith(("http://", "https://")):
             url = "https://" + url
-            
+
+        # Skip pre-flight for bot-walled hosts — the real browser will validate.
+        try:
+            _host = (urlparse(url).hostname or "").lower()
+            if any(h in _host for h in _PREFLIGHT_SKIP_HOSTS):
+                logger.info(f"[Job Check] Skipping lightweight check for bot-walled host {_host!r}")
+                return True
+        except Exception:
+            pass
+
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             headers = {
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             }
             resp = await client.get(url, headers=headers)
-            
+
+            # 4xx other than 404/410 (e.g. 403 from a bot wall, 401 behind
+            # login) tells us NOTHING about whether the listing is live — the
+            # full browser may load it fine. Only treat hard-not-found as
+            # expired.
             if resp.status_code in (404, 410):
                 logger.info(f"[Job Check] Job URL returned status {resp.status_code}: {url}")
                 return False
+            if resp.status_code >= 400:
+                logger.info(
+                    f"[Job Check] HTTP {resp.status_code} from pre-flight on {url} — "
+                    "deferring decision to real browser session (could be bot wall)"
+                )
+                return True
                 
             final_url = str(resp.url)
             
@@ -92,23 +132,34 @@ async def check_page_indicates_expired(page: Page, original_url: str) -> bool:
         if final_url != original_url:
             parsed_orig = urlparse(original_url)
             parsed_final = urlparse(final_url)
-            
-            orig_path = parsed_orig.path.strip("/")
-            final_path = parsed_final.path.strip("/")
-            
-            orig_segments = [s for s in orig_path.split("/") if s]
-            final_segments = [s for s in final_path.split("/") if s]
-            
-            job_id_segments = [s for s in orig_segments if s.isdigit() or len(s) > 8]
-            
-            if job_id_segments:
-                if not any(jid in final_url for jid in job_id_segments):
-                    logger.info(f"[Browser Check] Page redirected away: {original_url} -> {final_url}")
-                    return True
-            else:
-                if len(final_segments) < len(orig_segments) and (not final_path or "jobs" not in final_path or final_path == "jobs" or final_path == "careers"):
-                    logger.info(f"[Browser Check] Page redirected away to directory/homepage: {original_url} -> {final_url}")
-                    return True
+
+            # CROSS-HOST hops (RR/RR-100k → Ashby/Greenhouse/Lever, or a
+            # company-careers SPA bouncing to its ATS) are EXPECTED and not a
+            # redirect-to-homepage failure. Only treat redirects as "moved away"
+            # when the final host is the SAME as the original — otherwise we
+            # cannot meaningfully compare paths (Ashby's slug has nothing in
+            # common with RR's slug by design). Title/content patterns below
+            # still catch the genuine "page filled / 404" cases.
+            same_host = (
+                (parsed_orig.hostname or "").lower() == (parsed_final.hostname or "").lower()
+            )
+            if same_host:
+                orig_path = parsed_orig.path.strip("/")
+                final_path = parsed_final.path.strip("/")
+
+                orig_segments = [s for s in orig_path.split("/") if s]
+                final_segments = [s for s in final_path.split("/") if s]
+
+                job_id_segments = [s for s in orig_segments if s.isdigit() or len(s) > 8]
+
+                if job_id_segments:
+                    if not any(jid in final_url for jid in job_id_segments):
+                        logger.info(f"[Browser Check] Page redirected away: {original_url} -> {final_url}")
+                        return True
+                else:
+                    if len(final_segments) < len(orig_segments) and (not final_path or "jobs" not in final_path or final_path == "jobs" or final_path == "careers"):
+                        logger.info(f"[Browser Check] Page redirected away to directory/homepage: {original_url} -> {final_url}")
+                        return True
 
         title = (await page.title()).lower()
         if "404" in title or "page not found" in title or "job not found" in title:
@@ -315,6 +366,10 @@ def _cleanup_temp(*paths: Optional[str]) -> None:
 
 class ApplicationExecutor:
     async def execute(self, package: ApplicationPackage, retry_count: int = 0) -> ApplicationResult:
+        logger.info(
+            f"[M4] execute() ENTRY app={package.application_id} platform={package.platform!r} "
+            f"url={(package.job_url or '')[:120]!r} retry={retry_count}"
+        )
         start_time = time.monotonic()
         screenshot_path: Optional[str] = None
         confirmation_text: Optional[str] = None
@@ -397,15 +452,58 @@ class ApplicationExecutor:
                 raise Exception("JOB_EXPIRED: Job posting no longer exists or has been removed")
 
             # ── PRE-FLIGHT 3: robots.txt compliance check ──
+            # Operator kill-switch. When DISABLE_ROBOTS_CHECK is on, we skip the
+            # robots.txt gate entirely. Reasoning: the candidate has authorized
+            # this apply on their own behalf — it is a one-shot form submission,
+            # NOT a crawler. Most job aggregators (RR, Ashby, Dice, Workday,
+            # LinkedIn, Indeed) ship a `User-agent: * Disallow: /` style
+            # robots.txt that blocks unknown bots from scraping listings. With
+            # the gate on, only ATSes with permissive robots (Greenhouse boards)
+            # ever reach the browser — exactly the symptom the operator saw
+            # ("only Greenhouse Vercel ones start").
             from .robots_validator import is_action_allowed
-            robots_allowed = True
-            try:
-                robots_allowed = await is_action_allowed(package.job_url)
-            except Exception as e:
-                logger.warning(f"Error checking robots.txt compliance: {e}")
-                
-            if not robots_allowed:
-                raise Exception("ROBOTS_BLOCKED: BLOCKED: Navigation disallowed by robots.txt policy")
+            if os.getenv("DISABLE_ROBOTS_CHECK", "").lower() in ("1", "true", "yes", "on"):
+                logger.info(f"[Robots.txt] DISABLE_ROBOTS_CHECK=on — skipping gate for {package.platform}")
+            else:
+                robots_allowed = True
+                try:
+                    robots_allowed = await is_action_allowed(package.job_url)
+                except Exception as e:
+                    logger.warning(f"Error checking robots.txt compliance: {e}")
+
+                if not robots_allowed:
+                    logger.error(
+                        f"[Robots.txt] BLOCKING application — host disallows our UA. "
+                        f"platform={package.platform} url={package.job_url[:120]} "
+                        f"(set DISABLE_ROBOTS_CHECK=true to override)"
+                    )
+                    raise Exception("ROBOTS_BLOCKED: BLOCKED: Navigation disallowed by robots.txt policy")
+
+            # ── PRE-FLIGHT 4: account-walled ATS skip ──
+            # Workday/iCIMS/Dice authenticate at the submit endpoint. Without
+            # configured credentials there is NO scraping bypass — the form is
+            # gated behind a real account. Fail fast (before launching Chrome)
+            # with a specific LOGIN_REQUIRED status so the operator sees "this
+            # job needs creds" rather than "browser opened and closed". Saves
+            # ~30s per job and keeps the screenshot log meaningful.
+            _walled_creds = {
+                "workday": ("WORKDAY_USERNAME", "WORKDAY_PASSWORD"),
+                "icims":   ("ICIMS_USERNAME",   "ICIMS_PASSWORD"),
+                "dice":    ("DICE_EMAIL",       "DICE_PASSWORD"),
+            }
+            _plat_key = (package.platform or "").lower().strip()
+            _creds = _walled_creds.get(_plat_key)
+            if _creds:
+                u_env, p_env = _creds
+                if not (os.getenv(u_env, "").strip() and os.getenv(p_env, "").strip()):
+                    logger.warning(
+                        f"[M4] Pre-flight skip: {_plat_key} requires {u_env}/{p_env} "
+                        "in .env — no scraping bypass exists for account-walled ATSes."
+                    )
+                    raise Exception(
+                        f"LOGIN_REQUIRED: {_plat_key} requires an account; "
+                        f"set {u_env} and {p_env} in .env to enable."
+                    )
 
             # ── STEP 1: Rate limit ──
             rate_limiter = RateLimiter()
@@ -450,7 +548,20 @@ class ApplicationExecutor:
                 pass
             await adapter.navigate_to_application(page, package.job_url)
 
-            if await check_page_indicates_expired(page, package.job_url):
+            # When a wrapper aggregator (RemoteRocketship, Remote100k) navigated
+            # to the underlying ATS, page.url is now on a totally different host
+            # (jobs.ashbyhq.com, boards.greenhouse.io, …). Comparing that against
+            # the original RR URL trips the "redirected away" heuristic on EVERY
+            # successful wrapper apply and falsely kills it as JOB_EXPIRED.
+            # Use the resolved inner URL as the comparison baseline when the
+            # adapter exposes one.
+            _expired_check_url = getattr(adapter, "_resolved_url", None) or package.job_url
+            if _expired_check_url != package.job_url:
+                logger.info(
+                    f"[Job Check] Using resolved inner URL for expired-check "
+                    f"(wrapper={package.platform}): {_expired_check_url}"
+                )
+            if await check_page_indicates_expired(page, _expired_check_url):
                 raise Exception("JOB_EXPIRED: Job posting no longer exists or has been removed")
 
             # ── STEP 5.5: Vision page-agent oversight ─────────────────────
@@ -587,16 +698,40 @@ class ApplicationExecutor:
                     elif loop_result.status in ("WRONG_PAGE", "ABORTED"):
                         raise Exception(f"AgentLoop aborted: {loop_result.error}")
 
+                    elif getattr(agent_loop, "_submit_fired", False):
+                        # The AgentLoop already CLICKED submit but did not reach a
+                        # confirmed SUBMITTED (e.g. an email-verification wall it
+                        # couldn't clear in time, or it ran out of steps on the
+                        # post-submit page). The form was already sent to the ATS,
+                        # so the scripted fallback below MUST NOT run — re-detecting
+                        # and re-submitting would file a DUPLICATE application.
+                        # Mark terminal with a clear, non-retryable reason.
+                        logger.warning(
+                            f"[M4] AgentLoop fired submit but ended {loop_result.status!r} "
+                            "without confirmation — NOT running scripted fallback "
+                            "(would double-submit). Marking EMAIL_VERIFICATION_REQUIRED."
+                        )
+                        raise Exception(
+                            "EMAIL_VERIFICATION_REQUIRED: application was submitted but "
+                            "post-submit verification did not complete "
+                            f"(loop status={loop_result.status}, error={loop_result.error})"
+                        )
+
                     else:
-                        # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR — fall back
+                        # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR — submit was
+                        # never fired, so the scripted pipeline is safe to attempt.
                         logger.warning(
                             f"[M4] AgentLoop non-terminal ({loop_result.status}) — "
                             "falling back to scripted pipeline"
                         )
 
                 except Exception as exc:
-                    if "AgentLoop aborted" in str(exc):
-                        raise  # propagate intentional aborts
+                    # Intentional terminal outcomes must propagate, NOT fall
+                    # through to the scripted pipeline. "EMAIL_VERIFICATION_REQUIRED"
+                    # means submit already fired — re-running scripted submit would
+                    # double-apply. "AgentLoop aborted" is an explicit wrong-page/abort.
+                    if "AgentLoop aborted" in str(exc) or "EMAIL_VERIFICATION_REQUIRED" in str(exc):
+                        raise
                     logger.warning(f"[M4] AgentLoop raised (non-fatal, falling back): {exc}")
 
             if not _agent_submitted:
@@ -1015,7 +1150,21 @@ class ApplicationExecutor:
             # record_platform_failure and do NOT count toward the flag threshold.
             try:
                 from .platform_review import record_platform_failure
-                record_platform_failure(package.platform, error_message)
+                # When a wrapper aggregator (RemoteRocketship, Remote100k) delegates
+                # to an inner ATS adapter, charge the failure to the resolved inner
+                # ATS — not the wrapper. Otherwise every Greenhouse/Workday/Lever
+                # hiccup behind RR gets counted against RR and trips the breaker
+                # for a host that wasn't actually at fault.
+                _eff_platform = package.platform
+                try:
+                    _inner_adapter = locals().get("adapter", None)
+                    _inner = getattr(_inner_adapter, "_inner", None) if _inner_adapter else None
+                    _inner_name = getattr(_inner, "platform_name", None) if _inner else None
+                    if _inner_name:
+                        _eff_platform = _inner_name
+                except Exception:
+                    pass
+                record_platform_failure(_eff_platform, error_message)
             except Exception as p_exc:
                 logger.warning(f"Failed to record platform failure: {p_exc}")
 
@@ -1063,6 +1212,26 @@ class ApplicationExecutor:
                     application_id=package.application_id,
                     status="FAILED",
                     error_message=error_message.replace("JOB_EXPIRED: ", ""),
+                    execution_time_seconds=_elapsed(),
+                    retry_count=retry_count,
+                )
+            elif "EMAIL_VERIFICATION_REQUIRED" in error_message:
+                # The form was ALREADY submitted to the ATS but the post-submit
+                # email-verification code could not be completed. This is TERMINAL
+                # and must NOT be retried — a retry would re-open the form and file
+                # a DUPLICATE application. Return FAILED so the task layer reports
+                # it without re-queuing.
+                status = "FAILED"
+                if context_mgr and context:
+                    try:
+                        await context_mgr.destroy_context(context)
+                    except Exception:
+                        pass
+                _cleanup_temp(_temp_resume, _temp_cover)
+                return ApplicationResult(
+                    application_id=package.application_id,
+                    status="FAILED",
+                    error_message=error_message,
                     execution_time_seconds=_elapsed(),
                     retry_count=retry_count,
                 )

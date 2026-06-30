@@ -496,7 +496,13 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
     # ── Detect captcha ──
     has_captcha = False
     captcha_type = None
-    if await page.query_selector(".g-recaptcha, iframe[src*='recaptcha']"):
+    if await page.query_selector(".g-recaptcha[data-size='invisible']"):
+        has_captcha = True
+        captcha_type = "recaptcha_invisible"
+    elif await page.evaluate("() => !!document.querySelector('.grecaptcha-badge') || !!document.querySelector('script[src*=\"render=\"]')"):
+        has_captcha = True
+        captcha_type = "recaptcha_v3"
+    elif await page.query_selector(".g-recaptcha, iframe[src*='recaptcha']"):
         has_captcha = True
         captcha_type = "recaptcha_v2"
     elif await page.query_selector(".h-captcha"):

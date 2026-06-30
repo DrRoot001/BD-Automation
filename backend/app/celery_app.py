@@ -90,14 +90,63 @@ celery_app.conf.task_routes = {
     "task:recover_stuck_applications":  {"queue": "celery"},
 }
 
+# ── Broker connection stability (Upstash / managed Redis) ─────────────────────
+# Upstash reaps idle TCP sockets after a short timeout. Without a keepalive /
+# periodic health-check the worker's connection silently dies, kombu logs
+# "Connection closed by server", and every reserved-but-unacked task is
+# "Restored" and redelivered — which made a multi-minute browser run loop
+# forever (it could never finish inside one ~90s connection window). These
+# options keep the socket warm, detect half-open connections before a command
+# blocks on them, and retry transient timeouts instead of crashing the consumer.
+_REDIS_TRANSPORT_OPTIONS = {
+    # A reserved task is only redelivered to another worker after this many
+    # seconds. Must be comfortably LONGER than the longest browser run so a slow
+    # application is never handed to a 2nd worker while the 1st is still filling.
+    "visibility_timeout": 7200,        # 2 hours
+    # Periodic PING keeps Upstash from reaping the connection as idle AND surfaces
+    # a dead socket early. This is the single most important setting here.
+    "health_check_interval": 25,
+    "socket_keepalive": True,          # OS-level TCP keepalive (cross-platform safe)
+    "socket_timeout": 120,             # don't block forever on a read
+    "socket_connect_timeout": 30,
+    "retry_on_timeout": True,
+}
+
+celery_app.conf.broker_transport_options = _REDIS_TRANSPORT_OPTIONS
+celery_app.conf.result_backend_transport_options = {
+    "retry_on_timeout": True,
+    "health_check_interval": 25,
+    "socket_keepalive": True,
+}
+# Keep retrying the broker on startup and at runtime instead of dying.
+celery_app.conf.broker_connection_retry = True
+celery_app.conf.broker_connection_retry_on_startup = True
+celery_app.conf.broker_connection_max_retries = None   # retry forever
+celery_app.conf.redis_socket_keepalive = True
+celery_app.conf.redis_retry_on_timeout = True
+celery_app.conf.redis_backend_health_check_interval = 25
+celery_app.conf.broker_pool_limit = 10
+# Setting this explicitly silences the Celery-6 CPendingDeprecationWarning and,
+# at False, means a transient connection blip does NOT cancel an in-flight
+# browser run — it is allowed to finish.
+celery_app.conf.worker_cancel_long_running_tasks_on_connection_loss = False
+
 # ── Worker reliability settings ───────────────────────────────────────────────
 # prefetch_multiplier=1: worker fetches one task at a time — prevents a slow
 # browser-automation task from starving the queue on a single-worker setup.
 celery_app.conf.worker_prefetch_multiplier = 1
 
-# acks_late=True: task is acknowledged only after it completes (or explicitly
-# fails), so a worker crash doesn't silently drop a task.
-celery_app.conf.task_acks_late = True
+# acks EARLY (acks_late=False): the task is acknowledged when the worker picks it
+# up, NOT after it finishes. This is deliberate: a browser-automation run takes
+# minutes, and with acks_late the message stayed un-acked the whole time. On the
+# flaky Upstash link, EVERY disconnect "Restored" that message and redelivered it,
+# so the same application ran forever and never completed (the bug in the logs).
+# Acking early means a connection blip during a long run can no longer resurrect
+# the task. The safety net against a genuine worker crash is the
+# recover_stuck_applications watchdog (re-queues stuck apps) plus the executor's
+# idempotency guard (never double-submits an app already past SUBMITTED).
+celery_app.conf.task_acks_late = False
+celery_app.conf.task_reject_on_worker_lost = False
 
 # worker_max_tasks_per_child: recycle each worker process after N tasks. Browser
 # automation spawns Chrome per application; even with explicit cleanup, recycling

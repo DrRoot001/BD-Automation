@@ -444,9 +444,15 @@ async def generate_content_with_retry(
     if is_multimodal:
         model = os.getenv("GEMINI_VISION_MODEL", model)
 
+    # Provider priority: GEMINI FIRST. Operator topped up the Gemini account and
+    # wants it to be the primary path — Groq's daily-TPD ceiling (100k tokens)
+    # and Anthropic's per-credit billing made them poor primaries. Gemini is the
+    # vision-capable provider AND the operator's preferred LLM, so it always
+    # leads. Groq stays second as a cheap fast fallback when it has quota;
+    # Anthropic last so a paid credit isn't burned on a transient Gemini blip.
     candidates = [
-        ("GROQ_API_KEY", os.getenv("GROQ_API_KEY")),
         ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
+        ("GROQ_API_KEY", os.getenv("GROQ_API_KEY")),
         ("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY")),
         ("ANTHROPIC_API_KEY_2", os.getenv("ANTHROPIC_API_KEY_2")),
         ("CLAUDE_API_KEY", os.getenv("CLAUDE_API_KEY")),
@@ -537,6 +543,23 @@ async def generate_content_with_retry(
             # If the current working key failed, clear it so we don't assume it works next time
             if api_key == _working_provider_key:
                 _working_provider_key = None
+            # DNS / network failures hit every provider equally — there's no
+            # point burning a paid Anthropic credit because Gemini's DNS
+            # resolved slow for 3 seconds. Re-raise immediately so the caller
+            # (matching / orchestrator) retries the whole step on its own
+            # schedule, instead of cascading down a fallback chain that will
+            # also fail the same way.
+            err_str = str(e).lower()
+            _transient_network = (
+                "getaddrinfo" in err_str
+                or "winerror 10060" in err_str
+                or "name or service not known" in err_str
+                or "temporary failure in name resolution" in err_str
+                or "connection attempt failed" in err_str
+            )
+            if _transient_network:
+                print(f"[FALLBACK] Network/DNS error on {provider_type} — NOT cascading to paid fallback; re-raise so caller can retry the whole step.")
+                raise
             if has_fallback:
                 print(f"-> Trying next available API key...")
 

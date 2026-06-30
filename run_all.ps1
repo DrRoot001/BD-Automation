@@ -18,9 +18,9 @@
    Stop everything:    powershell -ExecutionPolicy Bypass -File run_all.ps1 -Stop
 
  NOTES
-   * Celery uses --pool=solo because Windows does NOT support the default
-     prefork pool. Solo runs one task at a time (safe + predictable). To allow
-     parallel tasks set $env:CELERY_POOL='threads' before running.
+   * Celery uses --pool=threads (Windows does NOT support the default prefork
+     pool, and 'solo' starves the broker connection during long browser runs).
+     Override with $env:CELERY_POOL / $env:CELERY_CONCURRENCY.
    * Override ports with $env:BACKEND_PORT / $env:FRONTEND_PORT.
 =============================================================================
 #>
@@ -36,7 +36,16 @@ $PidFile   = Join-Path $LogDir 'run_all.pids'
 
 $BackendPort  = if ($env:BACKEND_PORT)  { $env:BACKEND_PORT }  else { '8000' }
 $FrontendPort = if ($env:FRONTEND_PORT) { $env:FRONTEND_PORT } else { '3000' }
-$CeleryPool   = if ($env:CELERY_POOL)   { $env:CELERY_POOL }   else { 'solo' }
+# 'threads' (NOT 'solo') is the default: the solo pool runs the task inline in the
+# SAME thread that services the broker, so a multi-minute browser run starves the
+# Upstash connection until it is reaped ("Connection closed by server") and the
+# task is redelivered forever. The threads pool runs tasks in worker threads while
+# the main thread keeps the broker alive. Override with $env:CELERY_POOL.
+$CeleryPool   = if ($env:CELERY_POOL)   { $env:CELERY_POOL }   else { 'threads' }
+# Concurrency: number of tasks that may run at once. 4 lets quick email scans run
+# alongside one browser application without 2+ Chrome sessions colliding in
+# practice. Override with $env:CELERY_CONCURRENCY.
+$CeleryConc   = if ($env:CELERY_CONCURRENCY) { $env:CELERY_CONCURRENCY } else { '4' }
 
 # --------------------------------------------------------------------------
 # -Stop : kill every service we started (whole process tree) and exit.
@@ -120,9 +129,18 @@ Start-Svc 'BD-Backend-API' $Backend `
 # Give the backend a moment to bind before the worker/frontend hit it
 Start-Sleep -Seconds 3
 
-# 2. Celery worker - all queues. --pool=solo is required on Windows.
+# 2. Celery worker - all queues.
+#    --without-mingle/--without-gossip/--without-heartbeat: with a single worker
+#      these only add ~25s of "searching for neighbors" dead time and extra
+#      Upstash connections on every reconnect — pure overhead here.
+#    Timeouts: the AgentLoop fills (~90-150s) AND then runs the post-submit
+#      email-verification phase (Gmail code polling, up to ~3×90s). The default
+#      240s wall-clock cuts that off mid-poll — the "clicks submit but never
+#      fetches the code" failure. 900s gives fill + verification ample room;
+#      the executor's hard per-application deadline sits above it at 1500s.
+$WorkerEnv = "`$env:AGENT_LOOP_WALL_TIMEOUT_S='900'; `$env:APPLICATION_EXEC_TIMEOUT_S='1500'; `$env:STRICT_MEMORY_ISOLATION='true'; "
 Start-Svc 'BD-Celery-Worker' $Backend `
-    "& '$Python' -m celery -A app.celery_app worker --loglevel=info --pool=$CeleryPool -Q $Queues -n worker@%h" | Out-Null
+    ($WorkerEnv + "& '$Python' -m celery -A app.celery_app worker --loglevel=info --pool=$CeleryPool --concurrency=$CeleryConc -Q $Queues -n worker@%h --without-mingle --without-gossip --without-heartbeat") | Out-Null
 
 # 3. Celery beat - scheduled pipelines
 Start-Svc 'BD-Celery-Beat' $Backend `

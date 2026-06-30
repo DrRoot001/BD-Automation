@@ -45,8 +45,20 @@ logger = logging.getLogger(__name__)
 _APPLY_SELECTORS = [
     "[data-automation-id='applyToJobButton']",
     "[data-automation-id='adventureButton']",
+    "[data-automation-id='applyButton']",
+    "[data-automation-id='applyNow']",
+    "[data-automation-id='applyManually']",
+    "[data-automation-id='autofillWithResume']",
+    "button[aria-label*='Apply' i]",
+    "a[aria-label*='Apply' i]",
+    "button:has-text('Apply Now')",
+    "button:has-text('Apply Manually')",
     "button:has-text('Apply')",
+    "a:has-text('Apply Now')",
+    "a:has-text('Apply Manually')",
     "a:has-text('Apply')",
+    "div[role='button']:has-text('Apply')",
+    "[role='button']:has-text('Apply')",
 ]
 
 _APPLY_MANUALLY_SELECTORS = [
@@ -99,9 +111,47 @@ class WorkdayAdapter(BasePlatformAdapter):
             logger.warning(f"[Workday] initial navigate timeout: {exc}")
         await self.human_delay(1.0, 2.0)
 
-        # Click Apply
+        # Wait for hydration. Workday is a React SPA — the Apply button is NOT
+        # in the server HTML; it renders 2–5s after domcontentloaded. Waiting
+        # for any of its known data-automation-id attributes to appear catches
+        # the moment hydration finishes. Falls through silently after 12s so
+        # we still try the click-by-text selectors below for older layouts.
+        try:
+            await page.wait_for_selector(
+                "[data-automation-id='applyToJobButton'], "
+                "[data-automation-id='adventureButton'], "
+                "[data-automation-id='applyButton'], "
+                "[data-automation-id='applyNow'], "
+                "[data-automation-id='applyManually']",
+                state="visible",
+                timeout=12_000,
+            )
+            logger.info("[Workday] Apply button hydrated")
+        except Exception:
+            logger.info("[Workday] data-automation-id Apply not visible in 12s — falling back to text selectors")
+
+        # Also networkidle to give late XHR a chance to finish rendering the
+        # gated CTAs that appear only after the visibility check fetches state.
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5_000)
+        except Exception:
+            pass
+
+        # Click Apply via the expanded selector list.
         if not await self._click_one_of(page, "apply_button", _APPLY_SELECTORS):
-            raise RuntimeError("BLOCKED: Workday Apply button not found — job may be closed or DOM changed")
+            # SOFT-FAIL: do NOT BLOCK the run. Workday's DOM mutates often, and
+            # the wrapper (RemoteRocketship) may have resolved to a Workday URL
+            # whose Apply CTA we don't recognise yet. Let the AgentLoop's vision
+            # page-agent take over — it can read the screenshot, find the Apply
+            # button by appearance, click it, and the selector gets persisted
+            # to learned_fixes for next time. This is exactly the recovery
+            # path the operator wants ("just work like Greenhouse Vercel").
+            logger.warning(
+                "[Workday] Apply button not found via known selectors — "
+                "yielding to AgentLoop vision recovery. URL=%s",
+                page.url,
+            )
+            return
 
         await self.human_delay(0.6, 1.2)
 
@@ -249,8 +299,15 @@ class WorkdayAdapter(BasePlatformAdapter):
         username = os.getenv("WORKDAY_USERNAME", "").strip()
         password = os.getenv("WORKDAY_PASSWORD", "").strip()
         if not username or not password:
+            # Sentinel-string the Celery task already recognises as a
+            # no-retry terminal failure. LOGIN_REQUIRED is a policy outcome,
+            # not a bug — Workday's submit endpoint authenticates server-side
+            # so there's no way to apply without an account. Surfaced as a
+            # distinct failure_reason so the UI doesn't mislabel it as
+            # "BOT_DETECTED" (which would suggest our automation got caught,
+            # which is misleading — we never got the chance to be caught).
             raise RuntimeError(
-                "BLOCKED: Workday requires an account; set WORKDAY_USERNAME and "
+                "LOGIN_REQUIRED: Workday requires an account; set WORKDAY_USERNAME and "
                 "WORKDAY_PASSWORD in .env (one set of credentials per candidate)"
             )
 

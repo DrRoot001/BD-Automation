@@ -1,14 +1,19 @@
 {
   "_meta": {
     "ats": "greenhouse",
-    "last_updated": 1782734911
+    "last_updated": 1782827614
   },
   "apply_button": [
+    "button:has-text(\"Apply\")",
     "button:has-text('Submit')",
     "button:has-text('Apply Here')",
     "button:has-text('Apply Here!')"
   ],
   "submit": [
+    "a:has-text(\"Job Applicant Privacy Notice\")",
     "[aria-label='Close']"
+  ],
+  "job_post_link": [
+    "a[href*='greenhouse.io/vercel/jobs/']"
   ]
 }
