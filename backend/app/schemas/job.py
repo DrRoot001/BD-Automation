@@ -19,6 +19,8 @@ class JobCreate(BaseModel):
     pay_period: Optional[str] = None
     job_type: Optional[str] = None
     posted_at: Optional[datetime] = None
+    ats_type: Optional[str] = None
+    job_category: Optional[str] = None
     embedding: Optional[List[float]] = None
 
     @field_validator('skills', mode='before')
@@ -51,6 +53,8 @@ class JobResponse(BaseModel):
     pay_period: Optional[str] = None
     job_type: Optional[str] = None
     posted_at: Optional[datetime] = None
+    ats_type: Optional[str] = None
+    job_category: Optional[str] = None
     is_duplicate: Optional[bool] = False
     duplicate_of: Optional[UUID] = None
     created_at: datetime
@@ -83,6 +87,8 @@ class JobMatchingResponse(BaseModel):
     pay_period: Optional[str] = None
     job_type: Optional[str] = None
     posted_at: Optional[datetime] = None
+    ats_type: Optional[str] = None
+    job_category: Optional[str] = None
     created_at: datetime
 
     @field_validator('skills', mode='before')

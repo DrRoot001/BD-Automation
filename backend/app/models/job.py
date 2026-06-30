@@ -24,4 +24,6 @@ class Job(Base):
     embedding = Column(Vector(1536))  # <-- use Vector from pgvector
     is_duplicate = Column(Boolean, default=False)
     duplicate_of = Column(UUID(as_uuid=True), ForeignKey("jobs.id"), nullable=True)
+    ats_type = Column(String(100))
+    job_category = Column(String(100))
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
