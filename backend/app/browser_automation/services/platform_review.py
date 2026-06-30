@@ -9,16 +9,11 @@ logger = logging.getLogger(__name__)
 REVIEWS_FILE = Path(__file__).resolve().parents[1] / "learned_fixes" / "platform_reviews.json"
 
 # Failures that are JOB-specific or infrastructure-specific and must NOT count
-# toward the platform failure threshold. A platform should be flagged only for
-# genuine, repeatable platform/DOM problems — never for transient network/DNS
-# blips, LLM-provider outages, or page-load timeouts, which say nothing about
-# whether the ATS itself is broken. Counting those tripped the breaker during a
-# flaky-network test and would wrongly block a healthy platform in production.
+# toward the platform failure threshold.
 _SKIP_PATTERNS = [
     "JOB_EXPIRED",
     "ROBOTS_BLOCKED",
     "resume_url is empty",
-    "Resume file could not be resolved",
     "Target page, context or browser has been closed",
     "Event loop is closed",
     "PLATFORM_NEEDS_REVIEW",

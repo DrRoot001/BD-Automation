@@ -38,7 +38,7 @@ export default function JobImportPage() {
   const [jsonInput, setJsonInput] = useState('')
   const [csvInput, setCsvInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<{ success: boolean; message: string; count?: number; errorCount?: number } | null>(null)
+  const [result, setResult] = useState<{ success: boolean; message: string; count?: number; errorCount?: number; duplicateCount?: number } | null>(null)
   
   // File upload state
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
@@ -367,12 +367,18 @@ export default function JobImportPage() {
       }
       
       const createdJobs = await res.json()
-      
+      const skippedDuplicates = parseInt(res.headers.get('X-Skipped-Duplicates') || '0', 10)
+
+      const importMessage = createdJobs.length === 0 && skippedDuplicates > 0
+        ? `All ${skippedDuplicates} jobs are already in the database (duplicate source URLs).`
+        : `Successfully imported jobs!`
+
       setResult({
         success: true,
-        message: `Successfully imported jobs!`,
+        message: importMessage,
         count: createdJobs.length,
-        errorCount: invalidJobsCount
+        errorCount: invalidJobsCount,
+        duplicateCount: skippedDuplicates
       })
       
       // Reset inputs on success
@@ -468,9 +474,12 @@ export default function JobImportPage() {
             <p className="text-xs mt-0.5 opacity-90">{result.message}</p>
             {result.success && result.count !== undefined && (
               <div className="mt-2 text-xs font-medium flex flex-wrap gap-x-4 gap-y-1">
-                <span className="text-green-700">✓ {result.count} jobs added successfully.</span>
+                {result.count > 0 && <span className="text-green-700">✓ {result.count} jobs added successfully.</span>}
+                {result.duplicateCount && result.duplicateCount > 0 ? (
+                  <span className="text-amber-700">⚠ {result.duplicateCount} already exist in the database (duplicate URLs).</span>
+                ) : null}
                 {result.errorCount && result.errorCount > 0 ? (
-                  <span className="text-amber-700">⚠ {result.errorCount} invalid jobs were skipped.</span>
+                  <span className="text-red-600">✗ {result.errorCount} invalid rows skipped (missing required fields).</span>
                 ) : null}
               </div>
             )}

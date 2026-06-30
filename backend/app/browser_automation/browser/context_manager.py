@@ -1,6 +1,5 @@
 import os
 import json
-import asyncio
 import logging
 import redis.asyncio as redis
 from playwright.async_api import async_playwright, BrowserContext, Playwright
@@ -83,113 +82,30 @@ STEALTH_JS = """
 })();
 """
 
-# Whether to inject the custom STEALTH_JS above. DEFAULT OFF.
-#
-# Rationale (resolves the long-standing contradiction in this file): the
-# canvas-noise + chrome.runtime overrides in STEALTH_JS were found to make
-# Greenhouse's react-select widgets refuse to open (they detect the tampering
-# as a bot). Meanwhile the executor applies `playwright-stealth` v2 to every
-# page, which already patches navigator.webdriver / chrome.runtime / WebGL /
-# permissions in a way real sites tolerate. So by default we rely on
-# playwright-stealth and DON'T inject this script. Set INJECT_CUSTOM_STEALTH_JS=true
-# only for sites where you've verified it helps and doesn't break widgets.
-_INJECT_CUSTOM_STEALTH_JS = os.getenv("INJECT_CUSTOM_STEALTH_JS", "false").lower() == "true"
-
-
 class BrowserContextManager:
     def __init__(self):
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
         self._redis = None
         self._playwright = None
         self._browser = None
-        # Persistent (extension) context, when rektCaptcha mode is active. Must be
-        # tracked so close() can shut it down — in extension mode self._browser is
-        # None and the persistent Chrome process would otherwise leak.
-        self._persistent_ctx = None
-        # Serializes lazy playwright/browser launch so two concurrent get_context()
-        # calls don't each launch a browser and leak the first.
-        self._init_lock = asyncio.Lock()
 
     async def _get_redis(self):
         if self._redis is None:
-            kwargs = {
-                "decode_responses": True,
-                # Tolerate slow cold TLS handshakes to managed Redis (Upstash).
-                "socket_connect_timeout": 20,
-                "socket_timeout": 20,
-                "retry_on_timeout": True,
-            }
+            kwargs = {"decode_responses": True}
             if "rediss://" in self.redis_url:
                 kwargs["ssl_cert_reqs"] = "none"
             self._redis = redis.from_url(self.redis_url, **kwargs)
         return self._redis
 
-    async def _ensure_browser_launched(self) -> None:
-        """Launch the shared browser exactly once, even under concurrent callers.
-
-        Double-checked locking: two coroutines that both see ``self._browser is
-        None`` will serialize on ``self._init_lock``; the second sees the browser
-        already launched and returns. Without this, the second launch overwrote
-        ``self._browser`` and leaked the first browser process.
-        """
-        async with self._init_lock:
-            if self._browser is not None:
-                return
-            # Use the real installed Chrome (channel="chrome") to get an authentic TLS
-            # fingerprint that bypasses CloudFront/Akamai WAF bot detection which blocks
-            # bundled Chromium. headless=False avoids the HeadlessChrome UA token.
-            headless = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
-            # PLAYWRIGHT_SLOW_MO=250 inserts a 250ms pause between every Playwright
-            # action so a human can watch the run. Default 0 = full speed.
-            slow_mo_ms = int(os.getenv("PLAYWRIGHT_SLOW_MO", "0") or "0")
-            logger.info(
-                f"[Browser] Launching Chrome — headless={headless} "
-                f"slow_mo={slow_mo_ms}ms "
-                f"(set PLAYWRIGHT_HEADLESS=true to hide, "
-                f"PLAYWRIGHT_SLOW_MO=300 to slow down for watching)"
-            )
-            launch_kwargs = dict(
-                headless=headless,
-                slow_mo=slow_mo_ms,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-infobars",
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--disable-extensions-except=",
-                    "--start-maximized",
-                    # Force the window to the top-left of the primary monitor.
-                    "--window-position=0,0",
-                ],
-            )
-            # Prefer the real installed Chrome; fall back to bundled Chromium if unavailable
-            try:
-                self._browser = await self._playwright.chromium.launch(
-                    channel="chrome", **launch_kwargs
-                )
-                logger.info("[Browser] Using real Chrome (channel=chrome)")
-            except Exception as exc:
-                logger.warning(f"[Browser] Real Chrome unavailable ({exc}); falling back to bundled Chromium")
-                self._browser = await self._playwright.chromium.launch(**launch_kwargs)
-
     async def get_context(self, candidate_id: str, platform: str) -> BrowserContext:
         config: StealthConfig = get_stealth_config(candidate_id)
 
-        # Session cookie restore is best-effort. A transient Redis outage / DNS
-        # blip must NOT prevent launching the browser — proceed with a fresh
-        # context (cookies just won't be pre-restored this run).
+        redis_client = await self._get_redis()
         session_key = f"session:{candidate_id}:{platform}"
-        session_data = None
-        try:
-            redis_client = await self._get_redis()
-            session_data = await redis_client.get(session_key)
-        except Exception as exc:
-            logger.warning(f"[Browser] Redis unavailable for session restore ({exc}) — fresh context")
+        session_data = await redis_client.get(session_key)
 
         if self._playwright is None:
-            async with self._init_lock:
-                if self._playwright is None:
-                    self._playwright = await async_playwright().start()
+            self._playwright = await async_playwright().start()
 
         # ── rektCaptcha extension support ─────────────────────────────────────
         # When REKTCAPTCHA_EXT_PATH points at an unpacked extension directory
@@ -236,8 +152,7 @@ class BrowserContextManager:
                 persistent_ctx = await self._playwright.chromium.launch_persistent_context(
                     **launch_context_kwargs
                 )
-            if _INJECT_CUSTOM_STEALTH_JS:
-                await persistent_ctx.add_init_script(STEALTH_JS)
+            await persistent_ctx.add_init_script(STEALTH_JS)
             if session_data:
                 try:
                     cookies = json.loads(session_data)
@@ -249,7 +164,44 @@ class BrowserContextManager:
             return persistent_ctx
 
         if self._browser is None:
-            await self._ensure_browser_launched()
+            # Use the real installed Chrome (channel="chrome") to get an authentic TLS fingerprint
+            # that bypasses CloudFront/Akamai WAF bot detection which blocks bundled Chromium.
+            # headless=False avoids the HeadlessChrome user-agent token and related signals.
+            headless = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
+            # PLAYWRIGHT_SLOW_MO=250 inserts a 250ms pause between every Playwright
+            # action (click, fill, etc.) so a human can actually watch the run.
+            # Default 0 = full speed. Set when demoing or debugging visually.
+            slow_mo_ms = int(os.getenv("PLAYWRIGHT_SLOW_MO", "0") or "0")
+            logger.info(
+                f"[Browser] Launching Chrome — headless={headless} "
+                f"slow_mo={slow_mo_ms}ms "
+                f"(set PLAYWRIGHT_HEADLESS=true to hide, "
+                f"PLAYWRIGHT_SLOW_MO=300 to slow down for watching)"
+            )
+            launch_kwargs = dict(
+                headless=headless,
+                slow_mo=slow_mo_ms,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--disable-infobars",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-extensions-except=",
+                    "--start-maximized",
+                    # Force the window to the top-left of your primary monitor
+                    # so it doesn't end up off-screen on multi-monitor setups
+                    "--window-position=0,0",
+                ],
+            )
+            # Prefer the real installed Chrome; fall back to bundled Chromium if unavailable
+            try:
+                self._browser = await self._playwright.chromium.launch(
+                    channel="chrome", **launch_kwargs
+                )
+                logger.info("[Browser] Using real Chrome (channel=chrome)")
+            except Exception as exc:
+                logger.warning(f"[Browser] Real Chrome unavailable ({exc}); falling back to bundled Chromium")
+                self._browser = await self._playwright.chromium.launch(**launch_kwargs)
 
         # Proxy support — set PROXY_URL in .env for residential/rotating proxies.
         # Format: http://user:pass@host:port  or  socks5://user:pass@host:port
@@ -311,50 +263,28 @@ class BrowserContextManager:
 
         context = await self._browser.new_context(**context_kwargs)
 
-        # Stealth: by default rely on playwright-stealth (applied per-page in the
-        # executor). The custom STEALTH_JS is opt-in because its canvas-noise
-        # tampering breaks Greenhouse react-select widgets. See note above.
-        if _INJECT_CUSTOM_STEALTH_JS:
-            await context.add_init_script(STEALTH_JS)
+        # Inject stealth scripts
+        await context.add_init_script(STEALTH_JS)
 
         if session_data and not storage_state_used:
-            try:
-                cookies = json.loads(session_data)
-                await context.add_cookies(cookies)
-            except Exception as exc:
-                logger.warning(f"[Browser] Could not restore cookies from redis (corrupt JSON?): {exc}")
+            cookies = json.loads(session_data)
+            await context.add_cookies(cookies)
 
         return context
 
     async def save_session(self, candidate_id: str, platform: str, context: BrowserContext) -> None:
-        # Best-effort: failing to persist cookies must not fail the application.
-        try:
-            cookies = await context.cookies()
-            session_key = f"session:{candidate_id}:{platform}"
-            redis_client = await self._get_redis()
-            await redis_client.set(session_key, json.dumps(cookies), ex=604800)
-        except Exception as exc:
-            logger.warning(f"[Browser] Could not persist session cookies (non-fatal): {exc}")
+        cookies = await context.cookies()
+        session_key = f"session:{candidate_id}:{platform}"
+        redis_client = await self._get_redis()
+        await redis_client.set(session_key, json.dumps(cookies), ex=604800)
 
     async def destroy_context(self, context: BrowserContext) -> None:
         await context.close()
 
     async def close(self):
-        # Close the persistent (extension) context first — in rektCaptcha mode
-        # self._browser is None and this is the only handle to the Chrome process,
-        # so skipping it leaks the browser.
-        if self._persistent_ctx:
-            try:
-                await self._persistent_ctx.close()
-            except Exception as exc:
-                logger.debug(f"[Browser] persistent_ctx close failed: {exc}")
-            self._persistent_ctx = None
         if self._browser:
             await self._browser.close()
-            self._browser = None
         if self._playwright:
             await self._playwright.stop()
-            self._playwright = None
         if self._redis:
             await self._redis.close()
-            self._redis = None

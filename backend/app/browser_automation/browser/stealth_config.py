@@ -39,18 +39,13 @@ class StealthConfig(BaseModel):
     webdriver_patch: bool
 
 def get_stealth_config(candidate_id: str) -> StealthConfig:
-    # Per-candidate DETERMINISTIC fingerprint. A given candidate must present the
-    # same viewport / timezone / locale / UA on every run, otherwise an ATS that
-    # fingerprints across sessions sees one "person" whose device keeps changing
-    # — a strong bot signal. We seed a local RNG from a hash of candidate_id so
-    # the choice is stable per candidate but still varies between candidates.
-    seed = int(hashlib.sha256((candidate_id or "default").encode("utf-8")).hexdigest(), 16)
-    rng = random.Random(seed)
-    viewport = dict(rng.choice(VIEWPORTS))
-    timezone = rng.choice(TIMEZONES)
-    locale = rng.choice(["en-US", "en-GB", "en-CA", "en-AU"])
-    user_agent = rng.choice(USER_AGENTS)
-
+    width = random.randint(1280, 1920)
+    height = random.randint(800, 1080)
+    viewport = {"width": width, "height": height}
+    timezone = random.choice(TIMEZONES)
+    locale = random.choice(["en-US", "en-GB", "en-CA", "en-AU"])
+    user_agent = random.choice(USER_AGENTS)
+    
     return StealthConfig(
         viewport=viewport,
         user_agent=user_agent,

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { KPICard } from '@/components/dashboard/KPICard'
-import { Search, Send, Target, Award, Briefcase, Clock, Sparkles, RefreshCw, Play, CheckCircle, AlertCircle, X } from 'lucide-react'
+import { Search, Send, Target, Award, Briefcase, Clock, Sparkles, RefreshCw, Play, CheckCircle, AlertCircle, X, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from '@/lib/utils'
 
 export default function AdminPage() {
@@ -14,6 +14,8 @@ export default function AdminPage() {
   const [matchingResult, setMatchingResult] = useState<any>(null)
   const [matchingError, setMatchingError] = useState<string | null>(null)
   const [showModal, setShowModal] = useState(false)
+  const [isFailingStuck, setIsFailingStuck] = useState(false)
+  const [failStuckResult, setFailStuckResult] = useState<string | null>(null)
   
   const { data: candidates, isLoading: candidatesLoading } = useQuery({
     queryKey: ['admin-candidates'],
@@ -36,6 +38,21 @@ export default function AdminPage() {
       setMatchingError(msg)
     } finally {
       setIsMatchingRunning(false)
+    }
+  }
+
+  const handleFailStuck = async () => {
+    if (!confirm('Force-fail ALL pending/queued applications created in the last 5 hours?')) return
+    setIsFailingStuck(true)
+    setFailStuckResult(null)
+    try {
+      const res = await fetch('/api/applications/admin/fail-stuck?hours=5', { method: 'POST' })
+      const data = await res.json()
+      setFailStuckResult(`Killed ${data.failed_count} stuck application(s) from the last 5 hours.`)
+    } catch (err: any) {
+      setFailStuckResult(`Error: ${err.message}`)
+    } finally {
+      setIsFailingStuck(false)
     }
   }
 
@@ -97,6 +114,17 @@ export default function AdminPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
+          {/* Fail stuck applications */}
+          <button
+            onClick={handleFailStuck}
+            disabled={isFailingStuck}
+            title="Force-fail all FOUND/QUEUED applications stuck in the last 5 hours"
+            className="flex items-center gap-2 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 disabled:opacity-50 text-red-500 font-medium text-xs rounded-lg transition-colors"
+          >
+            {isFailingStuck ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+            Fail Stuck (5h)
+          </button>
+
           {/* Manual Matching Trigger Control Panel */}
           <div className="flex items-center gap-3 bg-bg-secondary border border-bg-border p-3 rounded-xl shadow-sm">
             <div className="text-xs font-semibold text-text-muted mr-1">Manual Matching:</div>
@@ -139,6 +167,16 @@ export default function AdminPage() {
           <AlertCircle className="w-5 h-5 shrink-0" />
           <div className="flex-1 font-medium">{matchingError}</div>
           <button onClick={() => setMatchingError(null)} className="hover:text-red-400">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
+
+      {failStuckResult && (
+        <div className="flex items-center gap-3 bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl text-sm text-amber-600 animate-in slide-in-from-top duration-300">
+          <CheckCircle className="w-5 h-5 shrink-0" />
+          <div className="flex-1 font-medium">{failStuckResult}</div>
+          <button onClick={() => setFailStuckResult(null)} className="hover:text-amber-500">
             <X className="w-4 h-4" />
           </button>
         </div>

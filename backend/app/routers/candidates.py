@@ -122,15 +122,23 @@ async def upload_candidate_resume(
     supabase_name = f"{candidate_id}_base_{uuid.uuid4().hex[:8]}.pdf"
     file_url: str | None = None
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        try:
-            uploaded_url = await _upload(tmp.name, "resume", supabase_name)
-            if uploaded_url and uploaded_url.startswith("http"):
-                file_url = uploaded_url
-        except Exception:
-            pass
+    import os
+    # Create temp file, close it immediately to release Windows file lock before uploading
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(content)
+        # Upload now that the file handle is closed
+        uploaded_url = await _upload(temp_path, "resume", supabase_name, clean_local=True)
+        if uploaded_url and uploaded_url.startswith("http"):
+            file_url = uploaded_url
+    finally:
+        # Ensure cleanup in case upload failed or didn't delete the file
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
     if not file_url:
         raise HTTPException(status_code=500, detail="Failed to upload resume to Supabase. Check server logs for details.")
@@ -204,37 +212,39 @@ class ApplyRequest(BaseModel):
     max_apps: int = 10
 
 @router.post("/{candidate_id}/apply")
-@limiter.limit("10/minute")
 async def trigger_apply(request: Request, candidate_id: str, request_body: ApplyRequest, db: AsyncSession = Depends(get_db)):
+    import logging as _bg_logging
+    _bg_log = _bg_logging.getLogger("dynamic_apply.trigger")
+
     try:
         candidate_uuid = uuid.UUID(candidate_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid candidate UUID")
-    # Verify candidate exists
+
     result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     from app.tasks.dynamic_apply import _run
     import asyncio
-    import logging as _bg_logging
-
-    _bg_log = _bg_logging.getLogger("dynamic_apply.trigger")
 
     # Run directly in background on the same event loop (bypassing Celery due to Upstash Redis limitations).
-    # Since _run is async, running it in the same loop prevents "attached to a different loop" database pool errors.
     async def run_in_background():
         _bg_log.info(f"[BG] Auto-apply task started: candidate={candidate_id} max_apps={request_body.max_apps}")
         try:
-            result = await _run(candidate_id, request_body.max_apps)
-            _bg_log.info(f"[BG] Auto-apply completed: {result}")
+            bg_result = await _run(candidate_id, request_body.max_apps)
+            _bg_log.info(f"[BG] Auto-apply completed: {bg_result}")
         except Exception as e:
             import traceback
             _bg_log.error(f"[BG] Auto-apply FAILED for candidate={candidate_id}: {e}")
             _bg_log.error(traceback.format_exc())
 
-    asyncio.create_task(run_in_background())
+    try:
+        asyncio.create_task(run_in_background())
+    except Exception as e:
+        _bg_log.error(f"[Apply] Failed to schedule background task for candidate={candidate_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to start apply pipeline: {e}")
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
 

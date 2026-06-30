@@ -1,0 +1,8 @@
+{
+  "name": "bd-automator-module2",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "postinstall": "npm install --prefix scraper"
+  }
+}

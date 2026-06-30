@@ -38,35 +38,6 @@ class LLMUnavailable(RuntimeError):
     """Raised when the LLM cannot be used (no key, SDK missing, repeated bad JSON)."""
 
 
-# Sentinel meaning "this key's client could not be built — skip to the next key".
-_SKIP_KEY = object()
-
-# Substrings identifying a TRANSIENT network/DNS failure that is worth retrying
-# on the same key (vs. an auth/credit/quota error that means roll to next key).
-_TRANSIENT_NET_MARKERS = (
-    "getaddrinfo failed",
-    "temporary failure in name resolution",
-    "all connection attempts failed",
-    "connection reset",
-    "connection aborted",
-    "connection refused",
-    "timed out",
-    "timeout connecting",
-    "read timeout",
-    "connecterror",
-    "connecttimeout",
-    "[errno 11001]",
-)
-
-
-def _is_transient_network_error(msg: str) -> bool:
-    m = (msg or "").lower()
-    # A 429 rate-limit is handled separately (retry-after); don't treat as net error.
-    if "429" in m or "rate_limit" in m:
-        return False
-    return any(marker in m for marker in _TRANSIENT_NET_MARKERS)
-
-
 # Defaults are the native Anthropic model IDs. When we route through OpenRouter
 # the model id is translated to its OpenRouter form (`anthropic/<id>`) on the fly.
 _DEFAULT_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
@@ -291,12 +262,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str],
-        client=None,
     ) -> str:
-        # Concurrency-safe: the Anthropic client is passed in explicitly per
-        # call rather than read from self._anthropic. Two coroutines sharing
-        # the process-global singleton must NEVER mutate shared client state.
-        anthropic_client = client or self._anthropic
         model = _DEFAULT_VISION_MODEL if image_bytes else self.model_name
         kwargs: dict = {
             "model": model,
@@ -320,7 +286,7 @@ class ClaudeClient:
                 kwargs["system"] = system
         try:
             resp = await asyncio.wait_for(
-                anthropic_client.messages.create(**kwargs), timeout=timeout_s
+                self._anthropic.messages.create(**kwargs), timeout=timeout_s
             )
         except asyncio.TimeoutError as exc:
             raise LLMUnavailable(f"Claude call timed out after {timeout_s}s") from exc
@@ -356,9 +322,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str],
-        key: Optional[str] = None,
     ) -> str:
-        api_key = key or self.api_key
         model = self._openrouter_model(
             _DEFAULT_VISION_MODEL if image_bytes else self.model_name
         )
@@ -376,7 +340,7 @@ class ClaudeClient:
             "messages": messages,
         }
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
             # Optional but recommended by OpenRouter for analytics / leaderboard
             "HTTP-Referer": os.getenv("OPENROUTER_REFERER", "https://bd-automator.local"),
@@ -427,7 +391,6 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str],
-        key: Optional[str] = None,
     ) -> str:
         """Groq chat-completions API. OpenAI-compatible; only the base URL and
         model names differ. Vision turns route to Llama 4 vision; text turns to
@@ -440,7 +403,6 @@ class ClaudeClient:
         in loop.py and respecting the 429 retry-after, this lets a full
         form-fill session fit inside the free quota.
         """
-        api_key = key or self.api_key
         groq_base = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
         if image_bytes:
             model = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
@@ -477,7 +439,7 @@ class ClaudeClient:
             "messages": messages,
         }
         headers = {
-            "Authorization": f"Bearer {api_key}",
+            "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
         try:
@@ -522,9 +484,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str],
-        key: Optional[str] = None,
     ) -> str:
-        api_key = key or self.api_key
         model = _GEMINI_VISION_MODEL if image_bytes else _GEMINI_TEXT_MODEL
         parts: list = []
         if image_bytes:
@@ -536,31 +496,17 @@ class ClaudeClient:
                 }
             })
         parts.append({"text": prompt})
-        gen_config: dict = {
-            "temperature": temperature,
-            "maxOutputTokens": _MAX_TOKENS_VISION if image_bytes else _MAX_TOKENS_TEXT,
-            "responseMimeType": "application/json" if not image_bytes else "text/plain",
-        }
-        # Disable Gemini 2.5 "thinking" for these calls. The agent emits short
-        # single-action / classification JSON; with thinking ON, gemini-2.5-flash
-        # spends most of maxOutputTokens on hidden reasoning and TRUNCATES the
-        # JSON mid-string (observed: vision classify cut at 32 visible tokens →
-        # "Claude returned non-JSON"). thinkingBudget=0 makes the model emit the
-        # full structured answer immediately — faster, cheaper, parseable.
-        # Only applies to 2.5 models (the param errors on older ones).
-        if "2.5" in model or "2-5" in model:
-            try:
-                _budget = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
-            except ValueError:
-                _budget = 0
-            gen_config["thinkingConfig"] = {"thinkingBudget": _budget}
         payload = {
             "contents": [{"role": "user", "parts": parts}],
-            "generationConfig": gen_config,
+            "generationConfig": {
+                "temperature": temperature,
+                "maxOutputTokens": _MAX_TOKENS_VISION if image_bytes else _MAX_TOKENS_TEXT,
+                "responseMimeType": "application/json" if not image_bytes else "text/plain",
+            },
         }
         if system:
             payload["systemInstruction"] = {"parts": [{"text": system}]}
-        url = f"{_GEMINI_BASE}/models/{model}:generateContent?key={api_key}"
+        url = f"{_GEMINI_BASE}/models/{model}:generateContent?key={self.api_key}"
         try:
             async with httpx.AsyncClient(timeout=timeout_s) as client:
                 r = await client.post(url, json=payload)
@@ -609,52 +555,34 @@ class ClaudeClient:
         for _idx, key in enumerate(keys_snapshot):
             provider = _detect_provider(key)
             try:
-                # CONCURRENCY-SAFE: the per-call key/client is passed as an
-                # explicit argument. We never mutate self.api_key / self._anthropic
-                # here, so two coroutines sharing the get_llm() singleton cannot
-                # clobber each other's provider mid-flight (the root cause of
-                # random "wrong key / wrong client" failures under parallel
-                # applications).
-                # Transient network/DNS blips (getaddrinfo, connection reset,
-                # connect timeout) retry the SAME key a few times before rolling
-                # on. The primary provider (Gemini) is the one that must survive a
-                # momentary DNS hiccup — otherwise a single blip drops the agent to
-                # dead fallback keys (no-credit Anthropic / unreachable OpenRouter)
-                # and the whole step fails with no LLM, stalling the AgentLoop.
-                async def _dispatch():
-                    if provider == "openrouter":
-                        return await self._call_openrouter(prompt, image_bytes, temperature, timeout_s, system, key=key)
-                    elif provider == "groq":
-                        return await self._call_groq(prompt, image_bytes, temperature, timeout_s, system, key=key)
-                    elif provider == "gemini":
-                        return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system, key=key)
-                    else:
-                        reuse_primary = bool(self._keys) and key == self._keys[0] and self._anthropic is not None
-                        anthropic_client = self._anthropic if reuse_primary else self._make_anthropic_client(key)
-                        if anthropic_client is None:
-                            return _SKIP_KEY
-                        return await self._call_anthropic(prompt, image_bytes, temperature, timeout_s, system, client=anthropic_client)
-
-                _skip = False
-                for _net_try in range(1, 4):
+                if provider == "openrouter":
+                    # Temporarily swap key for this call
+                    orig_key, self.api_key = self.api_key, key
                     try:
-                        r = await _dispatch()
-                        if r is _SKIP_KEY:
-                            _skip = True
-                        else:
-                            return r
-                        break
-                    except LLMUnavailable as _net_exc:
-                        if _net_try < 3 and _is_transient_network_error(str(_net_exc)):
-                            logger.warning(
-                                f"[Claude] transient network error on {provider} "
-                                f"(try {_net_try}/3): {str(_net_exc)[:70]} — retrying same key"
-                            )
-                            await asyncio.sleep(1.0 * _net_try)
-                            continue
-                        raise
-                if _skip:
-                    continue
+                        return await self._call_openrouter(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                elif provider == "groq":
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_groq(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                elif provider == "gemini":
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                else:
+                    anthropic_client = self._anthropic if key == self._keys[0] else self._make_anthropic_client(key)
+                    if anthropic_client is None:
+                        continue
+                    orig_client, self._anthropic = self._anthropic, anthropic_client
+                    try:
+                        return await self._call_anthropic(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self._anthropic = orig_client
             except LLMUnavailable as exc:
                 msg = str(exc)
                 # Permanently drop keys whose failure is NOT transient:

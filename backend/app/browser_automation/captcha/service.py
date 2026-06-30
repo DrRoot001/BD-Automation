@@ -298,28 +298,6 @@ class CaptchaService:
     # Extract site_key from page
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _verify_recaptcha_committed(self, page: Page) -> bool:
-        """True if reCAPTCHA v2 actually committed — either the response token is
-        populated or the anchor checkbox shows the checked state. Used to reject
-        false-positive "checkbox_passed" sentinels from the AI solver."""
-        try:
-            token = await page.evaluate(
-                "() => (document.getElementById('g-recaptcha-response')||{}).value || ''"
-            )
-            if token and len(token) > 20:
-                return True
-        except Exception:
-            pass
-        try:
-            for fr in page.frames:
-                src = fr.url or ""
-                if "recaptcha" in src and "bframe" not in src:
-                    if await fr.locator(".recaptcha-checkbox-checked").count() > 0:
-                        return True
-        except Exception:
-            pass
-        return False
-
     async def _extract_site_key(self, page: Page, captcha_type: str) -> Optional[str]:
         if captcha_type == "recaptcha_v2":
             el = await page.query_selector(".g-recaptcha")
@@ -504,27 +482,16 @@ class CaptchaService:
             ai_solver = AICaptchaSolver()
             ai_sol = await ai_solver.solve(page, captcha_type, max_attempts=2)
             if ai_sol.success:
-                is_sentinel = ai_sol.token in ("checkbox_passed", "grid_solved", None, "")
-                if ai_sol.token and captcha_type == "recaptcha_v2" and not is_sentinel:
+                logger.info(f"[CAPTCHA] AI solver succeeded type={captcha_type} "
+                            f"token={(ai_sol.token or '')[:24]!r}")
+                if ai_sol.token and captcha_type == "recaptcha_v2" and ai_sol.token not in (
+                    "checkbox_passed", "grid_solved",
+                ):
                     # Real token from provider — inject. (Our AI flow returns
                     # sentinel strings instead because Google's token isn't
                     # exposed to scripts; the DOM widget commits on its own.)
                     await self._inject_recaptcha_token(page, ai_sol.token)
-                # VERIFY before trusting a sentinel: the AI saying "checkbox_passed"
-                # is meaningless unless the widget actually committed. If neither a
-                # real token nor a checked checkbox is present we DON'T report
-                # success — we fall through to Whisper / paid provider. Otherwise a
-                # false "solved" lets the submit proceed and fail with no
-                # captcha-attributable error.
-                if captcha_type == "recaptcha_v2" and is_sentinel:
-                    if await self._verify_recaptcha_committed(page):
-                        logger.info("[CAPTCHA] AI solver passed and widget committed (verified)")
-                        return ai_sol
-                    logger.info("[CAPTCHA] AI claimed success but widget NOT committed — falling through")
-                else:
-                    logger.info(f"[CAPTCHA] AI solver succeeded type={captcha_type} "
-                                f"token={(ai_sol.token or '')[:24]!r}")
-                    return ai_sol
+                return ai_sol
             logger.info(f"[CAPTCHA] AI solver did not succeed; trying audio-challenge (Whisper)…")
         except Exception as exc:
             logger.warning(f"[CAPTCHA] AI solver raised (non-fatal): {exc}")
@@ -560,14 +527,6 @@ class CaptchaService:
                     logger.debug("[CAPTCHA] no reCAPTCHA v2 widget on page; skipping Whisper")
             except Exception as exc:
                 logger.warning(f"[CAPTCHA] Whisper audio solver raised (non-fatal): {exc}")
-
-        # The keyless "ai" provider has no paid backend — the attempt loop below
-        # can only fail (and log noise) for it. The free AI + Whisper passes above
-        # are all it has, so report their outcome now.
-        if self.provider == "ai":
-            logger.info("[CAPTCHA] keyless 'ai' provider — free AI+Whisper passes exhausted; no paid fallback")
-            return CaptchaSolution(captcha_type=captcha_type, success=False,  # type: ignore[arg-type]
-                                   solve_time_seconds=0, cost_usd=0)
 
         last: Optional[CaptchaSolution] = None
 

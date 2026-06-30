@@ -69,35 +69,33 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
         SELECT a.id, a.status, COALESCE(MAX(h.created_at), a.created_at) as last_updated
         FROM applications a
         LEFT JOIN application_history h ON h.application_id = a.id
-        WHERE a.status IN ('QUEUED', 'APPLICATION_STARTED', 'FORM_COMPLETED')
+        WHERE a.status IN ('FOUND', 'QUEUED', 'APPLICATION_STARTED', 'FORM_COMPLETED')
         GROUP BY a.id, a.status, a.created_at
     """)
-    
+
     result = await session.execute(stmt)
     rows = result.fetchall()
-    
+
     stuck_ids_and_statuses = []
-    
+
     for row in rows:
         app_id, status, last_updated = row
-        
+
         if last_updated.tzinfo is None:
             last_updated = last_updated.replace(tzinfo=timezone.utc)
-            
-        if status == "QUEUED":
-            # LLM scoring + resume tailoring can take 5–20 min;
-            # 60 min prevents watchdog from killing apps before they reach APPLICATION_STARTED.
-            threshold_min = 60
+
+        if status == "FOUND":
+            # FOUND means the orchestration pipeline is running. 30 min is generous
+            # for LLM scoring + tailoring; if it's still FOUND after that, the pipeline died.
+            threshold_min = 30
+        elif status == "QUEUED":
+            # Must match get_active_application_count's 15-min stale threshold exactly.
+            # The watchdog runs before the limit check inside run_matching_for_candidate,
+            # so any QUEUED app ≥ 15 min is killed here before active_count is computed.
+            # This prevents stale QUEUED jobs from appearing as "limit reached".
+            threshold_min = 15
         else:
-            # APPLICATION_STARTED / FORM_COMPLETED == a browser run is in flight.
-            # The Celery task hard limit is 60 min (task_time_limit=3600). A
-            # legitimate long run (login + OTP + multi-step ATS + captcha) can
-            # approach that. The OLD 30-min threshold marked live runs FAILED
-            # mid-flight, then the executor's own SUBMITTED PATCH landed after —
-            # producing conflicting terminal states. Set the threshold ABOVE the
-            # hard limit so the watchdog only ever catches a worker that Celery
-            # already killed (i.e. genuinely dead), never one still working.
-            threshold_min = 70
+            threshold_min = 30
             
         time_limit = now - timedelta(minutes=threshold_min)
         
@@ -123,9 +121,10 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             continue
             
         old_status = app.status
+        logger.warning(f"[Watchdog] Killing stuck application {app.id} (status={old_status}, last_updated={last_updated})")
         app.status = "FAILED"
         app.failure_reason = "INFRA_ERROR"
-        app.error_message = "automation timeout — worker died or never picked up task"
+        app.error_message = f"watchdog: stuck in {old_status} since {last_updated} — worker crashed or pipeline timed out"
         
         history = ApplicationHistory(
             application_id=app.id,
@@ -149,3 +148,48 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
     if stuck_count > 0:
         await session.commit()
         logger.info(f"[Watchdog] Successfully recovered {stuck_count} stuck applications.")
+
+
+async def fail_applications_in_window_async(session: AsyncSession, hours: int = 5) -> int:
+    """Admin action: force-fail all non-terminal applications created in the last N hours."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    stmt = select(Application).where(
+        Application.status.in_(["FOUND", "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED"]),
+        Application.created_at >= cutoff
+    )
+    result = await session.execute(stmt)
+    apps = result.scalars().all()
+
+    count = 0
+    for app in apps:
+        old_status = app.status
+        logger.warning(f"[AdminFail] Force-failing application {app.id} (status={old_status}, created={app.created_at})")
+        app.status = "FAILED"
+        app.failure_reason = "INFRA_ERROR"
+        app.error_message = f"admin: force-failed via admin endpoint (was {old_status}, created within {hours}h window)"
+
+        history = ApplicationHistory(
+            application_id=app.id,
+            from_status=old_status,
+            to_status="FAILED",
+            meta_data={"info": f"Force-failed by admin (created_at={app.created_at}, was in {old_status})"}
+        )
+        session.add(history)
+        count += 1
+
+        try:
+            from app.tasks.browser_automation import publish_status_changed
+            await publish_status_changed(
+                application_id=str(app.id),
+                from_status=old_status,
+                to_status="FAILED"
+            )
+        except Exception as ev_err:
+            logger.error(f"[AdminFail] Failed to publish event for {app.id}: {ev_err}")
+
+    if count > 0:
+        await session.commit()
+        logger.info(f"[AdminFail] Force-failed {count} applications from the last {hours} hours.")
+
+    return count

@@ -104,38 +104,21 @@ async def _transcribe(audio_path: str) -> str:
 
 
 async def _download_audio(url: str, dest_dir: Optional[str] = None) -> Optional[str]:
-    """Download the reCAPTCHA audio MP3 to a UNIQUE temp file. Returns the path.
-
-    A fixed filename ("recaptcha_audio.mp3") races when two applications solve
-    captchas concurrently — one overwrites the other's audio and the wrong clip
-    gets transcribed. Each call now gets its own NamedTemporaryFile; the caller
-    is responsible for deleting it after transcription.
-    """
+    """Download the reCAPTCHA audio MP3 to a temp file. Returns the path."""
     if not url:
         return None
+    dest = Path(dest_dir or tempfile.gettempdir()) / "recaptcha_audio.mp3"
     try:
-        fd, dest = tempfile.mkstemp(suffix=".mp3", dir=dest_dir)
-        os.close(fd)
         async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
             r = await client.get(url)
         if r.status_code != 200 or not r.content:
             logger.warning(f"[audio-captcha] audio download HTTP {r.status_code}")
-            _safe_unlink(dest)
             return None
-        Path(dest).write_bytes(r.content)
-        return dest
+        dest.write_bytes(r.content)
+        return str(dest)
     except Exception as exc:
         logger.warning(f"[audio-captcha] audio download failed: {exc}")
         return None
-
-
-def _safe_unlink(path: Optional[str]) -> None:
-    if not path:
-        return
-    try:
-        os.remove(path)
-    except Exception:
-        pass
 
 
 async def solve_recaptcha_v2_via_audio(
@@ -299,8 +282,6 @@ async def solve_recaptcha_v2_via_audio(
         except Exception as exc:
             last_err = f"transcription_failed: {exc}"
             continue
-        finally:
-            _safe_unlink(audio_path)
         if not transcript:
             last_err = "empty_transcript"
             continue

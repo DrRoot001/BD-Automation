@@ -110,44 +110,29 @@ async def _redis_subscriber() -> None:
     import ssl as _ssl
 
     settings = get_settings()
-    # Managed Redis (Upstash) closes idle pubsub sockets, and a blocking
-    # listen() read raised "Timeout reading from …:6379" every few seconds,
-    # forcing a noisy reconnect loop. Fixes: keepalive + periodic health checks
-    # keep the socket warm, and we POLL with get_message(timeout=...) which
-    # returns None on idle instead of raising — so an idle window is silent.
-    kwargs: dict = {
-        "decode_responses": True,
-        "socket_keepalive": True,
-        "health_check_interval": 30,
-        "socket_connect_timeout": 20,
-    }
+    kwargs: dict = {"decode_responses": True}
     if "rediss://" in settings.redis_url:
         kwargs["ssl_cert_reqs"] = "none"
 
     while True:
         try:
             async with aioredis.from_url(settings.redis_url, **kwargs) as r:
-                pubsub = r.pubsub(ignore_subscribe_messages=True)
+                pubsub = r.pubsub()
                 await pubsub.subscribe(*SUBSCRIBED_CHANNELS)
                 logger.info(f"[WS] Subscribed to {len(SUBSCRIBED_CHANNELS)} Redis channels")
-                while True:
-                    # timeout=15 → returns None on an idle window (no exception),
-                    # which keeps the loop quiet instead of error-reconnecting.
-                    message = await pubsub.get_message(timeout=15)
-                    if message is None:
-                        continue
-                    if message.get("type") == "message":
+                async for message in pubsub.listen():
+                    if message["type"] == "message":
                         raw = message.get("data", "")
                         try:
                             payload = json.loads(raw)
                             frame = json.dumps(payload)
-
+                            
                             # Scope by candidate owner if applicable
                             candidate_id = payload.get("data", {}).get("candidate_id")
                             owner_id = None
                             if candidate_id:
                                 owner_id = await _get_candidate_owner(candidate_id)
-
+                                
                             await manager.broadcast(frame, candidate_owner_id=owner_id)
                         except Exception:
                             pass
@@ -155,7 +140,7 @@ async def _redis_subscriber() -> None:
             logger.info("[WS] Redis subscriber cancelled")
             return
         except Exception as exc:
-            logger.warning(f"[WS] Redis subscriber reconnecting after: {exc}")
+            logger.error(f"[WS] Redis subscriber error: {exc} — retrying in 5s")
             await asyncio.sleep(5)
 
 

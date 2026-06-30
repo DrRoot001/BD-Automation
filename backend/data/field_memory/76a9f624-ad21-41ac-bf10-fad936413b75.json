@@ -79,6 +79,14 @@
     "source": "agent_loop",
     "value": "No"
   },
+  "asian (not hispanic or latino)": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Asian (Not Hispanic or Latino)",
+    "last_seen": 1782768549,
+    "source": "agent_loop",
+    "value": "Asian (Not Hispanic or Latino)"
+  },
   "by submitting my application, i acknowledge that i have read and understand verc": {
     "count": 7,
     "field_type": "text",
@@ -317,6 +325,14 @@
     "label": "Phone",
     "last_seen": 1782220085,
     "source": "resume_parse",
+    "value": "+13410084746"
+  },
+  "phone number": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Phone Number",
+    "last_seen": 1782768989,
+    "source": "profile_direct",
     "value": "+13410084746"
   },
   "please double-check all the information provided above. ensuring accuracy is cru": {

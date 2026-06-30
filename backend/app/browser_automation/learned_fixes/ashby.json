@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "ats": "ashby",
+    "last_updated": 1782744704
+  },
+  "apply_button": [
+    "a[href*='/application']"
+  ]
+}

@@ -52,19 +52,6 @@ def _supabase_anon_key() -> str:
     )
 
 
-def _supabase_write_key() -> str:
-    """Key used for Storage WRITES. Prefer the service-role key — uploads with the
-    anon key are rejected by row-level-security ("new row violates RLS policy"),
-    which is exactly why screenshots failed to persist to the dashboard. The
-    service-role key is a server-side secret that bypasses RLS; fall back to the
-    anon key only if it isn't configured."""
-    return (
-        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-        or os.getenv("SUPABASE_SERVICE_KEY")
-        or _supabase_anon_key()
-    )
-
-
 def _supabase_project_url() -> Optional[str]:
     """Derive https://<project>.supabase.co from SUPABASE_URL or DATABASE_URL."""
     explicit = os.getenv("SUPABASE_URL") or os.getenv("NEXT_PUBLIC_SUPABASE_URL")
@@ -83,18 +70,18 @@ def _supabase_project_url() -> Optional[str]:
 async def _upload_to_supabase(local_path: str, bucket: str, remote_name: str) -> Optional[str]:
     """PUT the file to Supabase storage. Returns the public URL on success."""
     project_url = _supabase_project_url()
-    write_key = _supabase_write_key()
-    if not project_url or not write_key:
+    anon_key = _supabase_anon_key()
+    if not project_url or not anon_key:
         logger.warning(
             f"[Screenshot] Supabase upload skipped — "
-            f"project_url={bool(project_url)} write_key={bool(write_key)}"
+            f"project_url={bool(project_url)} anon_key={bool(anon_key)}"
         )
         return None
 
     upload_url = f"{project_url}/storage/v1/object/{bucket}/{remote_name}"
     headers = {
-        "Authorization": f"Bearer {write_key}",
-        "apikey": write_key,
+        "Authorization": f"Bearer {anon_key}",
+        "apikey": anon_key,
         "Content-Type": "image/png",
         "x-upsert": "true",  # overwrite if exists
     }

@@ -615,10 +615,10 @@ async def fetch_verification_code(
 
 
 async def _load_refresh_token(candidate_id: str) -> Optional[str]:
-    """Read `candidates.google_refresh_token` via the existing async session."""
+    """Read `candidates.google_refresh_token` via a NullPool session safe for Celery workers."""
     try:
         from sqlalchemy import select
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from app.models.candidate import Candidate
     except Exception as exc:
         logger.warning(f"[verify] cannot import DB session: {exc}")
@@ -630,22 +630,13 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
                 candidate_id = uuid.UUID(candidate_id)
             except ValueError:
                 pass
-        async with AsyncSessionLocal() as s:
+        async with task_session() as s:
             row = (
                 await s.execute(select(Candidate).where(Candidate.id == candidate_id))
             ).scalar_one_or_none()
             if not row:
                 return None
-            token = row.google_refresh_token or None
-            if not token:
-                return None
-            # Stored encrypted (Fernet) in production — decrypt before use.
-            # decrypt_token() is a safe no-op for plaintext/dev values.
-            try:
-                from app.services.crypto import decrypt_token
-                return decrypt_token(token)
-            except Exception:
-                return token
+            return row.google_refresh_token or None
     except Exception as exc:
         # IMPORTANT: a query failure (closed event loop, transient DB drop, pool
         # exhaustion) is NOT the same as "no token". Raise a distinct sentinel

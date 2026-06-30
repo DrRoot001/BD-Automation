@@ -205,43 +205,23 @@ class RateLimiter:
 
     async def _get_redis(self):
         if self._redis is None:
-            kwargs = {
-                # Managed Redis (Upstash/ElastiCache) cold TLS handshakes can take
-                # several seconds, esp. cross-region. Without explicit connect
-                # timeouts the default is short and a slow handshake raises
-                # "Timeout connecting to server", failing the whole application.
-                "socket_connect_timeout": 20,
-                "socket_timeout": 20,
-                "retry_on_timeout": True,
-            }
+            kwargs = {}
             if "rediss://" in self.redis_url:
                 kwargs["ssl_cert_reqs"] = "none"
             self._redis = redis.from_url(self.redis_url, **kwargs)
         return self._redis
 
     async def check_and_increment(self, platform: str, candidate_id: str) -> bool:
-        # Globally disable-able via DISABLE_APPLICATION_LIMITS (defaults DISABLED
-        # so testing isn't throttled). Set DISABLE_APPLICATION_LIMITS=false to
-        # restore the per-platform hourly rate limiter.
-        if os.getenv("DISABLE_APPLICATION_LIMITS", "true").lower() in ("1", "true", "yes", "on"):
-            return True
-        # Rate limiting is a best-effort safety throttle, NOT a hard gate. A
-        # transient Redis outage / DNS blip must NOT fail a real application —
-        # degrade open (allow) and log, rather than raising and aborting the run.
-        try:
-            r = await self._get_redis()
-            key = f"rate_limit:{candidate_id}:{platform}"
-            limit = self._limits.get(platform.lower(), self._default_limit)
-            count = await r.incr(key)
-            if count == 1:
-                await r.expire(key, 3600)
-            if count > limit:
-                logger.warning(f"Rate limit exceeded for {candidate_id}@{platform} (count={count}, limit={limit})")
-                return False
-            return True
-        except Exception as exc:
-            logger.warning(f"[RateLimiter] Redis unavailable ({exc}) — allowing (degrade-open)")
-            return True
+        r = await self._get_redis()
+        key = f"rate_limit:{candidate_id}:{platform}"
+        limit = self._limits.get(platform.lower(), self._default_limit)
+        count = await r.incr(key)
+        if count == 1:
+            await r.expire(key, 3600)
+        if count > limit:
+            logger.warning(f"Rate limit exceeded for {candidate_id}@{platform} (count={count}, limit={limit})")
+            return False
+        return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -306,28 +286,11 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
         if not headers:
             logger.warning("[M4] Supabase URL detected but no anon key found — download may fail")
 
-    # Retry transient network/DNS failures. A momentary getaddrinfo / connection
-    # blip on the resume/cover-letter CDN must NOT abort the whole application —
-    # the pre-flight raises FileNotFoundError on a None return, which marks the
-    # app FAILED. Three quick attempts with backoff smooth over cold-DNS hiccups.
-    resp = None
-    last_exc: Optional[Exception] = None
-    for attempt in range(1, 4):
-        try:
-            async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
-                resp = await client.get(url_or_path, headers=headers)
-                resp.raise_for_status()
-            break
-        except Exception as exc:
-            last_exc = exc
-            logger.warning(f"[M4] file download attempt {attempt}/3 failed for {url_or_path}: {exc}")
-            if attempt < 3:
-                await asyncio.sleep(1.5 * attempt)
-    if resp is None:
-        logger.error(f"Failed to download {url_or_path} after 3 attempts: {last_exc}")
-        return None
-
     try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            resp = await client.get(url_or_path, headers=headers)
+            resp.raise_for_status()
+
         filename = None
         parsed = urlparse(url_or_path)
         if parsed.path:
@@ -388,36 +351,6 @@ class ApplicationExecutor:
             return time.monotonic() - start_time
 
         try:
-            # ── IDEMPOTENCY GUARD ────────────────────────────────────────────
-            # A Celery retry (or a duplicate dispatch) must never re-submit an
-            # application that already advanced past submission. If the DB shows
-            # the app in SUBMITTED or any post-submit state, return success
-            # immediately instead of opening a browser and filing it twice.
-            try:
-                api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
-                async with httpx.AsyncClient(timeout=10) as client:
-                    cur = await client.get(f"{api_base}/applications/{package.application_id}")
-                if cur.status_code == 200:
-                    cur_status = (cur.json() or {}).get("status", "")
-                    _POST_SUBMIT = {
-                        "SUBMITTED", "CONFIRMED", "REJECTED", "GHOSTED",
-                        "INTERVIEW_R1", "INTERVIEW_R2", "OFFER", "WITHDRAWN",
-                    }
-                    if cur_status in _POST_SUBMIT:
-                        logger.warning(
-                            f"[M4] Application {package.application_id} already in "
-                            f"{cur_status!r} — skipping re-execution (idempotency guard)"
-                        )
-                        return ApplicationResult(
-                            application_id=package.application_id,
-                            status="SUBMITTED",
-                            confirmation_text=f"already_{cur_status.lower()}",
-                            execution_time_seconds=_elapsed(),
-                            retry_count=retry_count,
-                        )
-            except Exception as exc:
-                logger.debug(f"[M4] idempotency pre-check skipped (non-fatal): {exc}")
-
             # Check platform review status
             from .platform_review import is_platform_flagged
             if is_platform_flagged(package.platform):
@@ -717,6 +650,14 @@ class ApplicationExecutor:
                             f"(loop status={loop_result.status}, error={loop_result.error})"
                         )
 
+                    elif loop_result.status == "VERIFICATION_FAILED":
+                        # Email verification wall — Gmail not connected or code never arrived.
+                        # Retrying opens the same wall every time. Stop immediately as BLOCKED.
+                        raise Exception(
+                            f"BLOCKED: Email verification required but could not retrieve code "
+                            f"(Gmail not connected?). {loop_result.error or ''}"
+                        )
+
                     else:
                         # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR — submit was
                         # never fired, so the scripted pipeline is safe to attempt.
@@ -730,7 +671,7 @@ class ApplicationExecutor:
                     # through to the scripted pipeline. "EMAIL_VERIFICATION_REQUIRED"
                     # means submit already fired — re-running scripted submit would
                     # double-apply. "AgentLoop aborted" is an explicit wrong-page/abort.
-                    if "AgentLoop aborted" in str(exc) or "EMAIL_VERIFICATION_REQUIRED" in str(exc):
+                    if "AgentLoop aborted" in str(exc) or "EMAIL_VERIFICATION_REQUIRED" in str(exc) or "BLOCKED: Email verification" in str(exc):
                         raise
                     logger.warning(f"[M4] AgentLoop raised (non-fatal, falling back): {exc}")
 
@@ -778,11 +719,7 @@ class ApplicationExecutor:
                 if open_questions:
                     api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
                     try:
-                        # Bounded at 120s (was 300s): this call runs mid-flow with a
-                        # live browser context open, so a long M3 stall holds the
-                        # browser + the Celery slot. 2 min is ample for screening-Q
-                        # answers; on timeout we proceed with what we have.
-                        async with httpx.AsyncClient(timeout=120.0) as client:
+                        async with httpx.AsyncClient(timeout=300.0) as client:
                             resp = await client.post(
                                 f"{api_base}/applications/prepare-package",
                                 json={
@@ -958,34 +895,42 @@ class ApplicationExecutor:
                 if form.has_captcha:
                     if dry_run:
                         logger.warning(
-                            f"[M4] Captcha detected ({form.captcha_type}) — skipping solve (dry_run)"
+                            f"[M4] Captcha detected ({form.captcha_type}) — skipping solve (dry_run=True)"
+                        )
+                    elif not key_configured:
+                        # No solver API key — stop immediately. Retrying will just hit the
+                        # same captcha wall again. Mark as BLOCKED so Celery does not retry.
+                        error_message = (
+                            f"BLOCKED: {form.captcha_type} captcha detected on {package.platform} "
+                            f"but no solver API key is configured "
+                            f"(set TWO_CAPTCHA_API_KEY or ANTI_CAPTCHA_API_KEY)"
+                        )
+                        logger.error(f"[M4] {error_message}")
+                        try:
+                            screenshot_path = await capture_and_store_screenshot(page, package.application_id)
+                        except Exception:
+                            pass
+                        _cleanup_temp(_temp_resume, _temp_cover)
+                        return ApplicationResult(
+                            application_id=package.application_id,
+                            status="BLOCKED",
+                            screenshot_url=screenshot_path,
+                            error_message=error_message,
+                            execution_time_seconds=_elapsed(),
+                            retry_count=retry_count,
                         )
                     else:
-                        # IMPORTANT: even with NO paid key we still run solve(),
-                        # because its first two phases — the AI vision solver and
-                        # the Whisper audio-challenge solver — need no key at all.
-                        # Previously we skipped the whole solve when no paid key
-                        # was configured, which defeated the keyless AI-first
-                        # design. When a paid key IS present we use that provider;
-                        # otherwise we route through the keyless "ai" provider so
-                        # the free passes run and the (useless) paid loop is skipped.
-                        effective_provider = provider if key_configured else "ai"
-                        if not key_configured:
-                            logger.info(
-                                f"[M4] Captcha detected ({form.captcha_type}) — no paid key; "
-                                "running keyless AI vision + Whisper audio solvers"
-                            )
-                        captcha_svc = CaptchaService(provider=effective_provider)
+                        captcha_svc = CaptchaService(provider=provider)
                         solution = await captcha_svc.solve(page, form.captcha_type)
                         if not solution.success:
                             status = "CAPTCHA_FAILED"
-                            error_message = f"Captcha solving exhausted all attempts: {form.captcha_type}"
+                            error_message = f"BLOCKED: Captcha solving exhausted all attempts: {form.captcha_type}"
                             screenshot_path = await capture_and_store_screenshot(page, package.application_id)
                             logger.error(f"[M4] {error_message}")
                             _cleanup_temp(_temp_resume, _temp_cover)
                             return ApplicationResult(
                                 application_id=package.application_id,
-                                status=status,
+                                status="BLOCKED",
                                 screenshot_url=screenshot_path,
                                 error_message=error_message,
                                 execution_time_seconds=_elapsed(),
@@ -1063,15 +1008,7 @@ class ApplicationExecutor:
                 await asyncio.sleep(1.0)
             except Exception:
                 pass
-            # GUARD: a screenshot failure must NEVER bubble up here. The form is
-            # already submitted to the ATS at this point; an exception would fall
-            # into the generic handler and trigger a Celery retry → DUPLICATE
-            # submission. Evidence is nice-to-have, not worth re-applying.
-            try:
-                screenshot_path = await capture_and_store_screenshot(page, package.application_id)
-            except Exception as exc:
-                logger.warning(f"[M4] success-path screenshot failed (non-fatal): {exc}")
-                screenshot_path = None
+            screenshot_path = await capture_and_store_screenshot(page, package.application_id)
 
             # ── STEP 12: Final status transition ──
             if verified:
@@ -1270,21 +1207,3 @@ class ApplicationExecutor:
                 execution_time_seconds=_elapsed(),
                 retry_count=retry_count,
             )
-        finally:
-            # GUARANTEED cleanup — runs even on asyncio.CancelledError (e.g. the
-            # outer per-application wait_for deadline firing). Playwright's
-            # context.close() is idempotent, so re-closing an already-closed
-            # context is a harmless no-op. Without this, a cancelled run leaks a
-            # whole Chrome process. Also tears down the browser/playwright the
-            # local context_mgr launched for this run.
-            if context_mgr and context:
-                try:
-                    await context_mgr.destroy_context(context)
-                except Exception:
-                    pass
-            if context_mgr:
-                try:
-                    await context_mgr.close()
-                except Exception:
-                    pass
-            _cleanup_temp(_temp_resume, _temp_cover)

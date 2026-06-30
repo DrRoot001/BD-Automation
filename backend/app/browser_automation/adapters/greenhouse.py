@@ -419,12 +419,22 @@ class GreenhouseAdapter(BasePlatformAdapter):
         eval_ctx_for_upload = (await get_live_frame(self._frame_locator)) if self._iframe_mode else page
         await self._upload_greenhouse_files(eval_ctx_for_upload, loc_ctx, resume_path, cover_letter_path)
 
-        # Re-scan is intentionally DISABLED: rescan calls detect_form which
+        # Re-scan DISABLED while debugging: rescan calls detect_form which
         # iterates DOM elements; on some Greenhouse builds this triggers a
         # form-wide React rerender that resets react-select widgets back to
-        # placeholder, even though the initial fill committed cleanly. The old
-        # dead `if False and ...` block here referenced an undefined `ctx` and
-        # was a latent NameError — removed.
+        # placeholder, even though the initial fill committed cleanly.
+        rescan = None  # await detect_form(ctx, container_selector=self.container_selector, skip_scroll=True)
+        new_fields = []
+        if False and rescan and new_fields:
+            logger.info(f"[GH] Re-scan found {len(new_fields)} new field(s): "
+                        f"{[(f.label, f.field_type) for f in new_fields]}")
+            from ..forms.models import DetectedForm as _DF
+            extra_form = _DF(
+                form_type=form.form_type, fields=new_fields, steps=1,
+                current_step=1, has_captcha=False, captcha_type=None,
+                has_file_upload=False, submit_selector=form.submit_selector,
+            )
+            await fill_form(ctx, extra_form, profile, screening_answers)
 
         return fill_success
 

@@ -26,6 +26,11 @@ echo "Using Python env: $PYTHON"
 # Export PYTHONPATH so the backend can find module3 and module5
 export PYTHONPATH="$(pwd):$PYTHONPATH"
 
+# macOS: prevent ObjC runtime from aborting Celery forked worker processes.
+# NSTimeZone (loaded by Python's datetime) triggers the fork-safety check and
+# kills each worker with SIGABRT (signal 6) unless this flag is set.
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+
 # 1. Start FastAPI Backend
 echo "📦 Starting FastAPI Backend (Port 8000)..."
 (cd backend && $UVICORN app.main:app --host 0.0.0.0 --port 8000 --reload) &
@@ -35,7 +40,10 @@ sleep 2
 
 # 2. Start Celery Worker
 echo "👷 Starting Celery Worker..."
-(cd backend && $CELERY -A app.celery_app worker --loglevel=info --hostname="worker@%h-$(date +%s)" -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan) &
+# --concurrency=3: Supabase PgBouncer session mode caps at 15 connections.
+# FastAPI pool claims up to 6; Celery task_session() needs 1 per worker.
+# 3 concurrent workers keeps the total well under the 15-conn ceiling.
+(cd backend && $CELERY -A app.celery_app worker --loglevel=info --concurrency=3 --hostname="worker@%h-$(date +%s)" -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan) &
 
 # 3. Start Celery Beat
 echo "⏱️ Starting Celery Beat Scheduler..."

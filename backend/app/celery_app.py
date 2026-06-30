@@ -26,6 +26,12 @@
 import os
 import ssl
 from celery import Celery
+
+# macOS: Python's datetime/timezone operations load Apple's NSTimeZone ObjC class.
+# When billiard forks worker processes, the ObjC runtime detects the class was
+# mid-initialization and crashes the child with SIGABRT. This env var disables
+# that safety check, which is safe for fork-based worker pools in development.
+os.environ.setdefault('OBJC_DISABLE_INITIALIZE_FORK_SAFETY', 'YES')
 from celery.schedules import crontab
 from app.config import get_settings
 from app.logging_config import configure_logging
@@ -147,15 +153,6 @@ celery_app.conf.worker_prefetch_multiplier = 1
 # idempotency guard (never double-submits an app already past SUBMITTED).
 celery_app.conf.task_acks_late = False
 celery_app.conf.task_reject_on_worker_lost = False
-
-# worker_max_tasks_per_child: recycle each worker process after N tasks. Browser
-# automation spawns Chrome per application; even with explicit cleanup, recycling
-# the process periodically reclaims any leaked browser handles / memory so a
-# long-lived worker doesn't degrade into resource exhaustion (a prior cause of
-# applications hanging until the watchdog reaped them as "worker died").
-celery_app.conf.worker_max_tasks_per_child = int(
-    os.getenv("CELERY_MAX_TASKS_PER_CHILD", "20")
-)
 
 # Serialisation
 celery_app.conf.task_serializer = "json"
