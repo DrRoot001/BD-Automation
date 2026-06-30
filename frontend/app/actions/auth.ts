@@ -12,12 +12,21 @@ export async function loginAction(email: string, password: string) {
     })
     const data = await res.json()
     if (!res.ok) {
-      return { error: data.detail || 'Invalid credentials' }
+      let errorMessage = 'Invalid credentials'
+      if (typeof data.detail === 'string') {
+        errorMessage = data.detail
+      } else if (Array.isArray(data.detail)) {
+        errorMessage = data.detail.map((err: any) => err.msg || JSON.stringify(err)).join(', ')
+      } else if (data.detail) {
+        errorMessage = JSON.stringify(data.detail)
+      }
+      return { error: errorMessage }
     }
     const token = data.access_token
     if (!token) return { error: 'No token returned from server' }
 
-    cookies().set({
+    const cookieStore = await cookies()
+    cookieStore.set({
       name: 'auth_token',
       value: token,
       httpOnly: true,
@@ -42,19 +51,22 @@ export async function loginAction(email: string, password: string) {
 }
 
 export async function logoutAction() {
-  cookies().delete('auth_token')
+  const cookieStore = await cookies()
+  cookieStore.delete('auth_token')
   return { success: true }
 }
 
 export async function getWebSocketConnectionDetailsAction() {
   const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
   const wsUrl = apiUrl.replace(/^http/, 'ws') + '/ws/updates'
-  const token = cookies().get('auth_token')?.value || null
+  const cookieStore = await cookies()
+  const token = cookieStore.get('auth_token')?.value || null
   return { wsUrl, token }
 }
 
 export async function getCurrentUserAction() {
-  const token = cookies().get('auth_token')?.value
+  const cookieStore = await cookies()
+  const token = cookieStore.get('auth_token')?.value
   if (!token) return null
   try {
     const res = await fetch(`${API_BASE}/auth/me`, {
