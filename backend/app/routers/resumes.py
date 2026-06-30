@@ -53,7 +53,7 @@ def _generate_resume_embedding_from_json(parsed: dict) -> Optional[List[float]]:
 @router.post("", response_model=ResumeResponse, status_code=201)
 async def create_resume(resume: ResumeCreate, db: AsyncSession = Depends(get_db)):
     db_resume = Resume(**resume.model_dump(exclude={"embedding"}))
-    if resume.embedding:
+    if resume.embedding is not None:
         db_resume.embedding = resume.embedding
     elif resume.parsed_json:
         # Run off the event loop: the embedding path can make a blocking

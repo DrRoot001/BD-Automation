@@ -83,6 +83,8 @@ class CandidateBase(BaseModel):
     tech_stack: List[str] = []
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
+    gmail: Optional[str] = None
+    password: Optional[str] = None
 
 
 class Candidate(CandidateBase):

@@ -16,6 +16,8 @@ class Candidate(Base):
     tech_stack = Column(ARRAY(Text), nullable=False, default=list)
     years_exp = Column(Integer)
     linkedin_url = Column(String(500))
+    gmail = Column(String(255), nullable=True)
+    password = Column(String(255), nullable=True)
     google_refresh_token = Column(Text, nullable=True)
     automation_paused = Column(Integer, server_default="0", nullable=False) # 0 = false, 1 = true
     max_daily_apps_override = Column(Integer, nullable=True)

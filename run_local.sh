@@ -43,7 +43,7 @@ echo "👷 Starting Celery Worker..."
 # --concurrency=3: Supabase PgBouncer session mode caps at 15 connections.
 # FastAPI pool claims up to 6; Celery task_session() needs 1 per worker.
 # 3 concurrent workers keeps the total well under the 15-conn ceiling.
-(cd backend && $CELERY -A app.celery_app worker --loglevel=info --concurrency=3 --hostname="worker@%h-$(date +%s)" -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan) &
+(cd backend && $CELERY -A app.celery_app worker --loglevel=info --pool=threads --concurrency=3 --hostname="worker@%h-$(date +%s)" -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan) &
 
 # 3. Start Celery Beat
 echo "⏱️ Starting Celery Beat Scheduler..."
