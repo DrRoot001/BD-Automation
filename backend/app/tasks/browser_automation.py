@@ -190,6 +190,10 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     # The form filler expects all of these keys.  Derive what we can from the DB;
     # use safe defaults for the rest so the pipeline never crashes on a missing key.
     full_name = cand_data.get("name") or ""
+    logger.info(
+        f"[Hydrate] cand_id={cand_id} name={full_name!r} email={cand_data.get('email')!r} "
+        f"app_id={app_id} job_id={job_id}"
+    )
     name_parts = full_name.strip().split()
     first_name = name_parts[0] if name_parts else ""
     last_name  = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
@@ -302,10 +306,18 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
     name="task:execute_application",
     queue="queue:application_execution",
     max_retries=3,
-    default_retry_delay=300,
+    # Was 300s — that meant ONE transient publish/network hiccup parked the
+    # apply for 5 minutes, and the operator saw "browser never opens." Drop
+    # to 20s so a real retry is fast. retry_backoff still climbs to 1800s
+    # if there are repeated failures, but the FIRST retry is near-immediate.
+    default_retry_delay=20,
     retry_backoff=True,
     retry_backoff_max=1800,
-    acks_late=True,
+    # acks EARLY — see app/celery_app.py for the full rationale. A browser run is
+    # too long to stay un-acked on the flaky Upstash link without being
+    # "Restored" and redelivered on every disconnect (the infinite-redelivery
+    # bug). The watchdog + the executor idempotency guard cover a real crash.
+    acks_late=False,
 )
 def execute_application(self, package_dict: dict):
     """
@@ -352,6 +364,23 @@ def execute_application(self, package_dict: dict):
                     failure_reason="JOB_EXPIRED"
                 ))
                 return result.dict()
+            # A deadline timeout is terminal — retrying would just re-hang for
+            # another full deadline (up to 3×). The app is already marked FAILED
+            # with a clear reason; the operator can re-queue it from the UI.
+            if result.error_message and "APPLICATION_TIMEOUT" in result.error_message:
+                logger.warning(f"[M4] APPLICATION_TIMEOUT for {package_dict.get('application_id')} — not retrying")
+                return result.dict()
+            # Submit already fired but post-submit verification didn't complete.
+            # TERMINAL — retrying would re-open the form and double-submit.
+            if result.error_message and "EMAIL_VERIFICATION_REQUIRED" in result.error_message:
+                logger.warning(f"[M4] EMAIL_VERIFICATION_REQUIRED for {package_dict.get('application_id')} — not retrying (would double-submit)")
+                asyncio.run(publish_application_failed(
+                    application_id=package_dict.get("application_id", ""),
+                    error=result.error_message,
+                    retry_eligible=False,
+                    failure_reason="EMAIL_VERIFICATION",
+                ))
+                return result.dict()
             raise Exception(f"Execution failed: {result.error_message}")
             
         return result.dict()
@@ -374,6 +403,56 @@ def execute_application(self, package_dict: dict):
                 error="Job posting no longer exists or has been removed",
                 retry_eligible=False,
                 failure_reason="JOB_EXPIRED"
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
+        # Submit already fired — TERMINAL, never retry (would double-submit).
+        if "EMAIL_VERIFICATION_REQUIRED" in err_msg:
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="EMAIL_VERIFICATION"
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
+        # ATS requires a candidate account before the form is accessible
+        # (Workday, iCIMS, Dice). Without WORKDAY_USERNAME/PASSWORD (or the
+        # iCIMS/Dice equivalents) configured, we cannot apply — period. The
+        # submit endpoint authenticates server-side, so no scraping bypass
+        # exists. Surface a dedicated reason so the UI shows "Login required"
+        # instead of the misleading "Bot detected".
+        if "LOGIN_REQUIRED" in err_msg:
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="LOGIN_REQUIRED",
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
+        # Candidate hasn't connected Gmail but the ATS demands an email-code
+        # verification. Retrying is futile — surface a specific reason so the
+        # operator reconnects Gmail rather than reading "FAILED" and guessing.
+        if "GMAIL_NOT_CONNECTED" in err_msg:
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="GMAIL_NOT_CONNECTED",
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
+        # Ashby/Workday/Lever anti-bot returns 200 + a "flagged as possible spam"
+        # banner. Retrying re-submits and escalates the flag to an IP-level
+        # block. TERMINAL with a clear, distinct reason so the operator can
+        # diagnose (was the form partially filled? was IP residential? etc.).
+        if "SPAM_FLAGGED" in err_msg or "flagged as possible spam" in err_msg.lower():
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="SPAM_FLAGGED",
             ))
             return {"status": "FAILED", "error": err_msg}
 
@@ -414,6 +493,17 @@ def execute_application(self, package_dict: dict):
                 retry_eligible=False,
                 failure_reason=failure_reason
             ))
+        else:
+            # The task will be retried; explicitly transition the database state back
+            # to QUEUED so the UI reflects the Celery queue state and the watchdog
+            # applies the correct timeout threshold.
+            from app.browser_automation.services.state_machine import transition_status
+            asyncio.run(transition_status(
+                package_dict.get("application_id", ""), 
+                "QUEUED",
+                {"info": f"Retrying task after failure: {err_msg[:100]}"}
+            ))
+            
         raise self.retry(exc=exc)
 
 
@@ -465,5 +555,19 @@ def recover_stuck_applications():
         async with task_session() as session:
             await recover_stuck_applications_async(session)
 
-    asyncio.run(run_recovery())
+    try:
+        asyncio.run(run_recovery())
+    except (asyncio.TimeoutError, TimeoutError, OSError) as exc:
+        # OSError covers socket.gaierror (DNS failure: "getaddrinfo failed")
+        # and connection refused. These are transient network/DNS hiccups —
+        # local internet dropped, Supabase DNS lookup slow, etc. NOT a real
+        # bug: the next 10-min watchdog tick will retry. We swallow it so
+        # Celery doesn't log a noisy traceback every time the link is flaky,
+        # which was drowning the actual M4 errors in the log.
+        logger.warning(
+            "[Watchdog] recover_stuck_applications skipped this tick due to "
+            "transient DB connectivity (%s: %s) — will retry next cycle.",
+            type(exc).__name__, str(exc)[:120],
+        )
+        return None
 

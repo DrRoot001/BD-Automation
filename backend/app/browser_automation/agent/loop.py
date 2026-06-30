@@ -48,11 +48,16 @@ logger = logging.getLogger(__name__)
 # Tunables
 # ─────────────────────────────────────────────────────────────────────────────
 
-MAX_STEPS = 60          # hard cap on loop iterations
+MAX_STEPS = int(__import__("os").getenv("AGENT_LOOP_MAX_STEPS", "60"))   # hard cap on loop iterations
 # Wall-clock ceiling. Even if MAX_STEPS isn't reached, the loop ABORTS after
 # this many seconds so a confused AI on an unsupported site doesn't burn a
 # tester's patience. Env-overridable: AGENT_LOOP_WALL_TIMEOUT_S.
 _DEFAULT_WALL_TIMEOUT_S = float(__import__("os").getenv("AGENT_LOOP_WALL_TIMEOUT_S", "240"))
+# Extra wall-clock budget granted AFTER a real submit fires, reserved for the
+# post-submit email-verification phase (Gmail code polling, up to ~3×90s).
+# Without this the form-fill budget would expire mid-poll and the code would
+# never be fetched. Env-overridable: AGENT_LOOP_POST_SUBMIT_GRACE_S.
+_POST_SUBMIT_GRACE_S = float(__import__("os").getenv("AGENT_LOOP_POST_SUBMIT_GRACE_S", "330"))
 STUCK_THRESHOLD = 4     # consecutive no-DOM-change steps before abort
 LLM_RETRY_LIMIT = 3     # consecutive LLM failures before abort
 STEP_TIMEOUT_S = 45.0   # per-step LLM call timeout (was 30s — bumped after observing
@@ -107,7 +112,8 @@ class LoopResult:
     success: bool
     status: Literal[
         "SUBMITTED", "FORM_COMPLETED", "ABORTED", "MAX_STEPS",
-        "STUCK", "LLM_UNAVAILABLE", "WRONG_PAGE", "ERROR"
+        "STUCK", "LLM_UNAVAILABLE", "WRONG_PAGE", "ERROR",
+        "VERIFICATION_FAILED",
     ]
     confirmation: Optional[str] = None
     error: Optional[str] = None
@@ -1176,6 +1182,35 @@ def _sanitize_selector(sel: Optional[str]) -> Optional[str]:
     return sel
 
 
+async def _bezier_mouse_move(page: Page, target_x: float, target_y: float):
+    import random
+    import asyncio
+    start_x = max(0, target_x + random.uniform(-200, 200))
+    start_y = max(0, target_y + random.uniform(-200, 200))
+    await page.mouse.move(start_x, start_y)
+    
+    cp_x = (start_x + target_x) / 2 + random.uniform(-100, 100)
+    cp_y = (start_y + target_y) / 2 + random.uniform(-100, 100)
+    
+    steps = random.randint(15, 30)
+    for i in range(1, steps + 1):
+        t = i / steps
+        x = (1-t)**2 * start_x + 2*(1-t)*t * cp_x + t**2 * target_x
+        y = (1-t)**2 * start_y + 2*(1-t)*t * cp_y + t**2 * target_y
+        await page.mouse.move(x, y)
+        await asyncio.sleep(random.uniform(0.01, 0.03))
+
+async def _human_scroll(page: Page, delta: float):
+    import random
+    import asyncio
+    chunks = random.randint(3, 6)
+    chunk_size = delta / chunks
+    for _ in range(chunks):
+        jitter = chunk_size * random.uniform(0.8, 1.2)
+        await page.evaluate(f"window.scrollBy(0, {jitter})")
+        await asyncio.sleep(random.uniform(0.05, 0.15))
+
+
 async def _execute_action(
     action: AgentAction,
     page: Page,
@@ -1243,6 +1278,9 @@ async def _execute_action(
                 loc = ctx.locator(s).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.scroll_into_view_if_needed()
+                    box = await loc.bounding_box()
+                    if box:
+                        await _bezier_mouse_move(page, box["x"] + box["width"]/2, box["y"] + box["height"]/2)
                     await loc.click(timeout=6000)
                     await asyncio.sleep(2.5)
                     logger.info(f"[AgentLoop] click_apply succeeded via {s!r}")
@@ -1255,7 +1293,7 @@ async def _execute_action(
     if kind == "scroll":
         direction = action.direction or "down"
         delta = 600 if direction == "down" else -600
-        await page.evaluate(f"window.scrollBy(0, {delta})")
+        await _human_scroll(page, delta)
         await asyncio.sleep(0.3)
         return True
 
@@ -1273,6 +1311,9 @@ async def _execute_action(
                 loc = ctx.locator(sel).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.scroll_into_view_if_needed()
+                    box = await loc.bounding_box()
+                    if box:
+                        await _bezier_mouse_move(page, box["x"] + box["width"]/2, box["y"] + box["height"]/2)
                     await loc.click(timeout=6000)
                     await asyncio.sleep(1.0)
                     return True
@@ -1295,6 +1336,9 @@ async def _execute_action(
                 loc = ctx.locator(s).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.scroll_into_view_if_needed()
+                    box = await loc.bounding_box()
+                    if box:
+                        await _bezier_mouse_move(page, box["x"] + box["width"]/2, box["y"] + box["height"]/2)
                     await loc.click(timeout=6000)
                     await asyncio.sleep(0.8)
                     return True
@@ -1942,6 +1986,12 @@ class AgentLoop:
         # then instead of clicking submit, the loop returns SUBMITTED with
         # confirmation="dry_run_stopped_before_submit".
         self.stop_before_submit: bool = stop_before_submit
+        # Set True the instant the loop fires a REAL submit click. The executor
+        # reads this after run() to decide whether the scripted fallback is safe:
+        # once the form has been sent to the ATS, re-running the scripted
+        # detect→fill→submit pipeline would risk a DOUBLE submission, so the
+        # executor treats any post-submit outcome as terminal.
+        self._submit_fired: bool = False
         # Auto-populate hints from registry if not explicitly provided
         platform = str(job_context.get("platform") or "generic").lower()
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
@@ -3618,6 +3668,14 @@ class AgentLoop:
                 logger.info("[AgentLoop] Turnstile token acquired (managed) — submit gate cleared")
                 return True
 
+        # ── FlareSolverr local API fallback ──────────────────────────────────────
+        # Use local/system FlareSolverr to solve the Turnstile challenge
+        # (This is fast, free, and local if running)
+        flaresolverr_url = os.getenv("FLARESOLVERR_URL", "").strip()
+        if flaresolverr_url:
+            if await self._solve_turnstile_flaresolverr(page, ctx, flaresolverr_url):
+                return True
+
         # ── CapSolver.com API fallback (IP-independent) ──────────────────────
         key = os.getenv("CAPSOLVER_API_KEY", "").strip()
         if key and not key.lower().startswith("your_"):
@@ -3636,6 +3694,7 @@ class AgentLoop:
         """Solve Cloudflare Turnstile via the CapSolver.com REST API
         (AntiTurnstileTaskProxyLess) and inject the token into the page."""
         import httpx
+        import random
         try:
             meta = await ctx.evaluate(
                 """() => {
@@ -3655,32 +3714,43 @@ class AgentLoop:
                 logger.warning("[AgentLoop] CapSolver: Turnstile sitekey not found on page")
                 return False
             async with httpx.AsyncClient(timeout=30) as c:
-                r = await c.post(
-                    "https://api.capsolver.com/createTask",
-                    json={"clientKey": key, "task": {
-                        "type": "AntiTurnstileTaskProxyLess",
-                        "websiteURL": url, "websiteKey": sitekey,
-                    }},
-                )
-                j = r.json()
-                if j.get("errorId"):
-                    logger.warning(f"[AgentLoop] CapSolver createTask failed: {j.get('errorDescription')}")
-                    return False
-                task_id = j.get("taskId")
-                for _ in range(24):
-                    await asyncio.sleep(3)
-                    rr = await c.post(
-                        "https://api.capsolver.com/getTaskResult",
-                        json={"clientKey": key, "taskId": task_id},
+                for task_attempt in range(2):
+                    r = await c.post(
+                        "https://api.capsolver.com/createTask",
+                        json={"clientKey": key, "task": {
+                            "type": "AntiTurnstileTaskProxyLess",
+                            "websiteURL": url, "websiteKey": sitekey,
+                        }},
                     )
-                    jr = rr.json()
-                    if jr.get("errorId"):
-                        logger.warning(f"[AgentLoop] CapSolver getTaskResult error: {jr.get('errorDescription')}")
+                    j = r.json()
+                    if j.get("errorId"):
+                        logger.warning(f"[AgentLoop] CapSolver createTask failed: {j.get('errorDescription')}")
+                        if task_attempt < 1:
+                            await asyncio.sleep(random.uniform(1.5, 3.0))
+                            continue
                         return False
-                    if jr.get("status") == "ready":
-                        token = (jr.get("solution") or {}).get("token") or ""
-                        if not token:
+                    task_id = j.get("taskId")
+                    token_injected = False
+                    for _ in range(24):
+                        await asyncio.sleep(3.0 + random.uniform(0.1, 1.2))
+                        rr = await c.post(
+                            "https://api.capsolver.com/getTaskResult",
+                            json={"clientKey": key, "taskId": task_id},
+                        )
+                        jr = rr.json()
+                        if jr.get("errorId"):
+                            err_desc = (jr.get("errorDescription") or "")
+                            logger.warning(f"[AgentLoop] CapSolver getTaskResult error: {err_desc}")
+                            if "UNSOLVABLE" in err_desc.upper() and task_attempt < 1:
+                                break  # Break inner loop to retry createTask
                             return False
+                        if jr.get("status") == "ready":
+                            token = (jr.get("solution") or {}).get("token") or ""
+                            if not token:
+                                return False
+                            token_injected = True
+                            break
+                    if token_injected:
                         await ctx.evaluate(
                             """(tok) => {
                                 document.querySelectorAll(
@@ -3755,19 +3825,48 @@ class AgentLoop:
         if not self.candidate_id:
             logger.warning("[verify] no candidate_id on AgentLoop — cannot fetch code")
             return False
-        code = await fetch_verification_code(
-            self.candidate_id, after_epoch=after_epoch, timeout_s=90.0
-        )
+        try:
+            code = await fetch_verification_code(
+                self.candidate_id, after_epoch=after_epoch, timeout_s=90.0
+            )
+        except Exception as exc:
+            if "GMAIL_AUTH_FAILED" in str(exc):
+                logger.error(f"[verify] {exc}")
+                actions.append(AgentAction(
+                    kind="abort",
+                    reason="GMAIL_AUTH_FAILED: Gmail token expired or invalid. Please reconnect Gmail.",
+                    step=-1, ok=False, raw={}
+                ))
+                return False
+            code = None
+
         if not code:
             logger.warning(
                 "[verify] no verification code fetched — Gmail not connected, "
                 "no matching email arrived, or OAuth refused. Falling back."
             )
             return False
+        # ── Make verification VISIBLE to a human watching headed mode ──
+        # In headed runs the operator wants to see the code being typed (proof
+        # that Gmail fetch worked and the right candidate's inbox was used).
+        # Scroll the first input into the viewport with a small pause BEFORE
+        # filling, and a longer pause AFTER, so the typing is observable rather
+        # than a blink. Controlled by VERIFY_DEMO_PAUSE_MS (default 0 in headless,
+        # set e.g. 1500 in headed local runs).
+        _demo_pause_ms = int(os.getenv("VERIFY_DEMO_PAUSE_MS", "0"))
+        try:
+            ctx_for_scroll = ctx_frame or page
+            await ctx_for_scroll.locator(shape.selectors[0]).first.scroll_into_view_if_needed(timeout=2000)
+        except Exception:
+            pass
+        if _demo_pause_ms > 0:
+            await asyncio.sleep(_demo_pause_ms / 1000.0)
         ok = await fill_code(page, ctx_frame, shape, code)
         if not ok:
             logger.warning(f"[verify] failed to fill code {code!r} into shape={shape}")
             return False
+        if _demo_pause_ms > 0:
+            await asyncio.sleep(_demo_pause_ms / 1000.0)
         logger.info(
             f"[verify] filled verification code {code!r} into {shape.kind} input "
             f"({len(shape.selectors)} field(s)); next turn will submit"
@@ -3967,6 +4066,8 @@ class AgentLoop:
         # phase so the AI never wanders back to filling fields after submit
         # (the "it keeps filling after submit" bug).
         submit_fired = False
+        _submit_epoch = None
+        post_submit_no_code_turns = 0   # confirmation turns with no verify-wall after submit
         verification_attempts = 0
 
         # ── Mid-flow OTP / email-verification state ──────────────────────────
@@ -3984,16 +4085,24 @@ class AgentLoop:
 
         try:
             for step in range(1, self.max_steps + 1):
-                # Wall-clock check
-                if _time.monotonic() - _wall_start > _DEFAULT_WALL_TIMEOUT_S:
+                # Wall-clock check. Once submit has fired we are in the
+                # post-submit verification phase (Gmail code polling can take
+                # up to ~3 attempts × 90s). The form-fill budget alone would cut
+                # that off mid-poll — the exact "clicks submit but never fetches
+                # the code" failure — so grant a dedicated post-submit grace
+                # budget on top of the fill budget.
+                _wall_budget = _DEFAULT_WALL_TIMEOUT_S + (
+                    _POST_SUBMIT_GRACE_S if submit_fired else 0.0
+                )
+                if _time.monotonic() - _wall_start > _wall_budget:
                     logger.warning(
-                        f"[AgentLoop] wall-clock timeout {_DEFAULT_WALL_TIMEOUT_S:.0f}s "
-                        f"reached at step={step} — aborting"
+                        f"[AgentLoop] wall-clock timeout {_wall_budget:.0f}s "
+                        f"reached at step={step} (submit_fired={submit_fired}) — aborting"
                     )
                     return LoopResult(
                         success=False,
                         status="MAX_STEPS",
-                        error=f"wall-clock timeout after {_DEFAULT_WALL_TIMEOUT_S:.0f}s",
+                        error=f"wall-clock timeout after {_wall_budget:.0f}s",
                         steps_taken=step,
                         actions=actions,
                     )
@@ -4025,11 +4134,50 @@ class AgentLoop:
                         shape = None
 
                     if shape:
-                        verification_attempts += 1
+                        # Early-abort: if the candidate has no Gmail token at
+                        # all, polling for the code is pointless — fail fast
+                        # with a specific reason so the operator knows to
+                        # reconnect Gmail rather than thinking it's a form bug.
+                        # We check ONCE per loop (cached on self) to avoid a
+                        # DB round-trip on every post-submit turn.
+                        if getattr(self, "_gmail_token_ok", None) is None:
+                            # _load_refresh_token now raises RuntimeError on
+                            # transient DB failures (closed event loop, pool
+                            # drops) — those are NOT "no token". Only a clean
+                            # None return means the candidate genuinely lacks a
+                            # token. Degrade OPEN on any exception so a
+                            # transient DB blip doesn't kill the run.
+                            try:
+                                from ..verification.code_fetcher import _load_refresh_token
+                                _tok = await _load_refresh_token(self.candidate_id) if self.candidate_id else None
+                                self._gmail_token_ok = bool(_tok)
+                            except Exception as exc:
+                                logger.warning(
+                                    f"[AgentLoop] gmail pre-check errored ({exc!r}) — "
+                                    "degrading OPEN; fetch_verification_code will retry."
+                                )
+                                self._gmail_token_ok = True
+                        if not self._gmail_token_ok:
+                            logger.error(
+                                "[AgentLoop] verification screen detected but candidate "
+                                "has no Gmail refresh token — aborting (would otherwise "
+                                "burn the wall-clock polling an inbox we can't read)."
+                            )
+                            return LoopResult(
+                                success=False, status="VERIFICATION_FAILED",
+                                error="GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code",
+                                steps_taken=step, actions=actions,
+                            )
+                        # Only count a turn as an attempt when we actually
+                        # FILLED a code. A failed Gmail fetch (token expired,
+                        # email not yet delivered) is a wait, not a strike —
+                        # otherwise three slow-delivering emails kill the run
+                        # with VERIFICATION_FAILED without us ever entering a
+                        # digit. The attempt counter increments AFTER ok_v=True.
                         if verification_attempts > 3:
                             logger.warning(
                                 "[AgentLoop] verification code screen still present "
-                                "after 3 attempts — aborting to avoid lockout."
+                                "after 3 FILLED attempts — aborting to avoid lockout."
                             )
                             return LoopResult(
                                 success=False, status="VERIFICATION_FAILED",
@@ -4038,20 +4186,31 @@ class AgentLoop:
                             )
                         logger.info(
                             f"[AgentLoop] step={step} POST-SUBMIT: verification "
-                            f"code screen detected (attempt {verification_attempts}); "
+                            f"code screen detected (filled_attempts={verification_attempts}); "
                             "fetching code from Gmail — NOT re-filling form."
                         )
                         ok_v = await self._handle_email_verification(
                             page, live_frame,
-                            after_epoch=int(_time.time()) - 600,
+                            after_epoch=_submit_epoch if _submit_epoch else int(_time.time()) - 600,
                             actions=actions,
                         )
                         if ok_v:
+                            verification_attempts += 1
                             # Code filled — click the verify/submit button and
-                            # let the next turn observe the result.
+                            # let the next turn observe the result. Greenhouse
+                            # labels this "Submit Code", Ashby uses "Confirm",
+                            # generic forms use Verify/Continue. List ordered
+                            # most-specific first so the right button wins.
                             await self._human_delay()
+                            _clicked = False
                             try:
                                 for s in (
+                                    "button:has-text('Submit Code')",
+                                    "button:has-text('Submit code')",
+                                    "button:has-text('Verify Code')",
+                                    "button:has-text('Verify code')",
+                                    "button:has-text('Confirm Code')",
+                                    "button:has-text('Confirm')",
                                     "button:has-text('Verify')",
                                     "button:has-text('Continue')",
                                     "button:has-text('Next')",
@@ -4062,22 +4221,74 @@ class AgentLoop:
                                     if await btn.count() > 0 and await btn.is_visible():
                                         await btn.click(timeout=5000)
                                         logger.info(f"[AgentLoop] post-code submit via {s!r}")
+                                        _clicked = True
                                         break
                             except Exception as exc:
                                 logger.debug(f"[AgentLoop] post-code submit click failed: {exc}")
+                            # Enter-key fallback. Some ATSes (Greenhouse split
+                            # boxes, Lever single input) submit the code on
+                            # Enter without a button — or the button is hidden
+                            # behind a parent the locator can't see. Pressing
+                            # Enter while focus is on the code input is a no-op
+                            # if a button already handled it, but unblocks
+                            # button-less widgets.
+                            if not _clicked:
+                                try:
+                                    if shape and shape.selectors:
+                                        await (live_frame or page).locator(shape.selectors[-1]).first.press("Enter")
+                                    else:
+                                        await page.keyboard.press("Enter")
+                                    logger.info("[AgentLoop] post-code submit via Enter key fallback")
+                                except Exception as exc:
+                                    logger.debug(f"[AgentLoop] Enter-key fallback failed: {exc}")
+                            # Wait for the screen to settle so the next-turn
+                            # detect_code_input sees the new DOM, not the stale
+                            # verification screen that's about to navigate away.
+                            try:
+                                await page.wait_for_load_state("networkidle", timeout=8000)
+                            except Exception:
+                                pass
                             await asyncio.sleep(2.5)
                         else:
-                            await asyncio.sleep(4.0)  # let Gmail deliver, retry
+                            # Gmail returned no code yet — wait for delivery.
+                            # Do NOT bump the attempts counter; this is a poll,
+                            # not a failed attempt. The wall-clock budget +
+                            # _POST_SUBMIT_GRACE_S is what bounds total wait.
+                            logger.info(
+                                f"[AgentLoop] step={step} POST-SUBMIT: code not yet "
+                                "in Gmail — waiting 6s before next poll (no strike)."
+                            )
+                            await asyncio.sleep(6.0)
                         continue
                     else:
                         # No code screen visible. Either the submit fully
-                        # succeeded (done) or the page navigated to a success
-                        # state. Let one normal perception turn confirm via the
-                        # AI's `done` detection, then we're finished.
+                        # succeeded or the page navigated to a success state.
+                        # Give it a couple of confirmation turns; if no
+                        # verification wall ever appears, the application was
+                        # accepted outright — return SUBMITTED deterministically
+                        # rather than risk the AI drifting until the wall-clock
+                        # (which the executor would misread as a non-terminal
+                        # MAX_STEPS and wrongly re-run the scripted submit).
+                        post_submit_no_code_turns += 1
                         logger.info(
-                            f"[AgentLoop] step={step} POST-SUBMIT: no code screen — "
-                            "submit likely complete; one confirmation turn."
+                            f"[AgentLoop] step={step} POST-SUBMIT: no code screen "
+                            f"(confirm turn {post_submit_no_code_turns}/2) — "
+                            "submit likely complete."
                         )
+                        if post_submit_no_code_turns >= 2:
+                            logger.info(
+                                "[AgentLoop] POST-SUBMIT: no verification wall after "
+                                "2 turns — application submitted. Returning SUBMITTED."
+                            )
+                            return LoopResult(
+                                success=True,
+                                status="SUBMITTED",
+                                confirmation="submitted_no_verification_required",
+                                steps_taken=step,
+                                actions=actions,
+                            )
+                        await asyncio.sleep(2.0)
+                        continue
 
                 # ── MID-FLOW OTP / EMAIL-VERIFICATION (e.g. Talent.com) ──────
                 # Handle an emailed-code screen that appears BEFORE submit. Gate
@@ -4640,13 +4851,12 @@ class AgentLoop:
                                 or (u.get("label") or "?") in ("?", "")
                                 for u in unfilled
                             )
-                            if unfilled and phantom_only and prior_gate_blocks >= 2:
+                            if unfilled and (phantom_only or prior_gate_blocks >= 2):
                                 logger.warning(
                                     f"[AgentLoop] PRE-SUBMIT GATE: {len(unfilled)} unfilled "
-                                    "field(s) are all phantoms (no selector / no label) and "
-                                    f"gate has already blocked {prior_gate_blocks} times — "
-                                    "letting submit through; the form will surface real "
-                                    "validation errors if any."
+                                    "field(s) detected. Gate has already blocked "
+                                    f"{prior_gate_blocks} times — letting submit through; "
+                                    "the form will surface real validation errors if any."
                                 )
                                 unfilled = []
 
@@ -4897,6 +5107,8 @@ class AgentLoop:
                     # The top-of-loop gate now owns code detection + Gmail
                     # fetch + code fill — no more form re-filling after submit.
                     submit_fired = True
+                    self._submit_fired = True   # executor reads this to block the scripted re-submit fallback
+                    _submit_epoch = _pre_exec_epoch - 60
                     logger.info(
                         f"[AgentLoop] step={step} SUBMIT fired — entering "
                         "post-submit verification phase (form-fill disabled)."

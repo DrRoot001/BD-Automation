@@ -1,24 +1,9 @@
 import asyncio
-from sqlalchemy import select, text
 from app.database import AsyncSessionLocal
-from app.models.application import Application
-
+from sqlalchemy import text
 async def main():
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Application).where(
-                Application.id == "f104a72a-e9b0-44b6-8540-9ae47e77d0f2"
-            )
-        )
-        app = result.scalars().first()
-        if app:
-            print(f"App {app.id}: status={app.status} err={app.error_message}")
-        else:
-            print("App not found!")
-            
-        # Get all application histories for this candidate
-        res2 = await session.execute(text("SELECT application_id, from_status, to_status, meta_data FROM application_history WHERE application_id = 'f104a72a-e9b0-44b6-8540-9ae47e77d0f2'"))
-        for row in res2:
-            print(row)
-
+        result = await session.execute(text("SELECT id, candidate_id FROM applications WHERE id = 'e20d36d0-f54d-41ea-877c-49b5bfe9985c'"))
+        for row in result:
+            print(f"App ID: {row.id}, Candidate ID: {row.candidate_id}")
 asyncio.run(main())

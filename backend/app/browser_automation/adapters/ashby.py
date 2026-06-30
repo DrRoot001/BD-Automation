@@ -54,6 +54,20 @@ _SUCCESS_PATTERNS = (
     "we've received your application",
 )
 
+# Ashby returns a 200 OK with a red banner instead of an HTTP error when its
+# anti-bot scores the submission as automated. The banner is server-rendered,
+# so checking page content reliably catches it. Detecting this lets us:
+#   1. Mark the application with a specific SPAM_FLAGGED failure_reason
+#      (so retries don't re-submit and escalate the flag to IP block),
+#   2. Surface a meaningful message to the operator instead of generic FAILED.
+_SPAM_PATTERNS = (
+    "flagged as possible spam",
+    "couldn't submit your application",
+    "could not submit your application",
+    "submission was flagged",
+    "we were unable to submit",
+)
+
 
 class AshbyAdapter(BasePlatformAdapter):
     platform_name = "ashby"
@@ -146,6 +160,16 @@ class AshbyAdapter(BasePlatformAdapter):
 
     async def submit(self, page: Page) -> bool:
         ctx = self._frame if self._iframe_mode else page
+        # Pre-submit dwell — gives Ashby's anti-bot a "user reading the form"
+        # window between the last keystroke and the submit click. Sub-second
+        # gaps fire their automation heuristic. Configurable via
+        # ASHBY_PRE_SUBMIT_DWELL_MS (default 4000).
+        import asyncio as _asyncio
+        import os as _os
+        _dwell_ms = int(_os.getenv("ASHBY_PRE_SUBMIT_DWELL_MS", "4000"))
+        if _dwell_ms > 0:
+            logger.info(f"[Ashby] pre-submit dwell {_dwell_ms}ms (anti-spam)")
+            await _asyncio.sleep(_dwell_ms / 1000.0)
         learned = get_learned_fixes("ashby").get("submit")
         for sel in learned + [s for s in _SUBMIT_SELECTORS if s not in learned]:
             try:
@@ -166,6 +190,9 @@ class AshbyAdapter(BasePlatformAdapter):
         return False
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
+        # Spam-flag check runs FIRST — Ashby returns 200 with a banner instead
+        # of a non-2xx, so without this we'd fall through to "generic FAILED"
+        # and the retry handler would re-submit, which escalates the flag.
         for ctx in ([self._frame, page] if self._iframe_mode else [page]):
             if ctx is None:
                 continue
@@ -173,6 +200,21 @@ class AshbyAdapter(BasePlatformAdapter):
                 content = (await ctx.content()).lower()
             except Exception:
                 continue
+            for pattern in _SPAM_PATTERNS:
+                if pattern in content:
+                    logger.error(
+                        f"[Ashby] SPAM_FLAGGED — server rejected submission "
+                        f"(pattern={pattern!r}). Surfacing as terminal failure; "
+                        "retrying would escalate the IP-level flag."
+                    )
+                    # Raise a sentinel-string exception the executor + Celery
+                    # task already recognise as a no-retry terminal failure.
+                    raise Exception(
+                        "SPAM_FLAGGED: Ashby anti-bot rejected the submission "
+                        "(\"flagged as possible spam\"). Likely causes: form was "
+                        "partially filled or submit fired too fast. Do NOT retry "
+                        "immediately — wait or run from a different IP."
+                    )
             for pattern in _SUCCESS_PATTERNS:
                 if pattern in content:
                     return True, pattern

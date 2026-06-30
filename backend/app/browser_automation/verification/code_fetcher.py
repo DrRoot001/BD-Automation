@@ -67,6 +67,20 @@ _CODE_MIXED_RE = re.compile(r"\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)([A-Za
 _CODE_DIGITS_RE = re.compile(r"\b(\d{6,8})\b")
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
 
+# Common English words 5-10 chars that show up RIGHT AFTER cue phrases like
+# "enter the code field below:" — the cue regex would otherwise capture them
+# as the code, and the loop would type the word into the OTP boxes (the actual
+# "code='field'" bug observed against Greenhouse on Reddit). All-letter tokens
+# matching this set are rejected; the real code comes later in the email.
+_ENGLISH_NOISE = frozenset({
+    "field", "below", "above", "right", "input", "enter", "shown", "valid",
+    "value", "click", "press", "place", "where", "which", "after", "before",
+    "expires", "minutes", "second", "minute", "hours", "today", "email",
+    "address", "please", "thanks", "thank", "regards", "subject", "verify",
+    "verification", "security", "account", "applied", "applic", "appli",
+    "reset", "reply", "submit", "submitted", "follow", "following",
+})
+
 # HTML/CSS stripping — many ATS emails are HTML-only and stuffed with styling
 # noise that the naive code regexes mistake for the code:
 #   * hex colors like #F0F0F3 / #676767 (the latter is ALSO 6 digits!),
@@ -142,8 +156,21 @@ def _pick_code(text: str) -> Optional[str]:
             return tok
     # 2. Cue-anchored. Require a colon/space-delimited token after the cue;
     #    prefer the LAST hit (the code usually follows the final phrase).
+    #    REJECT all-letter tokens that look like English words — these are
+    #    almost always noise from phrases like "enter the code field below"
+    #    (the literal bug observed against a Greenhouse/Reddit run where the
+    #    word "field" was typed into the OTP boxes).
+    def _looks_like_code(tok: str) -> bool:
+        if _YEAR_RE.match(tok):
+            return False
+        # All-letter token AND in the noise blocklist → reject. Real all-letter
+        # codes are rare; the few we've seen are like "XZQPLMN" (random caps)
+        # which won't be in the blocklist.
+        if tok.isalpha() and tok.lower() in _ENGLISH_NOISE:
+            return False
+        return True
     cue_hits = [m.group(1) for m in _CODE_CUE_RE.finditer(text)
-                if not _YEAR_RE.match(m.group(1))]
+                if _looks_like_code(m.group(1))]
     if cue_hits:
         return cue_hits[-1]
     # 3. Pure-digit fallback (6–8 digits, excluding years).
@@ -482,12 +509,16 @@ def _gmail_search_code_sync(
     # `after:` accepts a unix timestamp in seconds. We pad by 60s to catch
     # mail-server clock skew.
     after_q = max(0, after_epoch - 60)
-    q = f"in:inbox newer_than:1h after:{after_q}"
+    q = f"in:inbox is:unread newer_than:1h after:{after_q}"
     try:
         listing = service.users().messages().list(
             userId="me", q=q, maxResults=max_results,
         ).execute()
     except Exception as exc:
+        err_msg = str(exc).lower()
+        if "invalid_grant" in err_msg or "unauthorized" in err_msg or "invalid client" in err_msg:
+            logger.error(f"[verify] Gmail token invalid or expired: {exc}")
+            raise RuntimeError(f"GMAIL_AUTH_FAILED: {exc}")
         logger.warning(f"[verify] gmail list failed: {exc}")
         return None
     ids = [m["id"] for m in (listing.get("messages") or [])]
@@ -557,7 +588,17 @@ async def fetch_verification_code(
     """
     if not candidate_id:
         return None
-    refresh_token = await _load_refresh_token(candidate_id)
+    try:
+        refresh_token = await _load_refresh_token(candidate_id)
+    except RuntimeError as exc:
+        # _load_refresh_token raises on transient DB failures (closed event
+        # loop, pool exhaustion) — distinct from "candidate has no token".
+        # Treat as "code not yet available, try next poll" so the agent loop's
+        # wait-budget keeps ticking instead of bailing out as
+        # GMAIL_NOT_CONNECTED. Real auth failures surface as GMAIL_AUTH_FAILED
+        # downstream.
+        logger.warning(f"[verify] transient token-load failure ({exc}) — will retry next poll")
+        return None
     if not refresh_token:
         logger.info(
             f"[verify] candidate {candidate_id[:8]} has no google_refresh_token; "
@@ -567,6 +608,8 @@ async def fetch_verification_code(
     try:
         return await _fetch_code_async(refresh_token, after_epoch, timeout_s=timeout_s)
     except Exception as exc:
+        if "GMAIL_AUTH_FAILED" in str(exc):
+            raise
         logger.warning(f"[verify] fetch_verification_code failed: {exc}")
         return None
 
@@ -581,6 +624,12 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
         logger.warning(f"[verify] cannot import DB session: {exc}")
         return None
     try:
+        import uuid
+        if isinstance(candidate_id, str):
+            try:
+                candidate_id = uuid.UUID(candidate_id)
+            except ValueError:
+                pass
         async with task_session() as s:
             row = (
                 await s.execute(select(Candidate).where(Candidate.id == candidate_id))
@@ -589,5 +638,10 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
                 return None
             return row.google_refresh_token or None
     except Exception as exc:
+        # IMPORTANT: a query failure (closed event loop, transient DB drop, pool
+        # exhaustion) is NOT the same as "no token". Raise a distinct sentinel
+        # so the caller can degrade-open instead of mistakenly aborting the
+        # apply as GMAIL_NOT_CONNECTED. The pre-check in AgentLoop catches
+        # this and assumes the token IS present.
         logger.warning(f"[verify] refresh-token query failed: {exc}")
-        return None
+        raise RuntimeError(f"REFRESH_TOKEN_QUERY_FAILED: {exc}")

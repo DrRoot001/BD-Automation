@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "ats": "www.remoterocketship.com",
+    "last_updated": 1782797269
+  },
+  "how_did_you_hear_about_this_job": [
+    "input[name='job_application[source_id]']",
+    "input[value=\"Online\"]"
+  ],
+  "resume_input": [
+    "input[type='file'][name='resume']"
+  ]
+}

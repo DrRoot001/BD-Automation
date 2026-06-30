@@ -156,6 +156,21 @@ async def solve_recaptcha_v2_via_audio(
     if anchor is None:
         return AudioSolveResult(success=False, error="no_recaptcha_iframe")
 
+    # ─── Guard: bail out immediately if this is an invisible reCAPTCHA ──
+    # Invisible v2 has no visual checkbox to click. Attempting to click
+    # #recaptcha-anchor will time out for 8s then fail. Detect and abort early.
+    try:
+        # Check the main page's .g-recaptcha element for data-size="invisible"
+        is_invisible = await page.evaluate("""() => {
+            const el = document.querySelector('.g-recaptcha');
+            return el ? (el.getAttribute('data-size') || '').toLowerCase() === 'invisible' : false;
+        }""")
+        if is_invisible:
+            logger.info("[audio-captcha] Detected invisible reCAPTCHA — skipping audio solver")
+            return AudioSolveResult(success=False, error="invisible_recaptcha_skipped")
+    except Exception:
+        pass
+
     # ─── Step 2: click the checkbox ─────────────────────────────────────
     # The anchor iframe can be present in page.frames before its DOM has
     # painted the #recaptcha-anchor checkbox, so a bare click times out.
