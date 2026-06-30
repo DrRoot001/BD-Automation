@@ -21,12 +21,24 @@ settings = get_settings()
 # ── HTTP connection pool ────────────────────────────────────────────────────
 # Shared across requests — avoids opening a new connection per token validation.
 _http_client: AsyncClient | None = None
+_http_client_loop: asyncio.AbstractEventLoop | None = None
 
 def get_http_client() -> AsyncClient:
-    global _http_client
-    if _http_client is None:
+    global _http_client, _http_client_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+
+    if _http_client is None or _http_client_loop != current_loop:
+        if _http_client is not None and current_loop is not None:
+            try:
+                current_loop.create_task(_http_client.aclose())
+            except Exception:
+                pass
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
         _http_client = AsyncClient(limits=limits, timeout=10.0)
+        _http_client_loop = current_loop
     return _http_client
 
 

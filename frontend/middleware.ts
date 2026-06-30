@@ -44,12 +44,21 @@ export async function middleware(request: NextRequest) {
 
   // 3. Action based on auth validation
   if (!user) {
+    const isLoginPath = url.pathname.startsWith('/login')
     if (isUnauthorized || !isTransientError) {
+      if (isLoginPath) {
+        const response = NextResponse.next()
+        response.cookies.delete('auth_token')
+        return response
+      }
       const response = NextResponse.redirect(new URL('/login', request.url))
       response.cookies.delete('auth_token')
       return response
     } else {
-      // Transient network timeout or server error. Redirect to login, but DO NOT delete token.
+      // Transient network timeout or server error. Redirect to login if not already there, but DO NOT delete token.
+      if (isLoginPath) {
+        return NextResponse.next()
+      }
       return NextResponse.redirect(new URL('/login', request.url))
     }
   }
