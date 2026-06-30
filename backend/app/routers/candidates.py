@@ -122,15 +122,23 @@ async def upload_candidate_resume(
     supabase_name = f"{candidate_id}_base_{uuid.uuid4().hex[:8]}.pdf"
     file_url: str | None = None
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=True) as tmp:
-        tmp.write(content)
-        tmp.flush()
-        try:
-            uploaded_url = await _upload(tmp.name, "resume", supabase_name)
-            if uploaded_url and uploaded_url.startswith("http"):
-                file_url = uploaded_url
-        except Exception:
-            pass
+    import os
+    # Create temp file, close it immediately to release Windows file lock before uploading
+    fd, temp_path = tempfile.mkstemp(suffix=".pdf")
+    try:
+        with os.fdopen(fd, "wb") as tmp:
+            tmp.write(content)
+        # Upload now that the file handle is closed
+        uploaded_url = await _upload(temp_path, "resume", supabase_name, clean_local=True)
+        if uploaded_url and uploaded_url.startswith("http"):
+            file_url = uploaded_url
+    finally:
+        # Ensure cleanup in case upload failed or didn't delete the file
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except Exception:
+                pass
 
     if not file_url:
         raise HTTPException(status_code=500, detail="Failed to upload resume to Supabase. Check server logs for details.")
