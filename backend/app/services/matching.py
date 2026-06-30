@@ -315,6 +315,20 @@ async def run_matching_for_candidate(
     else:
         logger.info(f"[Matching] Candidate {candidate.name}: found {pgvector_passed_count} jobs passing pgvector similarity.")
 
+    # ── Diagnostic: surface platform distribution so we can tell whether
+    # non-Greenhouse jobs are even reaching the gate. Helps answer "why does
+    # only Greenhouse start?" — if this log shows {'greenhouse': N} only,
+    # the upstream sourcing/dedup is the bottleneck, not the executor.
+    try:
+        from collections import Counter as _Counter
+        _platform_counts = _Counter((j.source or "unknown").lower() for j in jobs)
+        logger.info(
+            f"[Matching] candidate={candidate.name} platform breakdown of "
+            f"selectable jobs: {dict(_platform_counts)}"
+        )
+    except Exception:
+        pass
+
     # 5. Process shortlist
     enqueued = []
     enqueued_job_ids = []
@@ -540,7 +554,10 @@ async def run_matching_for_candidate(
                     "screening_answers": result.get("screening_answers") or {}
                 }
 
-                logger.info(f"[Matching] Dispatching browser automation task: app={app_id}")
+                logger.info(
+                    f"[Matching] Dispatching browser automation task: app={app_id} "
+                    f"platform={package['platform']!r} url={package['job_url'][:80]!r}"
+                )
                 from app.tasks.browser_automation import execute_application
                 execute_application.delay(package)
 

@@ -37,6 +37,9 @@ engine = create_async_engine(
     pool_size=_DB_POOL_SIZE,
     max_overflow=_DB_MAX_OVERFLOW,
     pool_timeout=30,          # Wait up to 30s for a free connection instead of erroring under burst
+    # PgBouncer transaction-mode (Supabase port 6543) does NOT support
+    # asyncpg prepared statements — set cache size to 0 to disable them.
+    connect_args={"statement_cache_size": 0},
 )
 
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -60,7 +63,13 @@ async def task_session():
     Secondary benefit: avoids EMAXCONNSESSION on PgBouncer — connections are
     released immediately after each session instead of sitting in a pool.
     """
-    task_engine = create_async_engine(DATABASE_URL, poolclass=NullPool)
+    task_engine = create_async_engine(
+        DATABASE_URL,
+        poolclass=NullPool,
+        # PgBouncer transaction-mode (Supabase port 6543) does NOT support
+        # asyncpg prepared statements — must disable cache here too.
+        connect_args={"statement_cache_size": 0},
+    )
     try:
         maker = async_sessionmaker(task_engine, class_=AsyncSession, expire_on_commit=False)
         async with maker() as session:

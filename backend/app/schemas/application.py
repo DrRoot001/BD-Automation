@@ -33,6 +33,9 @@ class FailureReason(str, Enum):
     FORM_INCOMPLETE = "FORM_INCOMPLETE"
     JOB_EXPIRED = "JOB_EXPIRED"
     ROBOTS_BLOCKED = "ROBOTS_BLOCKED"
+    # Form was submitted to the ATS but the post-submit email-verification code
+    # could not be completed (Gmail not connected / code didn't arrive in time).
+    EMAIL_VERIFICATION = "EMAIL_VERIFICATION"
 
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus

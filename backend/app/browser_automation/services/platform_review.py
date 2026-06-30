@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from pathlib import Path
 from datetime import datetime, timedelta
 
@@ -35,6 +36,22 @@ _SKIP_PATTERNS = [
     "net::ERR_",                      # Chromium network errors
     "Timeout 20000ms",
     "Timeout 30000ms",
+    # ── Job-level (NOT platform) failures ──
+    # "Apply button not found" almost always means the job posting is closed or
+    # its DOM was changed for THAT listing — not that the ATS is broken. Counting
+    # it would lock out healthy hosts (especially wrappers like RemoteRocketship
+    # where many inner listings expire) after only a handful of stale jobs.
+    "Apply button not found",
+    "Apply now button not found",
+    "Workday Apply button not found",
+    # Missing credentials for account-walled ATSes — operator config gap, not a
+    # platform outage. Charging this to the platform would lock out Workday/
+    # iCIMS/Dice the moment we hit 5 jobs without creds configured.
+    "LOGIN_REQUIRED",
+    "Workday requires an account",
+    "iCIMS requires an account",
+    "Dice requires an account",
+    "DICE_EMAIL",
 ]
 
 # How many platform-relevant failures within the rolling window trigger a flag.
@@ -117,6 +134,15 @@ def record_platform_failure(platform: str, error_msg: str):
 
 
 def is_platform_flagged(platform: str) -> bool:
+    # Operator kill-switch. When set, the breaker NEVER gates execution — every
+    # platform is allowed to run regardless of historical failure count. Failures
+    # are still recorded for visibility, but the pre-flight check in
+    # executor.execute() passes through. Use this when you'd rather let a
+    # wrapper aggregator (RemoteRocketship, Remote100k) keep trying instead of
+    # locking it out after a handful of inner-ATS hiccups.
+    if os.getenv("DISABLE_PLATFORM_BREAKER", "").lower() in ("1", "true", "yes", "on"):
+        return False
+
     platform = platform.lower().strip()
     reviews = get_platform_reviews()
     entry = reviews.get(platform, {})

@@ -237,3 +237,4 @@ jinja2>=3.1.0
 xhtml2pdf>=0.2.17
 faster-whisper>=1.0.0
 passlib[bcrypt]
+freecaptcha>=1.2.0
