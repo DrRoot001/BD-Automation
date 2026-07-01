@@ -94,7 +94,7 @@ async def test_prepare_package_happy_path(
 ):
     """
     Test Case 1: Happy Path.
-    - All Gemini calls succeed, candidate score >= 70.
+    - All Gemini calls succeed, candidate score >= 89.
     - Assert correct responses are returned.
     - Assert progressive status progression: MATCHED -> RESUME_UPDATED -> COVER_LETTER_CREATED -> QUEUED.
     """
@@ -102,9 +102,9 @@ async def test_prepare_package_happy_path(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=85.0,
-        ats_score=80.0,
-        combined_score=82.5,
+        fit_score=95.0,
+        ats_score=90.0,
+        combined_score=92.5,
         should_apply=True,
         matching_skills=["Python"],
         missing_skills=[],
@@ -179,7 +179,7 @@ async def test_prepare_package_low_fit_score(
 ):
     """
     Test Case 2: Low Fit Score Gate.
-    - Candidate combined score < 70.
+    - Candidate combined score < 89.
     - Check that pipeline short-circuits.
     - Confirm status transitions directly to ANALYZED.
     - Assert that tailor, cover letter, and screening question logic were NOT called.
@@ -211,7 +211,7 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "Combined score (55.0) is below gate threshold of 80" in data["reason"]
+    assert "Combined score (55.0) is below gate threshold of 89" in data["reason"]
 
     # Assert gating works
     mock_tailor_resume.assert_not_called()
@@ -245,9 +245,9 @@ async def test_prepare_package_no_cover_letter(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=90.0,
-        ats_score=85.0,
-        combined_score=87.5,
+        fit_score=95.0,
+        ats_score=90.0,
+        combined_score=92.5,
         should_apply=True,
         matching_skills=["Python"],
         missing_skills=[],
@@ -314,9 +314,9 @@ async def test_prepare_package_resume_version_numbering(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=80.0,
-        ats_score=75.0,
-        combined_score=77.5,
+        fit_score=95.0,
+        ats_score=90.0,
+        combined_score=92.5,
         should_apply=True,
         matching_skills=["Python"],
         missing_skills=[],
