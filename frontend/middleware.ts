@@ -45,7 +45,7 @@ export async function middleware(request: NextRequest) {
   // 3. Action based on auth validation
   if (!user) {
     const isLoginPath = url.pathname.startsWith('/login')
-    if (isUnauthorized || !isTransientError) {
+    if (isUnauthorized) {
       if (isLoginPath) {
         const response = NextResponse.next()
         response.cookies.delete('auth_token')
@@ -54,13 +54,24 @@ export async function middleware(request: NextRequest) {
       const response = NextResponse.redirect(new URL('/login', request.url))
       response.cookies.delete('auth_token')
       return response
-    } else {
-      // Transient network timeout or server error. Redirect to login if not already there, but DO NOT delete token.
-      if (isLoginPath) {
-        return NextResponse.next()
-      }
-      return NextResponse.redirect(new URL('/login', request.url))
     }
+    
+    // Transient error (network timeout, backend restart): pass through rather than
+    // forcing a login redirect — the page-level queries will show their own error states.
+    if (isTransientError) {
+      const requestHeaders = new Headers(request.headers)
+      requestHeaders.set('Authorization', `Bearer ${token}`)
+      return NextResponse.next({
+        request: {
+          headers: requestHeaders,
+        },
+      })
+    }
+    
+    // Unknown state (shouldn't happen): clear and redirect
+    const response = NextResponse.redirect(new URL('/login', request.url))
+    response.cookies.delete('auth_token')
+    return response
   }
 
   // 4. Role-based routing
