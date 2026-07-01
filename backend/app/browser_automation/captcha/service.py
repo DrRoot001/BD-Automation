@@ -134,16 +134,17 @@ class CaptchaService:
     # Ocilar OCR
     # ──────────────────────────────────────────────────────────────────────────
 
-    async def _ocilar_solve_image(self, client: httpx.AsyncClient, image_b64: str) -> str:
+    async def _ocilar_solve_image(self, client: httpx.AsyncClient, image_b64: str, api_key: Optional[str] = None) -> str:
         """Submit a base64-encoded captcha image to Ocilar and return the OCR text.
 
         Ocilar uses Bearer-token auth (sk-... key format).  The endpoint below is
         the documented REST path — verify against https://ocilar.com/docs if it
         returns 404 and update _OCILAR_BASE accordingly.
         """
+        key = api_key or self.api_key
         resp = await client.post(
             f"{_OCILAR_BASE}/solve",
-            headers={"Authorization": f"Bearer {self.api_key}"},
+            headers={"Authorization": f"Bearer {key}"},
             json={"image": image_b64, "type": "text"},
             timeout=60,
         )
@@ -156,15 +157,16 @@ class CaptchaService:
         if "solution" in body:
             return body["solution"].get("text", "")
         if "task_id" in body:
-            return await self._ocilar_poll(client, body["task_id"])
+            return await self._ocilar_poll(client, body["task_id"], api_key=key)
         raise RuntimeError(f"Ocilar unexpected response: {body}")
 
-    async def _ocilar_poll(self, client: httpx.AsyncClient, task_id: str, polls: int = 12) -> str:
+    async def _ocilar_poll(self, client: httpx.AsyncClient, task_id: str, polls: int = 12, api_key: Optional[str] = None) -> str:
+        key = api_key or self.api_key
         for _ in range(polls):
             await asyncio.sleep(5)
             r = await client.get(
                 f"{_OCILAR_BASE}/tasks/{task_id}",
-                headers={"Authorization": f"Bearer {self.api_key}"},
+                headers={"Authorization": f"Bearer {key}"},
             )
             body = r.json()
             if body.get("status") == "ready":
@@ -262,15 +264,29 @@ class CaptchaService:
                                solve_time_seconds=time.monotonic() - start, cost_usd=0.002)
 
     async def solve_image_captcha(self, page: Page, captcha_type: str) -> CaptchaSolution:
-        """Solve an image/text captcha using Ocilar OCR."""
+        """Solve an image/text captcha using Ocilar OCR.
+
+        Always authenticates with the dedicated OCILAR_API_KEY, regardless of
+        which provider is configured as self.provider. solve() dispatches here
+        for captcha_type == "image" even when CAPTCHA_PROVIDER is "capsolver"
+        etc. — without this, self.api_key would hold that other provider's key
+        and every call would 401 against Ocilar's endpoint until the separate
+        end-of-solve() Ocilar fallback (which builds its own correctly-keyed
+        instance) finally took over.
+        """
         start = time.monotonic()
         image_b64 = await self._capture_captcha_image_b64(page, captcha_type)
         if not image_b64:
             return CaptchaSolution(captcha_type=captcha_type, success=False,  # type: ignore[arg-type]
                                    solve_time_seconds=0, cost_usd=0)
+        ocilar_key = os.getenv("OCILAR_API_KEY", "") if self.provider != "ocilar" else self.api_key
+        if not ocilar_key:
+            logger.warning("[CAPTCHA] No OCILAR_API_KEY configured — cannot solve image captcha")
+            return CaptchaSolution(captcha_type=captcha_type, success=False,  # type: ignore[arg-type]
+                                   solve_time_seconds=time.monotonic() - start, cost_usd=0)
         try:
             async with httpx.AsyncClient() as client:
-                text = await self._ocilar_solve_image(client, image_b64)
+                text = await self._ocilar_solve_image(client, image_b64, api_key=ocilar_key)
             if text:
                 return CaptchaSolution(captcha_type=captcha_type, token=text, success=True,  # type: ignore[arg-type]
                                        solve_time_seconds=time.monotonic() - start, cost_usd=0.001)

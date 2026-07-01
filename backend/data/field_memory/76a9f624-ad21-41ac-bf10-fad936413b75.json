@@ -15,6 +15,14 @@
     "source": "agent_loop",
     "value": "No"
   },
+  "are you able to come in to the san francisco office, at least, on a hybrid basis": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you able to come in to the San Francisco office, at least, on a hybrid basis?",
+    "last_seen": 1782896217,
+    "source": "agent_loop",
+    "value": "Yes, I live locally"
+  },
   "are you authorized to work in the stated location of this role": {
     "count": 1,
     "field_type": "select",
@@ -79,6 +87,22 @@
     "source": "agent_loop",
     "value": "No"
   },
+  "are you hispanic/latino -> no": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you Hispanic/Latino? -> No",
+    "last_seen": 1782896242,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you legally authorised to work in united states✱": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you legally authorised to work in United States?✱",
+    "last_seen": 1782898822,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
   "asian (not hispanic or latino)": {
     "count": 2,
     "field_type": "text",
@@ -103,6 +127,14 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "by submitting my application, i acknowledge that i have read and understand vercel’s job applicant privacy notice - https://vercel.com/legal/job-applicant-privacy-notice": {
+    "count": 1,
+    "field_type": "select",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel’s Job Applicant Privacy Notice - https://vercel.com/legal/job-applicant-privacy-notice *",
+    "last_seen": 1782889461,
+    "source": "rules",
+    "value": "Yes"
+  },
   "by submitting my application, i acknowledge that i have read and understand vercel’s job applicant privacy policy and that my personal data may be transferred to vercel or our service providers located in the united states or other countries, and that i understand my rights regarding my personal data, as stated in the policy, in any way": {
     "count": 1,
     "field_type": "text",
@@ -110,6 +142,22 @@
     "last_seen": 1782217692,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
+    "count": 2,
+    "field_type": "text",
+    "label": "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]",
+    "last_seen": 1782909827,
+    "source": "agent_loop",
+    "value": "Washington (WA)"
+  },
+  "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]",
+    "last_seen": 1782909863,
+    "source": "agent_loop",
+    "value": "$120,000 - $150,000"
   },
   "country": {
     "count": 1,
@@ -134,6 +182,30 @@
     "last_seen": 1782467032,
     "source": "agent_loop",
     "value": "Senior Software Engineer"
+  },
+  "current location ✱no location found. try entering a different locationloading": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Current location ✱No location found. Try entering a different locationLoading",
+    "last_seen": 1782898820,
+    "source": "rules",
+    "value": "San Francisco, CA, USA"
+  },
+  "degree": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Degree*",
+    "last_seen": 1782890279,
+    "source": "agent_loop",
+    "value": "Other"
+  },
+  "discipline": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Discipline*",
+    "last_seen": 1782890291,
+    "source": "agent_loop",
+    "value": "Computer Science"
   },
   "do you consent to brex processing your personal information for the purpose of assessing your candidacy for this position in accordance with brex’s applicant privacy policy": {
     "count": 1,
@@ -215,6 +287,14 @@
     "source": "resume_parse",
     "value": "sabih0364@gmail.com"
   },
+  "email✱": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Email✱",
+    "last_seen": 1782898819,
+    "source": "rules",
+    "value": "sabih0364@gmail.com"
+  },
   "first name": {
     "count": 18,
     "field_type": "text",
@@ -222,6 +302,22 @@
     "last_seen": 1782466462,
     "source": "agent_loop",
     "value": "Sabih"
+  },
+  "full name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Full Name",
+    "last_seen": 1782896158,
+    "source": "agent_loop",
+    "value": "Sabih Haider"
+  },
+  "full name✱": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Full name✱",
+    "last_seen": 1782898817,
+    "source": "rules",
+    "value": "Sabih Haider"
   },
   "gender": {
     "count": 1,
@@ -231,6 +327,14 @@
     "source": "llm:0.90",
     "value": "Prefer not to say"
   },
+  "github": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Github",
+    "last_seen": 1782889891,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
   "how did you hear about us": {
     "count": 15,
     "field_type": "text",
@@ -238,6 +342,14 @@
     "last_seen": 1782468064,
     "source": "agent_loop",
     "value": "Online"
+  },
+  "how many years of experience do you have in this specific job, or in a related f": {
+    "count": 1,
+    "field_type": "text",
+    "label": "How many years of experience do you have in this specific job, or in a related f",
+    "last_seen": 1782890317,
+    "source": "agent_loop",
+    "value": "5 years"
   },
   "how would you describe your gender identity (mark all that apply)": {
     "count": 8,
@@ -303,6 +415,14 @@
     "source": "policy_override",
     "value": "N/A"
   },
+  "location": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Location",
+    "last_seen": 1782896207,
+    "source": "agent_loop",
+    "value": "San Francisco, CA, USA"
+  },
   "location (city)": {
     "count": 2,
     "field_type": "text",
@@ -333,6 +453,14 @@
     "label": "Phone Number",
     "last_seen": 1782768989,
     "source": "profile_direct",
+    "value": "+13410084746"
+  },
+  "phone ✱": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone ✱",
+    "last_seen": 1782898819,
+    "source": "rules",
     "value": "+13410084746"
   },
   "please double-check all the information provided above. ensuring accuracy is cru": {
@@ -366,6 +494,22 @@
     "last_seen": 1782185297,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "please provide the name of your current (or most recent) company": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Please provide the name of your current (or most recent) company",
+    "last_seen": 1782890306,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
+  "preferred first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred First Name",
+    "last_seen": 1782889454,
+    "source": "rules",
+    "value": "Sabih"
   },
   "security code": {
     "count": 2,
@@ -407,6 +551,22 @@
     "source": "agent_loop",
     "value": "United States"
   },
+  "what gender do you identify with -> male": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What gender do you identify with? -> Male",
+    "last_seen": 1782896227,
+    "source": "agent_loop",
+    "value": "Male"
+  },
+  "what is your expected compensation": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your expected compensation?",
+    "last_seen": 1782898651,
+    "source": "agent_loop",
+    "value": "$120,000 - $150,000 USD"
+  },
   "where did you first hear about this role": {
     "count": 5,
     "field_type": "text",
@@ -415,6 +575,38 @@
     "source": "agent_loop",
     "value": "LinkedIn"
   },
+  "why are you interested in working at suno": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Why are you interested in working at Suno?",
+    "last_seen": 1782895922,
+    "source": "agent_loop",
+    "value": "I am a highly proficient Full Stack Engineer with 2+ years of experience in developing robust internal tooling and scalable applications, aligning well with the 'Pro-Create' aspect of this role. My expertise in backend systems, API integrations, and CI/CD pipelines, as demonstrated by leading development for platforms like Finmile and optimizing database performance, would allow me to contribute significantly to Suno's engineering team. I am eager to apply my skills in a dynamic environment focused on innovative software solutions."
+  },
+  "will you now or in the future require sponsorship for employment (e.g., work visa, visa transfer) in united states✱": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require sponsorship for employment (e.g., work visa, visa transfer) in United States?✱",
+    "last_seen": 1782898823,
+    "source": "rules",
+    "value": "No"
+  },
+  "will you now or in the future require sponsorship for employment visa status": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Will you now or in the future require sponsorship for employment visa status?",
+    "last_seen": 1782909793,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "will you now or in the future require sponsorship for employment visa status (e.g., h-1b, tn, etc.) -> no": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Will you now or in the future require sponsorship for employment visa status (e.g., H-1B, TN, etc.)? -> No",
+    "last_seen": 1782896263,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "will you require visa sponsorship now, or in the future": {
     "count": 5,
     "field_type": "text",
@@ -422,5 +614,13 @@
     "last_seen": 1782188243,
     "source": "agent_loop",
     "value": "No"
+  },
+  "your authorization to work in the country where you live. please choose the option that describes your work authorization": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Your authorization to work in the country where you live. Please choose the option that describes your work authorization.\n*",
+    "last_seen": 1782889460,
+    "source": "rules",
+    "value": "Yes"
   }
 }

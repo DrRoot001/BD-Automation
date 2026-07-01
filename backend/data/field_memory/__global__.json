@@ -39,6 +39,14 @@
     "source": "agent_loop",
     "value": "No"
   },
+  "are you able to come in to the san francisco office, at least, on a hybrid basis": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you able to come in to the San Francisco office, at least, on a hybrid basis?",
+    "last_seen": 1782896217,
+    "source": "agent_loop",
+    "value": "Yes, I live locally"
+  },
   "are you at least 18 years of age": {
     "count": 2,
     "field_type": "text",
@@ -231,6 +239,14 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "by submitting my application, i acknowledge that i have read and understand vercel’s job applicant privacy notice - https://vercel.com/legal/job-applicant-privacy-notice": {
+    "count": 1,
+    "field_type": "select",
+    "label": "By submitting my application, I acknowledge that I have read and understand Vercel’s Job Applicant Privacy Notice - https://vercel.com/legal/job-applicant-privacy-notice *",
+    "last_seen": 1782889461,
+    "source": "rules",
+    "value": "Yes"
+  },
   "by submitting my application, i acknowledge that i have read and understand vercel’s job applicant privacy policy and that my personal data may be transferred to vercel or our service providers located in the united states or other countries, and that i understand my rights regarding my personal data, as stated in the policy, in any way": {
     "count": 1,
     "field_type": "text",
@@ -239,13 +255,29 @@
     "source": "agent_loop",
     "value": "Yes"
   },
-  "degree": {
+  "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
+    "count": 2,
+    "field_type": "text",
+    "label": "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]",
+    "last_seen": 1782909827,
+    "source": "agent_loop",
+    "value": "Washington (WA)"
+  },
+  "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]": {
     "count": 1,
-    "field_type": "select",
-    "label": "Degree",
-    "last_seen": 1782051487,
-    "source": "rules",
-    "value": "Bachelor's Degree"
+    "field_type": "text",
+    "label": "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]",
+    "last_seen": 1782909863,
+    "source": "agent_loop",
+    "value": "$120,000 - $150,000"
+  },
+  "degree": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Degree*",
+    "last_seen": 1782890279,
+    "source": "agent_loop",
+    "value": "Other"
   },
   "disability status": {
     "count": 1,
@@ -254,6 +286,14 @@
     "last_seen": 1781982799,
     "source": "llm:0.90",
     "value": "Prefer not to answer"
+  },
+  "discipline": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Discipline*",
+    "last_seen": 1782890291,
+    "source": "agent_loop",
+    "value": "Computer Science"
   },
   "do you consent to brex processing your personal information for the purpose of assessing your candidacy for this position in accordance with brex’s applicant privacy policy": {
     "count": 1,
@@ -494,6 +534,14 @@
     "last_seen": 1782075734,
     "source": "screening",
     "value": "Not provided in candidate profile - work history reflects individual contributor and technical leadership roles, not people management experience"
+  },
+  "how many years of experience do you have in this specific job, or in a related f": {
+    "count": 1,
+    "field_type": "text",
+    "label": "How many years of experience do you have in this specific job, or in a related f",
+    "last_seen": 1782890317,
+    "source": "agent_loop",
+    "value": "5 years"
   },
   "i confirm and agree": {
     "count": 1,
@@ -743,6 +791,14 @@
     "source": "llm:0.70",
     "value": "Software Engineer"
   },
+  "what is your expected compensation": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your expected compensation?",
+    "last_seen": 1782898651,
+    "source": "agent_loop",
+    "value": "$120,000 - $150,000 USD"
+  },
   "when is the earliest you would want to start working with us": {
     "count": 1,
     "field_type": "text",
@@ -782,6 +838,14 @@
     "last_seen": 1782028431,
     "source": "llm:0.40",
     "value": "I am highly interested in contributing to cutting-edge AI research and development at Anthropic. My experience as a Frontend Engineer aligns well with the innovative work being done here, and I am eager to apply my skills to impactful projects."
+  },
+  "why are you interested in working at suno": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Why are you interested in working at Suno?",
+    "last_seen": 1782895922,
+    "source": "agent_loop",
+    "value": "I am a highly proficient Full Stack Engineer with 2+ years of experience in developing robust internal tooling and scalable applications, aligning well with the 'Pro-Create' aspect of this role. My expertise in backend systems, API integrations, and CI/CD pipelines, as demonstrated by leading development for platforms like Finmile and optimizing database performance, would allow me to contribute significantly to Suno's engineering team. I am eager to apply my skills in a dynamic environment focused on innovative software solutions."
   },
   "why scale ai": {
     "count": 1,

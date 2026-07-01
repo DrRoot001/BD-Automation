@@ -364,6 +364,18 @@ class ApplicationExecutor:
             if not _temp_resume:
                 raise FileNotFoundError(f"Resume file could not be resolved: {package.resume_url}")
 
+            # Backfill thin/generic candidate_profile fields (e.g. location
+            # stored as just "US") from the resume PDF itself — the resume
+            # header is the source of truth for the candidate's actual city
+            # and state. Mutates package.candidate_profile in place so every
+            # downstream consumer (AgentLoop prompt, adapters, LLM filler)
+            # sees the enriched value without any test-only env overrides.
+            try:
+                from .resume_enricher import enrich_profile_from_resume
+                enrich_profile_from_resume(package.candidate_profile, _temp_resume)
+            except Exception as exc:
+                logger.warning(f"[M4] Resume enrichment failed (non-fatal): {exc}")
+
             _temp_cover: Optional[str] = None
             if package.cover_letter_url:
                 _temp_cover = await _resolve_file_to_local_path(package.cover_letter_url, ".pdf")
