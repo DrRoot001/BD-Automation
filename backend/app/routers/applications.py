@@ -209,6 +209,7 @@ class PreparePackageRequest(BaseModel):
     job_id: str
     needs_cover_letter: bool
     screening_questions: List[str]
+    skip_gate: Optional[bool] = False
 
 class PreparePackageResponse(BaseModel):
     should_apply: bool
@@ -238,6 +239,7 @@ async def prepare_package(request: PreparePackageRequest):
             needs_cover_letter=request.needs_cover_letter,
             screening_questions=request.screening_questions,
             api_base_url=api_base_url,
+            skip_gate=request.skip_gate
         )
         return PreparePackageResponse(**result)
     except ValueError as ve:

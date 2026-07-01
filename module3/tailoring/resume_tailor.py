@@ -95,7 +95,7 @@ async def tailor_resume(
     resume_json = {
         "basics": {
             "name": _first_non_blank(candidate_profile.get("name"), "Candidate"),
-            "headline": "",
+            "headline": getattr(resume.sections, "current_title", "") or "",
             "email": _first_non_blank(candidate_profile.get("email"), getattr(resume.sections, "email", None)),
             "phone": _first_non_blank(candidate_profile.get("phone"), getattr(resume.sections, "phone", None)),
             "location": _first_non_blank(candidate_profile.get("location")),
@@ -144,11 +144,22 @@ async def tailor_resume(
 
     from module3.utils.gemini import generate_content_with_retry
 
+    # Check if the JD says the work type is contract
+    is_contract = False
+    if job.job_type and job.job_type == "contract":
+        is_contract = True
+    elif job.description and "contract" in job.description.lower():
+        is_contract = True
+    elif job.title and "contract" in job.title.lower():
+        is_contract = True
+
     max_loops = 5
     loop_count = 0
     final_resume_json = resume_json
 
-    while current_ats_score < 90.0 and loop_count < max_loops:
+    # Always run at least one iteration if it's a contract role,
+    # otherwise run if the score is less than or equal to 89.0 (not greater than 89).
+    while (current_ats_score <= 89.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
