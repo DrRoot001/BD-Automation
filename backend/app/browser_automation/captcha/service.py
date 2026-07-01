@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 _PROVIDER_ENV = {
     "2captcha":   "TWO_CAPTCHA_API_KEY",
     "anticaptcha": "ANTI_CAPTCHA_API_KEY",
+    "capsolver":  "CAPSOLVER_API_KEY",
     "ocilar":     "OCILAR_API_KEY",
     # "ai" provider uses the same Claude/LLM client the AgentLoop talks to —
     # no separate API key required; reuses ANTHROPIC_API_KEY / fallback chain.
@@ -101,6 +102,35 @@ class CaptchaService:
         raise TimeoutError("AntiCaptcha: timed out waiting for solution")
 
     # ──────────────────────────────────────────────────────────────────────────
+    # CapSolver
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def _capsolver_submit(self, client: httpx.AsyncClient, task: dict) -> str:
+        resp = await client.post(
+            "https://api.capsolver.com/createTask",
+            json={"clientKey": self.api_key, "task": task},
+        )
+        body = resp.json()
+        if body.get("errorId") != 0:
+            raise RuntimeError(f"CapSolver submit failed: {body.get('errorDescription')}")
+        return body["taskId"]
+
+    async def _capsolver_poll(self, client: httpx.AsyncClient, task_id: str, polls: int = 18) -> str:
+        for _ in range(polls):
+            await asyncio.sleep(10)
+            r = await client.post(
+                "https://api.capsolver.com/getTaskResult",
+                json={"clientKey": self.api_key, "taskId": task_id},
+            )
+            body = r.json()
+            if body.get("errorId") != 0:
+                raise RuntimeError(f"CapSolver error: {body.get('errorDescription')}")
+            if body.get("status") == "ready":
+                sol = body.get("solution", {})
+                return sol.get("gRecaptchaResponse") or sol.get("text") or ""
+        raise TimeoutError("CapSolver: timed out waiting for solution")
+
+    # ──────────────────────────────────────────────────────────────────────────
     # Ocilar OCR
     # ──────────────────────────────────────────────────────────────────────────
 
@@ -177,9 +207,16 @@ class CaptchaService:
                         "websiteKey": site_key,
                     })
                     token = await self._anticaptcha_poll(client, tid)
+                elif self.provider == "capsolver":
+                    tid = await self._capsolver_submit(client, {
+                        "type": "NoCaptchaTaskProxyless",
+                        "websiteURL": page_url,
+                        "websiteKey": site_key,
+                    })
+                    token = await self._capsolver_poll(client, tid)
                 else:
-                    raise RuntimeError("Ocilar does not support reCAPTCHA v2 token solving; "
-                                       "use 2captcha or anticaptcha for this type.")
+                    raise RuntimeError("Provider does not support reCAPTCHA v2 token solving; "
+                                       "use 2captcha, anticaptcha, or capsolver for this type.")
         except Exception as exc:
             logger.error(f"[CAPTCHA] solve_recaptcha_v2 ({self.provider}) failed: {exc}")
             return CaptchaSolution(captcha_type="recaptcha_v2", success=False,
@@ -207,8 +244,15 @@ class CaptchaService:
                         "websiteKey": site_key,
                     })
                     token = await self._anticaptcha_poll(client, tid)
+                elif self.provider == "capsolver":
+                    tid = await self._capsolver_submit(client, {
+                        "type": "HCaptchaTaskProxyless",
+                        "websiteURL": page_url,
+                        "websiteKey": site_key,
+                    })
+                    token = await self._capsolver_poll(client, tid)
                 else:
-                    raise RuntimeError("Ocilar does not support hCaptcha token solving.")
+                    raise RuntimeError("Provider does not support hCaptcha token solving.")
         except Exception as exc:
             logger.error(f"[CAPTCHA] solve_hcaptcha ({self.provider}) failed: {exc}")
             return CaptchaSolution(captcha_type="hcaptcha", success=False,

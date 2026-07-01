@@ -14,6 +14,8 @@ class CandidateCreate(BaseModel):
     tech_stack: List[str] = []
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
+    gmail: Optional[str] = None
+    password: Optional[str] = None
 
 class CandidateUpdate(BaseModel):
     name: Optional[str] = None
@@ -24,6 +26,8 @@ class CandidateUpdate(BaseModel):
     tech_stack: Optional[List[str]] = None
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
+    gmail: Optional[str] = None
+    password: Optional[str] = None
 
 class CandidateResponse(CandidateCreate):
     model_config = ConfigDict(from_attributes=True)

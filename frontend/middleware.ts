@@ -15,7 +15,22 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next()
   }
 
-  // 2. Fetch current user from backend with 8s timeout
+  // 2. Always inject Authorization header for all requests early so that if we return NextResponse.next()
+  // it includes the token. The Next.js rewrite will forward it to the backend.
+  const requestHeaders = new Headers(request.headers)
+  requestHeaders.set('Authorization', `Bearer ${token}`)
+  const nextResponseWithHeaders = NextResponse.next({
+    request: {
+      headers: requestHeaders,
+    },
+  })
+
+  // If it's an API call, we DO NOT need to check /api/auth/me here because the backend handles it.
+  if (url.pathname.startsWith('/api/')) {
+    return nextResponseWithHeaders
+  }
+
+  // 3. Fetch current user from backend with 3s timeout (for page routes only)
   let user: { role?: string } | null = null
   let isUnauthorized = false
   let isTransientError = false
@@ -42,7 +57,7 @@ export async function middleware(request: NextRequest) {
     isTransientError = true
   }
 
-  // 3. Action based on auth validation
+  // 4. Action based on auth validation
   if (!user) {
     const isLoginPath = url.pathname.startsWith('/login')
     if (isUnauthorized) {
@@ -59,13 +74,7 @@ export async function middleware(request: NextRequest) {
     // Transient error (network timeout, backend restart): pass through rather than
     // forcing a login redirect — the page-level queries will show their own error states.
     if (isTransientError) {
-      const requestHeaders = new Headers(request.headers)
-      requestHeaders.set('Authorization', `Bearer ${token}`)
-      return NextResponse.next({
-        request: {
-          headers: requestHeaders,
-        },
-      })
+      return nextResponseWithHeaders
     }
     
     // Unknown state (shouldn't happen): clear and redirect
@@ -74,7 +83,7 @@ export async function middleware(request: NextRequest) {
     return response
   }
 
-  // 4. Role-based routing
+  // 5. Role-based routing
   const role = user.role
 
   if (url.pathname === '/' || url.pathname.startsWith('/login')) {
@@ -91,16 +100,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 5. Inject Authorization header for all /api requests sent from the client
-  // The client hits Next.js /api/..., the middleware adds the header, and then the rewrite forwards it.
-  const requestHeaders = new Headers(request.headers)
-  requestHeaders.set('Authorization', `Bearer ${token}`)
-
-  return NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
-  })
+  return nextResponseWithHeaders
 }
 
 export const config = {

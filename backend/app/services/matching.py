@@ -26,22 +26,31 @@ settings = get_settings()
 async def get_active_application_count(
     candidate_id: UUID,
     session: AsyncSession,
-    since_datetime: Optional[datetime] = None
+    since_datetime: Optional[datetime] = None,
+    inflight_only: bool = False
 ) -> int:
     """
     Counts active applications for the candidate, excluding any that are stale
     (stuck in QUEUED > 15 mins, or APPLICATION_STARTED/FORM_COMPLETED > 30 mins).
     Optionally filters to applications created after since_datetime.
+    If inflight_only is True, only counts applications currently being processed.
     """
     from datetime import datetime, timezone, timedelta
     from app.models.application import Application
     from app.models.application_history import ApplicationHistory
     
-    active_statuses = {
-        "QUEUED", "SUBMITTED", "CONFIRMED", "APPLICATION_STARTED", "FORM_COMPLETED",
-        "INTERVIEW_R1", "INTERVIEW_R2", "INTERVIEW_R3", "INTERVIEW_R4", "OFFER",
-        "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED"
-    }
+    if inflight_only:
+        active_statuses = {
+            "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
+            "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED"
+        }
+    else:
+        active_statuses = {
+            "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
+            "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED",
+            "SUBMITTED", "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2", 
+            "INTERVIEW_R3", "INTERVIEW_R4", "OFFER"
+        }
     
     is_mock = type(session).__name__ in ("AsyncMock", "MagicMock") or hasattr(session, "_mock_self")
     
@@ -224,12 +233,12 @@ async def run_matching_for_candidate(
     t0 = time.time()
     max_daily = None  # initialized here so it's always defined in the loop below
     if manual_limit is not None:
-        active_count = await get_active_application_count(candidate_id, session)
+        active_count = await get_active_application_count(candidate_id, session, inflight_only=True)
         remaining_slots = max(0, manual_limit - active_count)
         logger.info(f"[Matching] active count done in {time.time()-t0:.2f}s")
-        logger.info(f"[Matching] Candidate {candidate.name}: manual run with limit={manual_limit}, active={active_count}, remaining={remaining_slots}")
+        logger.info(f"[Matching] Candidate {candidate.name}: manual run with limit={manual_limit}, inflight={active_count}, remaining={remaining_slots}")
         if remaining_slots <= 0:
-            logger.info(f"[Matching] Candidate {candidate.name}: limit reached (limit={manual_limit}, active={active_count}).")
+            logger.info(f"[Matching] Candidate {candidate.name}: limit reached (limit={manual_limit}, inflight={active_count}).")
             return {"error": "limit_reached", "active_count": active_count}
     else:
         max_daily = getattr(candidate, "max_daily_apps_override", None)

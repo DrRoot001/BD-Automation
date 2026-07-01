@@ -39,6 +39,14 @@
     "source": "agent_loop",
     "value": "No"
   },
+  "are you at least 18 years of age": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you at least 18 years of age?*",
+    "last_seen": 1782856428,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
   "are you authorized to work in the uk": {
     "count": 2,
     "field_type": "text",
@@ -255,6 +263,14 @@
     "source": "llm:0.90",
     "value": "Yes"
   },
+  "do you currently work for datavant, cvs or any affiliates of either company": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you currently work for Datavant, CVS or any affiliates of either company?*",
+    "last_seen": 1782856481,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
   "do you currently work for or have you ever worked for a u.s. government entity,": {
     "count": 2,
     "field_type": "text",
@@ -318,6 +334,14 @@
     "last_seen": 1782186200,
     "source": "agent_loop",
     "value": "No"
+  },
+  "do you have a high school diploma or equivalent (ged)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you have a High School Diploma or Equivalent (GED)?*",
+    "last_seen": 1782856477,
+    "source": "smart_infer",
+    "value": "Yes"
   },
   "do you have any deadlines or timeline considerations we should be aware of": {
     "count": 1,
@@ -391,6 +415,22 @@
     "source": "llm:0.40",
     "value": "No"
   },
+  "have you ever worked for datavant or one of our affiliates (ciox health, arrohe": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Have you ever worked for Datavant or one of our affiliates? (Ciox Health, ArroHe",
+    "last_seen": 1782856406,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "have you ever worked for datavant or one of our affiliates (ciox health, arrohealth, iod, ecs, healthport, medal, medsave, chart one, discovery health, documentation solutions, smart corp, care communications, aetion, digital owl, ontellus)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Have you ever worked for Datavant or one of our affiliates? (Ciox Health, ArroHealth, IOD, ECS, Healthport, Medal, MedSave, Chart One, Discovery Health, Documentation Solutions, Smart Corp, Care Communications, Aetion, Digital Owl, Ontellus)?*",
+    "last_seen": 1782856475,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
   "have you led multiple large, parallel, technically complex engineering projects (multi-quarter in scope) to production simultaneously- without being a hands-on individual contributor": {
     "count": 1,
     "field_type": "select",
@@ -461,6 +501,14 @@
     "label": "I confirm and agree",
     "last_seen": 1781982234,
     "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "i consent to receive text messages regarding my job application status, interview updates, and future job opportunities from datavant. you can opt out any time by texting stop. for assistance, text help. message & data rates may apply; messaging frequency may vary. visit www.datavant.com/privacy-policy to see our privacy policy": {
+    "count": 2,
+    "field_type": "select",
+    "label": "I consent to receive text messages regarding my job application status, interview updates, and future job opportunities from Datavant. You can opt out any time by texting STOP. For assistance, text HELP. Message & data rates may apply; Messaging frequency may vary. Visit www.datavant.com/privacy-policy to see our privacy policy.*",
+    "last_seen": 1782856616,
+    "source": "rules",
     "value": "Yes"
   },
   "if yes, please provide further explanation below": {
@@ -664,12 +712,12 @@
     "value": "Yes"
   },
   "veteran status": {
-    "count": 1,
+    "count": 2,
     "field_type": "select",
-    "label": "Veteran Status",
-    "last_seen": 1782468159,
-    "source": "llm:0.90",
-    "value": "Prefer not to say"
+    "label": "Veteran Status*",
+    "last_seen": 1782856473,
+    "source": "rules",
+    "value": "I am not a protected veteran"
   },
   "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
     "count": 1,
@@ -742,6 +790,14 @@
     "last_seen": 1782751813,
     "source": "agent_loop",
     "value": "I am passionate about the mission of Scale AI and excited by the opportunity to contribute to cutting-edge Generative AI platforms."
+  },
+  "will you now or in the future require datavant to participate in a government program to maintain your work authorization (such as completing training verification for opt or stem opt)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require Datavant to participate in a government program to maintain your work authorization (such as completing training verification for OPT or STEM OPT)?*",
+    "last_seen": 1782856480,
+    "source": "rules",
+    "value": "Yes"
   },
   "years of experience": {
     "count": 1,

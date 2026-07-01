@@ -267,7 +267,7 @@ async def create_jobs(
 
     for job in created:
         await db.refresh(job)
-        if not job.embedding:
+        if job.embedding is None:
             from app.tasks.embedding_generation import generate_job_embedding
             generate_job_embedding.delay(str(job.id))
 

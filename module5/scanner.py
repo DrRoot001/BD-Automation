@@ -96,6 +96,7 @@ async def scan_candidate_inbox(candidate_id: str, db_session) -> int:
             VALUES
               (gen_random_uuid(), :cid, :app_id, :gmail_id, :from_addr, :subject,
                :body_text, :classification, :confidence, :received_at, NOW())
+            ON CONFLICT (gmail_id) DO NOTHING
         """), {
             "cid": candidate_id,
             "app_id": app_id,
