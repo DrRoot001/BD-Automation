@@ -456,6 +456,19 @@ def execute_application(self, package_dict: dict):
             ))
             return {"status": "FAILED", "error": err_msg}
 
+        # Ashby indicates the candidate already has an application on file for
+        # this job. Not a bot-detection or form-quality problem — retrying
+        # would just hit the same wall every attempt. Distinct reason so the
+        # operator sees "already applied" rather than a misleading FAILED.
+        if "ALREADY_APPLIED" in err_msg:
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="ALREADY_APPLIED",
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
         if "PLATFORM_NEEDS_REVIEW" in err_msg or "flagged as needing review" in err_msg.lower():
             asyncio.run(publish_application_failed(
                 application_id=package_dict.get("application_id", ""),

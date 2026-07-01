@@ -15,7 +15,9 @@ The detector + filler already handle `custom_widget=True` selects.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from typing import Optional, Tuple
 
 from playwright.async_api import Frame, Page
@@ -68,6 +70,19 @@ _SPAM_PATTERNS = (
     "we were unable to submit",
 )
 
+# Ashby shows this instead of the normal form when the candidate (by email)
+# has already submitted an application for this job. This is NOT a failure —
+# it's a distinct, expected outcome — so it must be classified separately
+# rather than falling through to a generic FAILED that Celery would retry
+# (retrying would just hit the same wall every attempt).
+_ALREADY_APPLIED_PATTERNS = (
+    "already applied",
+    "already submitted an application",
+    "you've already applied",
+    "you have already applied",
+    "already have an application on file",
+)
+
 
 class AshbyAdapter(BasePlatformAdapter):
     platform_name = "ashby"
@@ -77,11 +92,71 @@ class AshbyAdapter(BasePlatformAdapter):
         self._iframe_mode: bool = False
         self._frame: Optional[Frame] = None
 
+    @staticmethod
+    def _build_application_url(job_url: str) -> str:
+        """Append '/application' to the PATH, not the raw URL string.
+
+        Only applies on the canonical jobs.ashbyhq.com board host, where the
+        <job-id>/application route convention is known to hold. Custom-domain
+        or query-param-addressed pages (e.g. Ashby's own www.ashbyhq.com/
+        careers?ashby_jid=<uuid>, or a company's bespoke careers site) use a
+        completely different routing model — for those, blindly concatenating
+        "/application" onto the end of the URL string lands AFTER the query
+        string (?ashby_jid=<uuid>/application), corrupting the job id and
+        producing a "Job not found" page. For any non-canonical host, return
+        the URL unchanged and let the existing Apply-button detection below
+        (plus the vision PageAgent and AgentLoop's own click_apply retries)
+        find and click whatever the real application entry point is.
+        """
+        from urllib.parse import urlparse, urlunparse
+        parsed = urlparse(job_url)
+        host = (parsed.hostname or "").lower()
+        if host != "jobs.ashbyhq.com":
+            return job_url
+        path = parsed.path.rstrip("/")
+        if path.endswith("/application"):
+            return job_url
+        return urlunparse(parsed._replace(path=path + "/application"))
+
+    async def _wait_for_job_content(self, page: Page, timeout_ms: int = 15_000) -> None:
+        """Poll until the page shows real job content, not just the site shell.
+
+        Custom-domain Ashby pages (e.g. Ashby's own careers page addressed by
+        a query-string job id) fetch job details asynchronously AFTER the
+        initial shell is interactive — `networkidle` can fire well before
+        that fetch resolves, leaving the page looking like a generic "no job
+        here" shell (nav/footer only) when the real posting + Apply button
+        genuinely exist a couple seconds later. Poll for body text actually
+        containing "apply" and having grown past a trivial length, rather
+        than trusting one fixed delay. Exits immediately once real content
+        shows up; degrades to a no-op if content never grows (genuinely thin
+        page — the existing Apply-detection below will report that honestly).
+        """
+        deadline = time.monotonic() + (timeout_ms / 1000.0)
+        last_len = -1
+        stable_count = 0
+        while time.monotonic() < deadline:
+            try:
+                text_len = await page.evaluate("() => (document.body.innerText || '').length")
+                has_apply = await page.evaluate(
+                    "() => /apply/i.test(document.body.innerText || '')"
+                )
+            except Exception:
+                break
+            if has_apply and text_len > 500:
+                logger.info(f"[Ashby] job content hydrated (text_len={text_len})")
+                return
+            stable_count = stable_count + 1 if text_len == last_len else 0
+            last_len = text_len
+            if stable_count >= 4:  # content stopped growing for ~1.2s, still no Apply text
+                break
+            await asyncio.sleep(0.3)
+
     async def navigate_to_application(self, page: Page, job_url: str) -> None:
         # If on the job description page, prefer /application directly
-        target = job_url.rstrip("/")
-        if "/application" not in target:
-            target = target + "/application"
+        # (canonical host only — see _build_application_url).
+        target = self._build_application_url(job_url)
+        is_canonical_rewrite = target != job_url
         try:
             await page.goto(target, wait_until="domcontentloaded", timeout=25_000)
         except Exception as exc:
@@ -90,6 +165,16 @@ class AshbyAdapter(BasePlatformAdapter):
                 await page.goto(job_url, wait_until="domcontentloaded", timeout=25_000)
             except Exception:
                 pass
+
+        # Non-canonical hosts (custom domains, query-param-addressed pages)
+        # may still be hydrating the actual job content — see
+        # _wait_for_job_content. Canonical jobs.ashbyhq.com pages already
+        # navigate straight to a job-specific path and don't need this.
+        if not is_canonical_rewrite:
+            try:
+                await self._wait_for_job_content(page)
+            except Exception as exc:
+                logger.debug(f"[Ashby] job-content wait failed (non-fatal): {exc}")
 
         # Detect iframe embed
         self._iframe_mode = False
@@ -175,6 +260,24 @@ class AshbyAdapter(BasePlatformAdapter):
             try:
                 btn = ctx.locator(sel).first
                 if await btn.count() > 0:
+                    # Ashby keeps the submit button disabled until all required
+                    # fields (and the resume upload) are complete. Clicking a
+                    # disabled button is a silent no-op — Playwright won't
+                    # error, the page just doesn't advance, and the caller
+                    # would wrongly believe a submit attempt happened. Check
+                    # both the native `disabled` attribute and `aria-disabled`
+                    # (Ashby's custom button component uses the latter).
+                    is_disabled = await btn.evaluate(
+                        "el => el.disabled === true || el.getAttribute('aria-disabled') === 'true'"
+                    )
+                    if is_disabled:
+                        logger.warning(
+                            f"[Ashby] submit button {sel!r} found but DISABLED — "
+                            "form likely has an incomplete required field or a "
+                            "still-uploading resume. Skipping click, trying next "
+                            "selector / letting caller re-check required fields."
+                        )
+                        continue
                     await btn.scroll_into_view_if_needed()
                     await btn.click(timeout=6_000)
                     try:
@@ -190,9 +293,11 @@ class AshbyAdapter(BasePlatformAdapter):
         return False
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        # Spam-flag check runs FIRST — Ashby returns 200 with a banner instead
-        # of a non-2xx, so without this we'd fall through to "generic FAILED"
-        # and the retry handler would re-submit, which escalates the flag.
+        # Spam-flag and already-applied checks run FIRST — Ashby returns 200
+        # with a banner instead of a non-2xx for both, so without these we'd
+        # fall through to "generic FAILED" and the retry handler would
+        # re-submit: escalating the anti-bot flag in the spam case, or just
+        # hitting the same "already applied" wall every retry in the other.
         for ctx in ([self._frame, page] if self._iframe_mode else [page]):
             if ctx is None:
                 continue
@@ -200,6 +305,18 @@ class AshbyAdapter(BasePlatformAdapter):
                 content = (await ctx.content()).lower()
             except Exception:
                 continue
+            for pattern in _ALREADY_APPLIED_PATTERNS:
+                if pattern in content:
+                    logger.warning(
+                        f"[Ashby] ALREADY_APPLIED — candidate has an existing "
+                        f"application on file (pattern={pattern!r}). Not a "
+                        "failure; do not retry."
+                    )
+                    raise Exception(
+                        "ALREADY_APPLIED: Ashby indicates this candidate has "
+                        "already applied to this job. This is an expected "
+                        "outcome, not a failure — no retry needed."
+                    )
             for pattern in _SPAM_PATTERNS:
                 if pattern in content:
                     logger.error(

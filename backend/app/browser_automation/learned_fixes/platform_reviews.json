@@ -101,5 +101,58 @@
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code)"
       }
     ]
+  },
+  "https://job-boards.greenhouse.io/vercel/jobs/5704320004": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T07:04:29.965151",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      }
+    ]
+  },
+  "https://www.ashbyhq.com/careers?ashby_jid=fd86edd7-3af0-4977-a61a-215212c296fa": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T07:56:13.617868",
+        "error": "AgentLoop aborted: Job not found at the provided URL."
+      }
+    ]
+  },
+  "https://jobs.ashbyhq.com/suno/f8fd9d3e-4ef7-471a-9205-9f7ca5c36c81": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T08:25:46.373378",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 690s)"
+      }
+    ]
+  },
+  "https://jobs.ashbyhq.com/farsyt/9d653402-0270-4157-a59c-a44605fc04d6/application?utm_source=nqlbr89zdl": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T09:06:02.244077",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T09:12:30.647540",
+        "error": "AgentLoop aborted: SPAM_FLAGGED: server rejected the submission (detected 'flagged as possible spam' on the post-submit page). Do not retry \u2014 retrying would resubmit into the same rejection or escalate an anti-bot flag."
+      }
+    ]
+  },
+  "https://jobs.lever.co/gohighlevel/1adc3097-fe4c-4be2-b893-e6bf2f78d523": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T09:40:29.554784",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T12:47:00.526637",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      }
+    ]
   }
 }

@@ -128,6 +128,11 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "React-heavy with Ashby custom select widgets — target combobox inputs by id.",
             "May embed via iframe on company careers pages.",
             "Work-authorization questions use Yes/No radio buttons.",
+            "Some location/school/company/source fields are TYPE-TO-SEARCH autocomplete, not a fixed dropdown list — the option list is empty until you type into the field. If a combobox's initial option scan comes back empty, still emit fill_field with your target value: the runner types it as a search query first, THEN reads whatever options that search reveals, before picking the closest match.",
+            "Resume upload can trigger Ashby's own autofill of name/email/phone/location from the parsed resume a few seconds AFTER you attach the file. If a field you already filled correctly shows a DIFFERENT value on a later turn, that's Ashby's autofill overwriting you — re-fill it with the candidate's correct identity-card value; do not assume the new value is right just because it appeared after your action.",
+            "Submit button stays DISABLED (not just unclickable) until every required field — including the resume upload finishing — is complete. If Submit does nothing when clicked, do not repeat-click it: check the FORM STATUS / STILL EMPTY list for what's missing instead.",
+            "A red banner reading something like \"flagged as possible spam\" after submit means Ashby's anti-bot rejected it — this is terminal, do not click Submit again.",
+            "A message like \"you've already applied\" / \"already submitted an application\" means the candidate has an existing application on file for this job — this is an expected outcome, not a form-filling failure; do not try to work around it.",
         ],
     },
 

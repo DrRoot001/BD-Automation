@@ -9,9 +9,14 @@ Final-state screenshots are stored in TWO places:
      returned as a fallback so the application record still has SOMETHING to
      reference.
 
-Auth: tries ``SUPABASE_ANON_KEY`` first, then ``NEXT_PUBLIC_SUPABASE_ANON_KEY``,
-then the same frontend ``.env`` fallback chain ``executor.py`` already uses.
-The bucket must exist + be configured for public reads (or anon-key writes).
+Auth: uses ``SUPABASE_SERVICE_ROLE_KEY`` — this upload runs server-side only
+(never in a browser), so it should bypass RLS like any other trusted backend
+write, rather than going through the anon key and needing the bucket's RLS
+policy to grant anon INSERT (which would also let any client holding the
+public anon key write to the bucket). Falls back to ``SUPABASE_ANON_KEY`` /
+``NEXT_PUBLIC_SUPABASE_ANON_KEY`` / the frontend ``.env`` chain only if no
+service role key is configured.
+The bucket must exist + be configured for public reads.
 """
 import os
 import datetime
@@ -42,9 +47,12 @@ def _read_env_file(path: str, key: str) -> str:
     return ""
 
 
-def _supabase_anon_key() -> str:
+def _supabase_upload_key() -> str:
+    """Service role key preferred (bypasses RLS for this server-only write);
+    anon key as a fallback for setups that haven't configured a service key."""
     return (
-        os.getenv("SUPABASE_ANON_KEY")
+        os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+        or os.getenv("SUPABASE_ANON_KEY")
         or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
         or _read_env_file("frontend/.env.local", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
         or _read_env_file("frontend/.env", "NEXT_PUBLIC_SUPABASE_ANON_KEY")
@@ -70,18 +78,18 @@ def _supabase_project_url() -> Optional[str]:
 async def _upload_to_supabase(local_path: str, bucket: str, remote_name: str) -> Optional[str]:
     """PUT the file to Supabase storage. Returns the public URL on success."""
     project_url = _supabase_project_url()
-    anon_key = _supabase_anon_key()
-    if not project_url or not anon_key:
+    upload_key = _supabase_upload_key()
+    if not project_url or not upload_key:
         logger.warning(
             f"[Screenshot] Supabase upload skipped — "
-            f"project_url={bool(project_url)} anon_key={bool(anon_key)}"
+            f"project_url={bool(project_url)} upload_key={bool(upload_key)}"
         )
         return None
 
     upload_url = f"{project_url}/storage/v1/object/{bucket}/{remote_name}"
     headers = {
-        "Authorization": f"Bearer {anon_key}",
-        "apikey": anon_key,
+        "Authorization": f"Bearer {upload_key}",
+        "apikey": upload_key,
         "Content-Type": "image/png",
         "x-upsert": "true",  # overwrite if exists
     }

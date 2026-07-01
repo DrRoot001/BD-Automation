@@ -101,7 +101,7 @@ _US_CITY_TO_STATE: dict[str, Tuple[str, str]] = {
 _COUNTRY_TOKENS = {"us", "usa", "u.s.", "u.s.a.", "united states", "america"}
 
 
-def _read_resume_text(resume_local_path: str, max_chars: int = 4000) -> str:
+def _read_resume_text(resume_local_path: str, max_chars: int = 4000, max_pages: int = 2) -> str:
     """Extract text from a resume PDF (first ~4k chars — enough for the header).
 
     Falls back gracefully if extraction fails — returns empty string and the
@@ -115,7 +115,7 @@ def _read_resume_text(resume_local_path: str, max_chars: int = 4000) -> str:
     try:
         with pdfplumber.open(resume_local_path) as pdf:
             parts: list[str] = []
-            for page in pdf.pages[:2]:  # only need the first page or two
+            for page in pdf.pages[:max_pages]:
                 t = page.extract_text() or ""
                 parts.append(t)
                 if sum(len(p) for p in parts) >= max_chars:
@@ -222,16 +222,31 @@ def enrich_profile_from_resume(profile: dict, resume_local_path: str) -> dict:
       * ``location`` — only overwritten when the existing value is too
         generic (empty, country-code-only, ≤2 chars). When the DB already has
         a real city/state, we leave it alone.
+      * ``_resume_text`` — the resume's actual text (education, work history,
+        skills, projects), read once here and consumed by AgentLoop's system
+        prompt builder (agent/loop.py) as the AUTHORITATIVE source for any
+        field asking about degree, discipline, employer, job title, or
+        skills. Without this the AI has no visibility into what's actually
+        on the candidate's resume and guesses at dropdown/text answers (e.g.
+        picking "Other" for a Degree dropdown instead of the real degree) or
+        writes generic filler for open-ended essay questions instead of
+        something grounded in the candidate's real experience.
 
     Returns the same dict for convenience.
     """
-    text = _read_resume_text(resume_local_path)
+    # One read covers both enrichments — 4 pages / 9000 chars is enough for
+    # a typical 1-2 page resume's full body (contact header, summary,
+    # experience, education, skills) without ballooning the prompt.
+    text = _read_resume_text(resume_local_path, max_chars=9000, max_pages=4)
     if not text:
         return profile
 
     current_loc = (profile.get("location") or "").strip()
     if _is_too_generic(current_loc):
-        loc = _extract_us_location(text)
+        # Location lives in the header — the first slice is enough and keeps
+        # the state/city regexes from accidentally matching an address-like
+        # string buried in a later job description.
+        loc = _extract_us_location(text[:4000])
         if loc:
             city, state_name, state_abbr = loc
             new_value = f"{city}, {state_abbr}, USA"
@@ -245,5 +260,9 @@ def enrich_profile_from_resume(profile: dict, resume_local_path: str) -> dict:
                 f"[ResumeEnrich] location {current_loc!r} is generic but no US "
                 f"city/state pattern found in resume — leaving as-is"
             )
+
+    if not (profile.get("_resume_text") or "").strip():
+        profile["_resume_text"] = text
+        logger.info(f"[ResumeEnrich] _resume_text populated ({len(text)} chars)")
 
     return profile

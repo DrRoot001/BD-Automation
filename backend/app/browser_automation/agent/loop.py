@@ -60,6 +60,28 @@ _DEFAULT_WALL_TIMEOUT_S = float(__import__("os").getenv("AGENT_LOOP_WALL_TIMEOUT
 _POST_SUBMIT_GRACE_S = float(__import__("os").getenv("AGENT_LOOP_POST_SUBMIT_GRACE_S", "330"))
 STUCK_THRESHOLD = 4     # consecutive no-DOM-change steps before abort
 LLM_RETRY_LIMIT = 3     # consecutive LLM failures before abort
+
+# Server-side rejection banners some ATSes (Ashby, Workday, Lever) render as a
+# normal 200 OK response instead of an HTTP error — the page just shows a red
+# banner where a success message would be. The post-submit "no code screen
+# after 2 turns -> SUBMITTED" check below previously only looked for an OTP
+# wall; it never read the page content, so a rejected submission with no OTP
+# screen was reported as a false-positive SUBMITTED. Checked platform-
+# agnostically here (not just in adapters/ashby.py's verify_success(), which
+# only runs on the deterministic-fallback path — never reached when AgentLoop
+# completes the whole flow itself, the common case).
+_POST_SUBMIT_REJECTION_PATTERNS = (
+    "flagged as possible spam",
+    "couldn't submit your application",
+    "could not submit your application",
+    "submission was flagged",
+    "we were unable to submit",
+    "already applied",
+    "already submitted an application",
+    "you've already applied",
+    "you have already applied",
+    "already have an application on file",
+)
 STEP_TIMEOUT_S = 45.0   # per-step LLM call timeout (was 30s — bumped after observing
                         # Anthropic vision calls occasionally taking 30-40s during
                         # peak hours, causing unnecessary fallback to OpenRouter/Gemini)
@@ -387,6 +409,60 @@ DECISION POLICY — read in order:
     from the option list. "Country of residence?" needs the candidate's
     actual country. Map each question's INTENT to the candidate's data,
     then pick the matching option string.
+12dd. **"DO YOU LIVE/RESIDE IN <list of specific places>?" QUESTIONS ARE A
+    LOOKUP, NOT A GUESS.** These are Yes/No compliance gates that name a
+    specific state, province, or country list (e.g. "Do you live in one of
+    the following states? Alabama, Alaska, Delaware, Kansas, ..."). Compare
+    the candidate's ACTUAL location (from the identity card above) against
+    the named list, character by character:
+      * If the candidate's city/state/country is explicitly named in the
+        list → answer the affirmative option ("Yes").
+      * If the candidate's city/state/country is NOT in the list → answer
+        the negative option ("No"). This is the common case — most of these
+        lists are a handful of specific states, and the candidate lives in
+        exactly one place.
+    Do NOT answer "Yes" just because "Yes" is a valid menu option — validity
+    and correctness are different things. If the field's own label got
+    truncated in the DOM snapshot (e.g. cut off mid-list), that does NOT
+    excuse guessing: re-scroll or check the FULL label text before picking.
+12e. **EDUCATION / WORK-HISTORY FIELDS COME FROM THE RESUME, NEVER A GUESS.**
+    Degree, Discipline/Major, School/University, Graduation Year, Employer,
+    Job Title, Years of Experience, Skills — the RESUME CONTENT block above
+    is the ONLY source for these. Read its Education and Experience sections
+    BEFORE answering:
+      * "Degree" dropdown → match the resume's actual degree level (e.g.
+        resume says "BS Software Engineering" → pick "Bachelor's Degree",
+        NOT "Other" and NOT a random guess). "Other" is a last resort ONLY
+        when the resume's education section is genuinely absent.
+      * "Discipline"/"Major"/"Field of Study" → the exact major on the
+        resume (e.g. "Software Engineering"), not a plausible-sounding
+        substitute like "Computer Science" — those are different values on
+        most Greenhouse dropdowns even though they're adjacent fields.
+      * "Current/most recent employer", "job title", "years of experience"
+        → pulled from the resume's most recent Experience entry, not
+        invented. If the resume genuinely has none (e.g. entry-level), use
+        the identity card's declared experience_years and answer honestly
+        (e.g. "N/A" for employer only when there truly is none).
+    If the RESUME CONTENT block is empty/absent, fall back to the identity
+    card's `experience_years` / `tech_stack` fields — do not fabricate a
+    company, school, or degree that appears nowhere in your context.
+12f. **OPEN-ENDED TEXT BOXES NEED A REAL, GROUNDED ANSWER — NOT A PLACEHOLDER.**
+    When a field is a genuine essay/free-text question ("Why do you want to
+    work here?", "Tell us about yourself", "Describe a project you're proud
+    of", "What makes you a good fit for this role?") — write a specific,
+    2-4 sentence, first-person answer that:
+      * References something CONCRETE from the RESUME CONTENT block (a real
+        technology, project, or past role — never invent an employer,
+        project, or achievement that isn't in the resume).
+      * Connects it to something CONCRETE in the JOB card above (the title,
+        company, or a phrase from the job description summary).
+    Do NOT write generic filler ("I am a hard worker", "I would love this
+    opportunity", "I am passionate about technology") — that reads as
+    obviously templated to a recruiter. Do NOT answer "N/A" for a question
+    you're capable of answering well; "N/A" is reserved for fields that
+    genuinely don't apply (e.g. a GitHub URL field when the candidate has
+    none). Plain text only — no markdown formatting, no bullet points; most
+    ATS textareas render markdown literally as asterisks and hashes.
 13a. ACTIONS MARKED ❌FAILED IN HISTORY DID NOT EXECUTE. If a selector keeps failing, it
     doesn't exist on the page — STOP retrying it. Either choose a different selector from
     the DOM snapshot, scroll to refresh the view, or move to a different action.
@@ -663,7 +739,48 @@ _DOM_SNAPSHOT_JS = """() => {
         const sel = el.id ? '#' + el.id : (el.name ? el.tagName.toLowerCase() + '[name="' + el.name + '"]' : el.tagName.toLowerCase());
         if (seen.has(sel)) return;
         seen.add(sel);
-        const entry = { sel, type, label: labelFor(el), required: el.required || el.getAttribute('aria-required') === 'true' };
+        let entryLabel = labelFor(el);
+        // Ashby (and similar React ATS builders) mark a question required by
+        // putting a "required"-named CSS-module class on the QUESTION LABEL
+        // element, e.g. `_required_f7cvd_91` — never `required`/`aria-required`
+        // on the input itself, and the label is a SIBLING of the input's
+        // wrapper, not an ancestor of the input — so `el.closest('[class*=
+        // "required"]')` (walking the INPUT's own ancestors) never finds it.
+        // The one container that reliably wraps EVERY Ashby question (native
+        // input, combobox, standalone checkbox, or a fieldset-grouped radio/
+        // checkbox set) is `[data-field-path]`. Search WITHIN that container
+        // for a required-marked descendant instead of walking the input's
+        // ancestors.
+        const reqContainer = el.closest('[data-field-path]');
+        const containerRequired = !!(reqContainer && reqContainer.querySelector('[class*="required" i]'));
+        let entryRequired = el.required || el.getAttribute('aria-required') === 'true' || containerRequired;
+        // Multi-checkbox "select all that apply" groups (Ashby's pattern:
+        // a <fieldset> with a question-title <label> that is NOT `for`-
+        // associated with any single checkbox, plus 2+ checkboxes each
+        // individually labeled with just the OPTION text, e.g. "Boston
+        // (Cambridge)"). Without this, the AI sees a pile of checkboxes
+        // labeled with city/option names and no visible connection to the
+        // actual question or its required status — so it never engages
+        // with them at all. Prefix the option label with the resolved
+        // question text.
+        // Radio groups have the identical labeling problem: each option's own
+        // `label[for=radio.id]` is just the option text ("No AI", "1-2",
+        // "Chat Prompting & In-App AI"), never `for`-associated with the
+        // fieldset's real question label ("What is your fluency level with
+        // modern coding workflows?"). Without the prefix the AI sees 5
+        // disconnected option labels with no indication they're one question.
+        if (type === 'checkbox' || type === 'radio') {
+            const fs = el.closest('fieldset');
+            const groupSelector = type === 'checkbox' ? 'input[type="checkbox"]' : 'input[type="radio"]';
+            if (fs && (type === 'radio' || fs.querySelectorAll(groupSelector).length >= 2)) {
+                const qLabel = fs.querySelector(':scope > label, :scope > legend');
+                const qText = qLabel ? qLabel.textContent.trim() : '';
+                if (qText && qText !== entryLabel) {
+                    entryLabel = qText.slice(0, 100) + ' -> ' + entryLabel;
+                }
+            }
+        }
+        const entry = { sel, type, label: entryLabel, required: entryRequired };
         if (el.tagName === 'SELECT') {
             const allOpts = Array.from(el.options).filter(o => o.value).map(o => o.text.trim());
             let opts = allOpts.slice(0, 15);
@@ -691,10 +808,25 @@ _DOM_SNAPSHOT_JS = """() => {
         if (out.length >= MAX_FIELDS) return;
         if (inPhoneWidget(el)) return;
         if (inConsentBanner(el)) return;
-        const sel = el.id ? '#' + el.id : null;
+        // Ashby's own combobox inputs (e.g. the "Location" autocomplete)
+        // often carry NO id at all — falling back to `null` here silently
+        // DROPPED the field from the AI's view entirely (it never even
+        // appeared as "unaddressable", it just vanished). Fall back to a
+        // selector scoped by the nearest [data-field-path] container, which
+        // reliably wraps every Ashby question even when the input itself
+        // has no id/name.
+        const fieldPathEl = el.closest('[data-field-path]');
+        const fieldPath = fieldPathEl ? fieldPathEl.getAttribute('data-field-path') : '';
+        const sel = el.id ? '#' + el.id
+            : (fieldPath ? `[data-field-path="${fieldPath}"] [role="combobox"]` : null);
         if (!sel || seen.has(sel)) return;
         seen.add(sel);
-        const entry = { sel, type: 'combobox', label: labelFor(el), required: false };
+        const reqContainer = el.closest('[data-field-path]');
+        const containerRequired = !!(reqContainer && reqContainer.querySelector('[class*="required" i]'));
+        const entry = {
+            sel, type: 'combobox', label: labelFor(el),
+            required: el.getAttribute('aria-required') === 'true' || containerRequired,
+        };
         // Surface the choosable options so the AI answers from them on the FIRST
         // turn instead of guessing from the question text (e.g. naming a state
         // for a "Do you live in one of these states?" Yes/No dropdown). Sources,
@@ -722,7 +854,12 @@ _DOM_SNAPSHOT_JS = """() => {
         out.push(entry);
     });
 
-    // Visible buttons (Next / Submit / Apply)
+    // Visible buttons (Next / Submit / Apply — AND Ashby's Yes/No toggle
+    // question widget, which answers a required field via two <button>
+    // elements instead of a visible checkbox/radio: the real form-bound
+    // <input type="checkbox"> is display:none, so it's excluded above, and
+    // this is the AI's ONLY way to actually see and click the real answer
+    // control).
     document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach(el => {
         if (out.length >= MAX_FIELDS) return;
         if (inConsentBanner(el)) return;
@@ -730,10 +867,25 @@ _DOM_SNAPSHOT_JS = """() => {
         if (rect.width === 0 || rect.height === 0) return;
         const text = el.textContent.trim() || el.value || '';
         if (!text) return;
-        const sel = el.id ? '#' + el.id : 'button:has-text("' + text.slice(0, 40) + '")';
+        // If this button lives inside an Ashby question container
+        // ([data-field-path]), it's answering THAT specific question, not
+        // acting as a page-level Submit/Next/Apply control. Prefix its
+        // label with the resolved question text and scope the selector to
+        // the container so a same-text button on a DIFFERENT question
+        // ("Yes"/"No" pairs are common) can't be confused with this one.
+        const fieldPathEl = el.closest('[data-field-path]');
+        let label = text.slice(0, 80);
+        let sel = el.id ? '#' + el.id : 'button:has-text("' + text.slice(0, 40) + '")';
+        if (fieldPathEl) {
+            const fp = fieldPathEl.getAttribute('data-field-path');
+            const qLabel = fieldPathEl.querySelector(':scope > label, :scope > legend');
+            const qText = qLabel ? qLabel.textContent.trim() : '';
+            if (qText) label = qText.slice(0, 100) + ' -> ' + label;
+            if (fp) sel = `[data-field-path="${fp}"] button:has-text("${text.slice(0, 40)}")`;
+        }
         if (seen.has(sel)) return;
         seen.add(sel);
-        out.push({ sel, type: 'button', label: text.slice(0, 80) });
+        out.push({ sel, type: 'button', label });
     });
 
     // Anchor links that ACT as application controls — Greenhouse's Apply button
@@ -761,16 +913,70 @@ _DOM_SNAPSHOT_JS = """() => {
     // know whether the form is ready for submit. Without this signal the AI
     // tends to repeat-click submit before the demographic section is done.
     const formStatus = { totalRequired: 0, filled: 0, unfilled: [] };
+    const seenRadioGroups = new Set();
+    const seenCheckboxFieldsets = new Set();
     document.querySelectorAll(
         'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=reset]), '
       + 'select, textarea, [role="combobox"]'
     ).forEach(el => {
         if (inConsentBanner(el)) return;
         if (inPhoneWidget(el)) return;
+        // Radio groups: HTML forms almost never set `required`/`aria-required`
+        // on the individual <input type="radio"> — it lives on the group as a
+        // whole (an asterisk in the question label, or aria-required/a
+        // "required" class on the fieldset wrapping the group). The per-
+        // element checks below (el.required, el.getAttribute('aria-required'))
+        // are essentially always false for radios, so without this a required
+        // radio-button question (e.g. a Yes/No compliance question rendered
+        // as radios instead of a dropdown) never enters totalRequired at all
+        // — the pre-submit gate reports "all required fields filled" and lets
+        // Submit fire while a visible, unanswered radio question sits on the
+        // page. Also dedupe by `name` so an N-option group counts as ONE
+        // required field, not N.
+        if (el.type === 'radio' && el.name) {
+            if (seenRadioGroups.has(el.name)) return;
+            seenRadioGroups.add(el.name);
+        }
+        // "Select all that apply" checkbox groups (Ashby: a <fieldset> with
+        // 2+ checkboxes, each carrying the OPTION TEXT as its own unique
+        // `name` — e.g. name="Boston (Cambridge)" — so there's no shared
+        // name to dedupe by like radios. Group by the fieldset element
+        // itself instead. Semantics: required means "at least one checked",
+        // not "every checkbox checked" — treated as ONE field, satisfied if
+        // ANY sibling in the same fieldset is checked (see val computation
+        // below, which already unions by name and would otherwise mark
+        // every unchecked option in the group as its own unfilled required
+        // field).
+        let checkboxGroupFieldset = null;
+        if (el.type === 'checkbox') {
+            const fs = el.closest('fieldset');
+            if (fs && fs.querySelectorAll('input[type="checkbox"]').length >= 2) {
+                if (seenCheckboxFieldsets.has(fs)) return;
+                seenCheckboxFieldsets.add(fs);
+                checkboxGroupFieldset = fs;
+            }
+        }
         const style = window.getComputedStyle(el);
-        if (style.display === 'none' || style.visibility === 'hidden') return;
+        // Ashby's Yes/No toggle-question widget keeps the real, form-bound
+        // <input type="checkbox"> as display:none and shows two custom
+        // <button>Yes</button>/<button>No</button> elements the user actually
+        // clicks — but Ashby's own React state still syncs onto the hidden
+        // checkbox's `checked` property, so it's still the authoritative
+        // answer even though invisible. Exempt checkbox/radio from the
+        // display:none filter (mirrors the existing visibility:hidden
+        // exemption below) so these required Yes/No questions are still
+        // tracked instead of silently vanishing from required-field counting.
+        if (style.display === 'none' && el.type !== 'radio' && el.type !== 'checkbox') return;
+        if (style.visibility === 'hidden') return;
         // Resolve the field label early so we can detect demographic questions.
-        let fsLabel = el.getAttribute('aria-label') || '';
+        // For a checkbox-group representative, prefer the fieldset's own
+        // question-title label over the individual option's label (which
+        // would just be the option text, e.g. "Boston (Cambridge)", and
+        // never carries the group's asterisk/required marker).
+        let fsLabel = checkboxGroupFieldset
+            ? (checkboxGroupFieldset.querySelector(':scope > label, :scope > legend')?.textContent || '').trim()
+            : '';
+        if (!fsLabel) fsLabel = el.getAttribute('aria-label') || '';
         if (!fsLabel && el.id) {
             // Try direct association by id, plus the react-select pattern
             // where the visible <input> id is `<base>--input` but the
@@ -825,10 +1031,26 @@ _DOM_SNAPSHOT_JS = """() => {
                 if (DEMOGRAPHIC_RE.test(txt)) isDemographic = true;
             }
         }
+        // Asterisk-in-label is the most common REAL-WORLD required marker —
+        // many ATS question wrappers (especially radio-button questions,
+        // which almost never carry `required`/`aria-required` on the
+        // individual <input>) rely entirely on a visible "*" in the question
+        // text with no matching DOM attribute at all. The Python-side
+        // detect_form() already treats "*" in label as required for
+        // consistency; mirror that signal here.
+        // Ashby-style builders mark required on the QUESTION LABEL (a sibling
+        // of the input's wrapper), not on the input itself or its ancestors —
+        // el.closest('[class*="required"]') walks the wrong direction for
+        // that pattern. [data-field-path] reliably wraps every Ashby question
+        // regardless of field type; search WITHIN it for the marker instead.
+        const reqContainer_fs = el.closest('[data-field-path]');
+        const containerRequired_fs = !!(reqContainer_fs && reqContainer_fs.querySelector('[class*="required" i]'));
         const isRequired = el.required
             || el.getAttribute('aria-required') === 'true'
             || (el.closest('[class*="required"]') !== null)
-            || isDemographic;
+            || isDemographic
+            || /\\*/.test(fsLabel)
+            || containerRequired_fs;
         if (!isRequired) return;
         // Mirror the pre-submit gate's phantom-field filter — these
         // computations MUST agree, otherwise the AI sees "NOT READY"
@@ -838,7 +1060,11 @@ _DOM_SNAPSHOT_JS = """() => {
         //  • fields with no id, no name, AND no label — unaddressable
         //    phantoms (honeypots, react-select internal proxies, etc.)
         if (el.type === 'file') return;
-        const hasIdent_fs = !!(el.id || el.name);
+        // Ashby's own combobox inputs (e.g. "Location") often have EMPTY id
+        // AND name — without the data-field-path fallback these were wrongly
+        // treated as unaddressable phantoms and silently dropped, so FORM
+        // STATUS never even counted them (matching the gate's mirror fix).
+        const hasIdent_fs = !!(el.id || el.name || reqContainer_fs?.getAttribute('data-field-path'));
         const hasLabel_fs = !!(
             el.getAttribute('aria-label')
             || (el.id && document.querySelector('label[for="' + el.id + '"]'))
@@ -851,7 +1077,28 @@ _DOM_SNAPSHOT_JS = """() => {
             val = el.value && el.options[el.selectedIndex]
                   ? el.options[el.selectedIndex].text : '';
         } else if (el.type === 'checkbox' || el.type === 'radio') {
-            if (el.name) {
+            // Ashby's Yes/No toggle widget: a hidden checkbox paired with two
+            // sibling <button>Yes</button>/<button>No</button> elements the
+            // user actually clicks. The checkbox's .checked property is NOT
+            // reliable here — some builds only set checked=true when "Yes"
+            // is clicked and never set it for "No" (checked=false is then
+            // ambiguous between "never answered" and "answered No"),
+            // causing the AI to loop forever re-clicking "No" because
+            // nothing it reads ever shows the question as answered. The one
+            // signal that's reliable regardless of which option was picked
+            // is the "active"-named class Ashby applies to whichever button
+            // was clicked.
+            const toggleContainer = el.closest('[data-field-path]');
+            const activeToggleBtn = toggleContainer ? toggleContainer.querySelector('button[class*="active" i]') : null;
+            if (activeToggleBtn) {
+                val = 'checked';
+            } else if (checkboxGroupFieldset) {
+                // Group semantics: satisfied if ANY checkbox anywhere in the
+                // fieldset is checked, not just this specific option (each
+                // option has its own unique name, so a by-name query would
+                // only ever see this one option's state).
+                val = checkboxGroupFieldset.querySelector('input[type="checkbox"]:checked') ? 'checked' : '';
+            } else if (el.name) {
                 const grp = document.querySelectorAll(`[name="${el.name}"]:checked`);
                 val = grp.length ? 'checked' : '';
             } else { val = el.checked ? 'checked' : ''; }
@@ -1302,7 +1549,34 @@ async def _execute_action(
 
     if kind == "scroll":
         direction = action.direction or "down"
-        delta = 600 if direction == "down" else -600
+        if direction == "down":
+            # Travel most of the remaining distance to the true bottom in one
+            # motion instead of a fixed 600px hop. A fixed hop needed 5+ "down"
+            # scrolls to clear a long Greenhouse page (full job description +
+            # EEO/demographic block), which tripped the consecutive-scroll
+            # STUCK guard before the AI ever reached the Submit button or the
+            # last demographic fields. Re-measured every call so dynamically
+            # loaded content (lazy sections, expanding selects) is accounted
+            # for on the next scroll if one motion doesn't fully clear it.
+            try:
+                metrics = await page.evaluate("""() => ({
+                    scrollY: window.scrollY || document.documentElement.scrollTop,
+                    innerHeight: window.innerHeight,
+                    scrollHeight: Math.max(
+                        document.body.scrollHeight,
+                        document.documentElement.scrollHeight
+                    ),
+                })""")
+                remaining = metrics["scrollHeight"] - (metrics["scrollY"] + metrics["innerHeight"])
+                # Floor at the old 600px so short pages still get a visible
+                # nudge; cap at ~2.5 viewports per action so the motion still
+                # reads as human scrolling rather than an instant teleport.
+                delta = max(600.0, min(remaining + 80.0, metrics["innerHeight"] * 2.5))
+            except Exception as exc:
+                logger.debug(f"[AgentLoop] scroll metrics read failed, using fallback delta: {exc}")
+                delta = 1400.0
+        else:
+            delta = -1400.0
         await _human_scroll(page, delta)
         await asyncio.sleep(0.3)
         return True
@@ -1617,6 +1891,12 @@ async def _execute_action(
                             f"[AgentLoop] select_option failed for {target!r}; "
                             f"options were {options[:8]}"
                         )
+                        if options:
+                            action.reason = (
+                                f"INVALID OPTION: {value!r} (snapped to {target!r}) did not "
+                                f"match this <select>. Actual options are: {options[:8]}. "
+                                f"Re-emit fill_field with one of those exact strings."
+                            )
                         return False
 
             # combobox (react-select, custom dropdowns) — OPEN → READ ACTUAL
@@ -1733,14 +2013,60 @@ async def _execute_action(
                         f"{sel!r} (valid options: {available_options[:8]}). Cleared stray text and "
                         f"left the menu open; deferring to AI to choose a real option."
                     )
+                    # Surface the REAL options in the action's reason so the
+                    # history formatter shows them to the AI next turn. Without
+                    # this the AI has zero new information after a failed
+                    # attempt and just repeats the same wrong guess — this was
+                    # the "AI answers a state name for a Yes/No dropdown" STUCK
+                    # bug: the menu only renders options once opened (no hidden
+                    # <select> sync, no aria-owns listbox), so the passive DOM
+                    # snapshot can never discover them on its own; this runner
+                    # discovery is the ONLY place that ever learns the truth.
+                    action.reason = (
+                        f"INVALID OPTION: {value!r} is not a real choice for this field. "
+                        f"Actual options are: {available_options[:8]}. Re-emit fill_field "
+                        f"with the SAME selector and one of those exact strings as value."
+                    )
                     return False
 
-                # Last resort: type-then-Enter (legacy behavior) — only reached
-                # when we couldn't enumerate options OR the value is a genuine match.
+                # Last resort — only reached when the initial open produced NO
+                # options at all (search-style autocomplete widgets, e.g.
+                # Ashby's location/school/company/source fields, render their
+                # option list only after a query is typed — there's nothing to
+                # enumerate before that). Type the value as a search query,
+                # wait for results, then RE-SCAN and click the closest real
+                # option — the same verified approach used above — instead of
+                # blindly trusting Enter to select the right suggestion.
                 try:
                     await loc.fill("")
                     await loc.type(target_text, delay=40)
                     await asyncio.sleep(0.9)
+                    try:
+                        searched_options = await ctx.evaluate(_SCOPED_OPTIONS_JS, sel)
+                    except Exception:
+                        searched_options = []
+                    if searched_options:
+                        search_target = _pick_closest_option(target_text, searched_options)
+                        escaped2 = search_target.replace("'", "\\'")
+                        try:
+                            opt2 = ctx.locator(
+                                f".select__menu .select__option:text-is('{escaped2}'), "
+                                f".react-select__menu .react-select__option:text-is('{escaped2}'), "
+                                f"[role='listbox'] [role='option']:text-is('{escaped2}')"
+                            ).first
+                            if await opt2.count() > 0:
+                                await opt2.click(timeout=3000)
+                                await asyncio.sleep(0.4)
+                                logger.info(
+                                    f"[AgentLoop] combobox search-then-click: query "
+                                    f"{target_text!r} -> selected {search_target!r}"
+                                )
+                                return True
+                        except Exception:
+                            pass
+                    # No options rendered even after typing (or the click above
+                    # failed) — fall back to Enter, which commits the typed
+                    # text directly for widgets that accept free text.
                     await page.keyboard.press("Enter")
                     logger.info(f"[AgentLoop] combobox fallback type+Enter for {target_text!r}")
                     return True
@@ -1913,7 +2239,12 @@ def _format_history(actions: List[AgentAction], last_n: int = 12) -> str:
         # selector and burn turns until the stuck detector fires.
         tag = " ❌FAILED" if a.ok is False else ""
         if a.kind == "fill_field":
-            lines.append(f"  [{a.step}] fill_field  '{a.field_label or a.selector}' = '{(a.value or '')[:60]}'{tag}")
+            # Surface WHY a fill failed when the runner knows the real reason
+            # (e.g. "not a valid option — actual options are [...]"). Without
+            # this the AI sees only "❌FAILED" and repeats the same wrong
+            # value forever since nothing in its context ever changes.
+            extra = f"  ⚠ {a.reason}" if (a.ok is False and a.reason) else ""
+            lines.append(f"  [{a.step}] fill_field  '{a.field_label or a.selector}' = '{(a.value or '')[:60]}'{tag}{extra}")
         elif a.kind == "upload_file":
             lines.append(f"  [{a.step}] upload_file '{a.field_label or a.selector}' ({a.value}){tag}")
         elif a.kind == "click":
@@ -2138,29 +2469,31 @@ class AgentLoop:
         # card. "AI is the master — analyze the resume FIRST, then fill."
         #
         # Length budget: Anthropic prompt-cache makes 5500 chars effectively
-        # free after the first call (cache hits ~ free). Groq / Gemini /
-        # OpenRouter have NO caching, so those tokens get billed on every
-        # turn and chew through TPM caps fast (Groq Llama-4-Scout: 30k TPM).
-        # When the primary key is non-Anthropic, ship a tighter block —
-        # 1800 chars is enough to anchor name/email/phone/title/skills.
+        # free after the first call (cache hits ~ free). Groq specifically has
+        # a tight 30k TPM cap (Llama-4-Scout) that a full resume block would
+        # eat into every turn, so it gets a tighter budget. Gemini/OpenRouter
+        # have no caching either, but no comparably tight TPM ceiling — giving
+        # them the same 1800-char floor as Groq was starving the resume block
+        # of exactly the content (Education/Experience sections, which tend
+        # to sit toward the END of the extracted text) needed to answer
+        # degree/discipline/employer questions correctly, since Gemini is the
+        # actual primary provider in this pipeline (LLM_KEY_PRIORITY puts it
+        # first) — the "non-Anthropic" bucket was in practice "the common
+        # case", not the rare fallback the original budget assumed.
         resume_text = (p.get("_resume_text") or "").strip()
         resume_block = ""
         if resume_text:
-            # Heuristic: use the shorter budget when ANY non-cacheable
-            # provider is in the fallback chain. Anthropic prompt-cache only
-            # helps if Anthropic actually serves the call; if it's exhausted
-            # and we fall through to Groq, the full 5500 chars get billed
-            # on every turn against a 30k TPM cap.
             try:
                 _eff = self._llm.effective_provider()
             except Exception:
                 _eff = "anthropic"
-            # Anthropic caches the prompt (resume effectively free after the
-            # first call); every other provider bills it each turn.
-            _budget = int(os.getenv(
-                "RESUME_PROMPT_CHARS",
-                "5500" if _eff == "anthropic" else "1800",
-            ))
+            _default_budget = {
+                "anthropic": "5500",   # prompt-cached — effectively free after turn 1
+                "gemini": "4500",      # generous free tier, no comparable TPM wall
+                "openrouter": "3000",  # paid per-token but no hard TPM ceiling
+                "groq": "1800",        # 30k TPM cap — keep tight
+            }.get(_eff, "1800")
+            _budget = int(os.getenv("RESUME_PROMPT_CHARS", _default_budget))
             sep = "-" * 60
             resume_block = (
                 "\n\nRESUME CONTENT (source of truth — when a form field asks "
@@ -2422,6 +2755,10 @@ class AgentLoop:
                 ))
                 logger.info(f"[AgentLoop] memory pre-fill: '{label}' = '{str(answer)[:60]}'")
                 filled += 1
+                # Same reasoning as the deterministic pre-fill loop — commit
+                # these back-to-back with zero delay and the whole run reads
+                # as clearly automated to timing-based anti-bot heuristics.
+                await self._human_delay()
             except Exception as exc:
                 logger.debug(f"[AgentLoop] memory pre-fill apply failed for {label!r}: {exc}")
                 continue
@@ -3238,6 +3575,22 @@ class AgentLoop:
                     return False
                 await loc.set_input_files(path, timeout=8000)
                 logger.info(f"[AgentLoop] deterministic upload {kind} → {sel!r} = {path!r}")
+                if kind == "resume":
+                    # Some ATSes (Lever confirmed: js/parseResume.js) fire an
+                    # ASYNC background request to parse the resume server-side
+                    # right after the file input's change event, auto-filling
+                    # name/email/phone/location from it. If we let the AI
+                    # start clicking around before that settles, a second
+                    # file-input interaction (e.g. our own retry logic, or
+                    # even an unrelated DOM re-scan) can abort the in-flight
+                    # request (Lever's own code does `req.abort()` on a new
+                    # change event) and leave the upload widget in a
+                    # confused state that shows a stale/wrong error. Give it
+                    # a real window to finish before moving on.
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=6000)
+                    except Exception:
+                        await asyncio.sleep(3.0)
                 actions.append(AgentAction(
                     kind="upload_file", selector=sel, value=kind,
                     field_label=info.get("groupLabel") or info.get("id") or "",
@@ -3346,6 +3699,12 @@ class AgentLoop:
             if ok:
                 logger.info(f"[AgentLoop] deterministic fill: '{label[:50]}' = '{value}'")
                 filled += 1
+                # This loop previously committed every field back-to-back with
+                # zero delay — logs showed 4 fields land within 223ms of each
+                # other, which is a dead giveaway of automation to timing-
+                # based anti-bot heuristics (Ashby in particular). A human
+                # pauses between fields even when they're quick to answer.
+                await self._human_delay()
             else:
                 logger.debug(f"[AgentLoop] deterministic fill could not commit '{label[:50]}'")
         return filled
@@ -4306,6 +4665,46 @@ class AgentLoop:
                             "submit likely complete."
                         )
                         if post_submit_no_code_turns >= 2:
+                            # Before declaring success, actually READ the page —
+                            # some ATSes (Ashby, Workday, Lever) render a
+                            # rejection banner ("flagged as possible spam",
+                            # "already applied") as a normal 200 OK page instead
+                            # of an HTTP error or an OTP wall. Without this
+                            # check, "no OTP screen" was being treated as proof
+                            # of success, which is a false positive when the
+                            # server actually rejected the submission.
+                            rejection_hit = None
+                            try:
+                                _check_frame = live_frame or frame
+                                for _ctx in ([_check_frame, page] if _check_frame else [page]):
+                                    if _ctx is None:
+                                        continue
+                                    _content = (await _ctx.content()).lower()
+                                    for _pattern in _POST_SUBMIT_REJECTION_PATTERNS:
+                                        if _pattern in _content:
+                                            rejection_hit = _pattern
+                                            break
+                                    if rejection_hit:
+                                        break
+                            except Exception as exc:
+                                logger.debug(f"[AgentLoop] post-submit rejection scan failed (non-fatal): {exc}")
+                            if rejection_hit:
+                                logger.error(
+                                    f"[AgentLoop] POST-SUBMIT: rejection banner detected "
+                                    f"(pattern={rejection_hit!r}) — submission was NOT "
+                                    "accepted despite no OTP wall. Reporting as failure, "
+                                    "not SUBMITTED."
+                                )
+                                return LoopResult(
+                                    success=False,
+                                    status="ABORTED",
+                                    error=f"SPAM_FLAGGED: server rejected the submission "
+                                          f"(detected {rejection_hit!r} on the post-submit "
+                                          "page). Do not retry — retrying would resubmit "
+                                          "into the same rejection or escalate an anti-bot flag.",
+                                    steps_taken=step,
+                                    actions=actions,
+                                )
                             logger.info(
                                 "[AgentLoop] POST-SUBMIT: no verification wall after "
                                 "2 turns — application submitted. Returning SUBMITTED."
@@ -4449,6 +4848,10 @@ class AgentLoop:
                                 f"{up_count} file(s) — no LLM used"
                             )
                             page_verified = True
+                            # A resume upload followed instantly by fields
+                            # committing is another timing tell — a human
+                            # notices the upload finish before typing.
+                            await self._human_delay()
                     except Exception as exc:
                         logger.debug(f"[AgentLoop] deterministic file upload error (non-fatal): {exc}")
 
@@ -4684,19 +5087,49 @@ class AgentLoop:
                                 window.scrollTo(0, document.body.scrollHeight);
                                 // Find required fields that look unfilled
                                 const out = [];
+                                const seenRadioGroups = new Set();
+                                const seenCheckboxFieldsets = new Set();
                                 const inputs = document.querySelectorAll(
                                     'input:not([type=hidden]):not([type=submit]):not([type=button]), '
                                     + 'select, textarea, [role="combobox"]'
                                 );
                                 inputs.forEach(el => {
                                     if (out.length >= 12) return;
+                                    // Radio groups: required lives on the GROUP (asterisk in the
+                                    // question label / aria-required on the fieldset), almost
+                                    // never on each individual <input type="radio">. Dedupe by
+                                    // name so an N-option group is evaluated once, not N times.
+                                    if (el.type === 'radio' && el.name) {
+                                        if (seenRadioGroups.has(el.name)) return;
+                                        seenRadioGroups.add(el.name);
+                                    }
+                                    // "Select all that apply" checkbox groups (Ashby: a
+                                    // <fieldset> with 2+ checkboxes, each carrying the OPTION
+                                    // TEXT as its own unique `name` — no shared name to dedupe
+                                    // by like radios). Group by the fieldset element itself;
+                                    // required means "at least one checked", not "every
+                                    // checkbox checked".
+                                    let checkboxGroupFieldset = null;
+                                    if (el.type === 'checkbox') {
+                                        const fs = el.closest('fieldset');
+                                        if (fs && fs.querySelectorAll('input[type="checkbox"]').length >= 2) {
+                                            if (seenCheckboxFieldsets.has(fs)) return;
+                                            seenCheckboxFieldsets.add(fs);
+                                            checkboxGroupFieldset = fs;
+                                        }
+                                    }
                                     // Resolve label first (also used for demographic detection).
                                     // Must mirror the FORM STATUS resolver — including the
                                     // parent-container walk — so demographic questions like
                                     // the Greenhouse disability dropdown (no label[for=...],
                                     // no fieldset/legend) are correctly classified instead
-                                    // of being silently skipped.
-                                    let gLabel = el.getAttribute('aria-label') || '';
+                                    // of being silently skipped. For a checkbox-group
+                                    // representative, prefer the fieldset's own question-title
+                                    // label over the individual option's label.
+                                    let gLabel = checkboxGroupFieldset
+                                        ? (checkboxGroupFieldset.querySelector(':scope > label, :scope > legend')?.textContent || '').trim()
+                                        : '';
+                                    if (!gLabel) gLabel = el.getAttribute('aria-label') || '';
                                     if (!gLabel && el.id) {
                                         const lbl = document.querySelector(`label[for="${el.id}"]`);
                                         if (lbl) gLabel = (lbl.textContent || '').trim();
@@ -4735,13 +5168,35 @@ class AgentLoop:
                                             if (DEMOGRAPHIC_RE.test(txt)) isDemographic = true;
                                         }
                                     }
+                                    // Asterisk-in-label is the most common real-world required
+                                    // marker (mirrors the FORM STATUS resolver and the Python-side
+                                    // detect_form(), both of which already treat "*" in label as
+                                    // required) — without it, radio-button questions with no
+                                    // required/aria-required attribute on the input itself were
+                                    // never gated, letting Submit fire while they sat unanswered.
+                                    // Ashby-style builders mark required on the QUESTION LABEL (a
+                                    // sibling of the input's wrapper), not the input or its
+                                    // ancestors. [data-field-path] reliably wraps every Ashby
+                                    // question; search WITHIN it instead of walking upward.
+                                    const reqContainer_gate = el.closest('[data-field-path]');
+                                    const containerRequired_gate = !!(reqContainer_gate && reqContainer_gate.querySelector('[class*="required" i]'));
                                     const isRequired = el.required
                                         || el.getAttribute('aria-required') === 'true'
                                         || (el.closest('[class*="required"]') !== null && !el.value)
-                                        || isDemographic;
+                                        || isDemographic
+                                        || /\\*/.test(gLabel)
+                                        || containerRequired_gate;
                                     if (!isRequired) return;
                                     const style = window.getComputedStyle(el);
-                                    if (style.display === 'none' || style.visibility === 'hidden') return;
+                                    // Ashby's Yes/No toggle widget keeps the real, form-bound
+                                    // <input type="checkbox"> as display:none behind two visible
+                                    // <button>Yes</button>/<button>No</button> elements — but
+                                    // Ashby's React state still syncs onto the hidden checkbox's
+                                    // `checked` property, so it remains the authoritative answer.
+                                    // Exempt checkbox/radio from the display:none filter (mirrors
+                                    // the FORM STATUS resolver) so these gate correctly.
+                                    if (style.display === 'none' && el.type !== 'radio' && el.type !== 'checkbox') return;
+                                    if (style.visibility === 'hidden') return;
                                     // Skip file inputs — they never report .value reliably even
                                     // after a successful upload (Playwright's setInputFiles
                                     // attaches the file but the DOM value stays a path that
@@ -4749,12 +5204,16 @@ class AgentLoop:
                                     // success separately; gating submit on input.value is
                                     // a false-positive trap.
                                     if (el.type === 'file') return;
-                                    // Skip phantom fields with NO id, NO name, AND no label-for.
-                                    // These can't be addressed by the AI (no selector to fill
-                                    // them with) so blocking submit on them is an unresolvable
-                                    // deadlock. They're almost always hidden honeypots,
-                                    // react-select internal proxies, or stray inputs.
-                                    const hasIdent = !!(el.id || el.name);
+                                    // Skip phantom fields with NO id, NO name, no label-for, AND
+                                    // no [data-field-path] container. These can't be addressed by
+                                    // the AI (no selector to fill them with) so blocking submit on
+                                    // them is an unresolvable deadlock. They're almost always
+                                    // hidden honeypots, react-select internal proxies, or stray
+                                    // inputs. Ashby's own combobox inputs (e.g. "Location") often
+                                    // have EMPTY id AND name — without the data-field-path
+                                    // fallback those were wrongly treated as unaddressable
+                                    // phantoms and silently dropped from the gate entirely.
+                                    const hasIdent = !!(el.id || el.name || reqContainer_gate?.getAttribute('data-field-path'));
                                     const hasLabel = !!(
                                         el.getAttribute('aria-label')
                                         || (el.id && document.querySelector(`label[for="${el.id}"]`))
@@ -4765,8 +5224,27 @@ class AgentLoop:
                                         val = el.value && el.options[el.selectedIndex]
                                               ? el.options[el.selectedIndex].text : '';
                                     } else if (el.type === 'checkbox' || el.type === 'radio') {
-                                        // For radio groups, check if any sibling with same name is checked
-                                        if (el.name) {
+                                        // Ashby's Yes/No toggle widget: a hidden checkbox paired
+                                        // with two sibling <button>Yes</button>/<button>No</button>
+                                        // elements. .checked is NOT reliable — some builds only
+                                        // set checked=true for "Yes" and never for "No" (leaving
+                                        // checked=false ambiguous between "unanswered" and
+                                        // "answered No"), which caused the gate to loop the AI
+                                        // forever re-clicking "No" since nothing ever read as
+                                        // filled. The "active"-named class on whichever button
+                                        // was clicked is the one reliable signal.
+                                        const toggleContainer = el.closest('[data-field-path]');
+                                        const activeToggleBtn = toggleContainer ? toggleContainer.querySelector('button[class*="active" i]') : null;
+                                        if (activeToggleBtn) {
+                                            val = 'checked';
+                                        } else if (checkboxGroupFieldset) {
+                                            // Checkbox-group semantics: satisfied if ANY checkbox
+                                            // anywhere in the fieldset is checked (each option has
+                                            // its own unique name, so a by-name query would only
+                                            // ever see this one option's own state).
+                                            val = checkboxGroupFieldset.querySelector('input[type="checkbox"]:checked') ? 'checked' : '';
+                                        } else if (el.name) {
+                                            // For radio groups, check if any sibling with same name is checked
                                             const grp = document.querySelectorAll(
                                                 `[name="${el.name}"]:checked`
                                             );
@@ -4810,8 +5288,11 @@ class AgentLoop:
                                             }
                                         }
                                         if (!label) label = el.name || el.id || '?';
+                                        const fieldPathAttr = reqContainer_gate?.getAttribute('data-field-path');
                                         out.push({
-                                            sel: el.id ? '#' + el.id : (el.name ? `[name="${el.name}"]` : ''),
+                                            sel: el.id ? '#' + el.id
+                                                : (el.name ? `[name="${el.name}"]`
+                                                : (fieldPathAttr ? `[data-field-path="${fieldPathAttr}"] [role="combobox"]` : '')),
                                             label: label.slice(0, 100),
                                         });
                                     }
@@ -4856,6 +5337,65 @@ class AgentLoop:
                                 )
                                 for e in visible_errors:
                                     logger.warning(f"  validation error: {e}")
+                                # "File exceeds maximum upload size" is a
+                                # validation state the AI has NO way to act
+                                # on — it can't shrink the file or click
+                                # anything to clear it, so it just repeat-
+                                # clicked Submit (Lever's exact case: our
+                                # actual resume was 4.4KB, nowhere near the
+                                # 100MB limit — this is a spurious client-
+                                # side validation state, not a real
+                                # oversized file). Since we independently
+                                # know our own resume file is small, the
+                                # correct deterministic recovery is to
+                                # re-upload it fresh rather than give the AI
+                                # a turn it can't meaningfully use.
+                                _oversize_hit = any(
+                                    re.search(r"exceed|too large|maximum.{0,20}size", e, re.I)
+                                    for e in visible_errors
+                                )
+                                # Only attempt this recovery ONCE per run. Some
+                                # ATSes (Lever confirmed) abort any in-flight
+                                # resume-parse request the instant a NEW file
+                                # gets set on the same input (their own JS:
+                                # `if (req.readyState < 4) req.abort()`).
+                                # Re-uploading on every single gate-block was
+                                # repeatedly interrupting our OWN prior
+                                # attempt before it could ever finish
+                                # settling, which likely compounded the
+                                # problem instead of fixing it.
+                                if (
+                                    _oversize_hit and self.resume_path
+                                    and not getattr(self, "_oversize_reupload_done", False)
+                                ):
+                                    self._oversize_reupload_done = True
+                                    try:
+                                        _ctx_for_reupload = frame or page
+                                        _file_inputs = _ctx_for_reupload.locator("input[type='file']")
+                                        _fi_count = await _file_inputs.count()
+                                        _reuploaded = False
+                                        for _fi in range(_fi_count):
+                                            try:
+                                                await _file_inputs.nth(_fi).set_input_files(
+                                                    self.resume_path, timeout=8000
+                                                )
+                                                _reuploaded = True
+                                            except Exception:
+                                                continue
+                                        if _reuploaded:
+                                            logger.warning(
+                                                "[AgentLoop] PRE-SUBMIT GATE: 'file too large' "
+                                                "error looked spurious (our resume is small) — "
+                                                "re-uploaded it deterministically. Waiting for "
+                                                "the async resume-parse request to actually "
+                                                "settle before giving the AI another turn."
+                                            )
+                                            try:
+                                                await page.wait_for_load_state("networkidle", timeout=8000)
+                                            except Exception:
+                                                await asyncio.sleep(5.0)
+                                    except Exception as exc:
+                                        logger.debug(f"[AgentLoop] resume re-upload recovery failed: {exc}")
                                 action.ok = False
                                 action.reason = (
                                     f"BLOCKED: validation errors on page — "
@@ -4921,6 +5461,28 @@ class AgentLoop:
                                 continue
                             else:
                                 logger.info("[AgentLoop] PRE-SUBMIT GATE: all required fields filled — allowing submit")
+                                # Ashby's anti-bot scores submission TIMING, not just
+                                # field completeness — a full run (resume upload,
+                                # deterministic pre-fill, a couple of clicks) landing
+                                # Submit within ~25s of first touching the page reads
+                                # as bot-like and gets rejected with a "flagged as
+                                # possible spam" banner even when every field was
+                                # answered correctly. adapters/ashby.py's OWN submit()
+                                # already had a dwell for exactly this reason, but it
+                                # only fires on the deterministic-fallback path — never
+                                # reached now that AgentLoop completes the flow itself.
+                                # Apply the same dwell here, right before the real
+                                # click, so it actually protects the common case.
+                                if not self.stop_before_submit and "ashby" in (self.job_ctx or {}).get("platform", "").lower():
+                                    _dwell_ms = int(os.getenv("ASHBY_PRE_SUBMIT_DWELL_MS", "4000"))
+                                    if _dwell_ms > 0:
+                                        # Jittered around the configured midpoint (±30%)
+                                        # rather than a flat constant — waiting EXACTLY
+                                        # the same number of milliseconds on every run is
+                                        # itself a machine-like tell.
+                                        _jittered_s = random.uniform(_dwell_ms * 0.7, _dwell_ms * 1.3) / 1000.0
+                                        logger.info(f"[AgentLoop] Ashby pre-submit dwell {_jittered_s:.1f}s (anti-spam)")
+                                        await asyncio.sleep(_jittered_s)
                                 # If the caller asked us to stop before any real submit
                                 # (DRY_RUN_NO_SUBMIT=true), we've now done our due
                                 # diligence — confirmed the form is complete — and
@@ -5131,6 +5693,82 @@ class AgentLoop:
                 _is_submit = action.kind == "click" and bool(re.search(
                     r"submit|send application", _click_text
                 ))
+
+                # ── Lever hCaptcha handling ──────────────────────────────
+                # Lever gates real submission behind an INVISIBLE hCaptcha
+                # that only starts executing on click of the visible
+                # #btn-submit button (their own JS registers
+                # `hcaptcha.execute(captchaId)` inside that button's click
+                # listener). The button our AI clicks is NOT the real
+                # <button type="submit"> — Lever renders a SEPARATE hidden
+                # `#hcaptchaSubmitBtn` and only auto-clicks it from the
+                # hCaptcha `onSuccess` callback, which is scoped inside a
+                # closure and unreachable as `window.onSuccess` — so even a
+                # correctly solved+injected token doesn't trigger the real
+                # submission on its own. Confirmed live: the hidden
+                # `#hcaptchaResponseInput` stays empty indefinitely under
+                # our automated session; it never resolves invisibly like it
+                # would for a normal user. Without this, the AI can click
+                # "Submit" forever and the form will never actually send.
+                if ok and _is_submit and "lever" in (self.job_ctx or {}).get("platform", "").lower():
+                    try:
+                        await asyncio.sleep(2.0)  # give Lever's own invisible resolution a chance first
+                        _hc_ctx = frame or page
+                        _hc_value = await _hc_ctx.evaluate(
+                            "() => { const el = document.getElementById('hcaptchaResponseInput'); "
+                            "return el ? el.value : null; }"
+                        )
+                        if _hc_value is not None and not _hc_value:
+                            logger.info(
+                                "[AgentLoop] Lever: submit clicked but hCaptcha token not "
+                                "set — solving hCaptcha deterministically."
+                            )
+                            from ..captcha.service import CaptchaService
+                            _captcha_svc = CaptchaService()
+                            _solution = await _captcha_svc.solve(page, "hcaptcha")
+                            if _solution.success and _solution.token:
+                                await _hc_ctx.evaluate(
+                                    """(token) => {
+                                        const el = document.getElementById('hcaptchaResponseInput');
+                                        if (el) {
+                                            el.value = token;
+                                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                                        }
+                                    }""",
+                                    _solution.token,
+                                )
+                                # Lever's own onSuccess callback (which would
+                                # normally auto-click the real hidden submit
+                                # button) isn't reachable from outside — click
+                                # it ourselves. force=True bypasses the
+                                # visibility check since it's deliberately
+                                # hidden via class="hidden".
+                                try:
+                                    await _hc_ctx.locator("#hcaptchaSubmitBtn").click(force=True, timeout=5000)
+                                    logger.info(
+                                        "[AgentLoop] Lever: hCaptcha solved and hidden "
+                                        "real submit button clicked."
+                                    )
+                                    await asyncio.sleep(2.0)
+                                except Exception as exc:
+                                    logger.warning(f"[AgentLoop] Lever hidden submit-button click failed: {exc}")
+                                    ok = False
+                                    action.ok = False
+                            else:
+                                logger.warning(
+                                    "[AgentLoop] Lever: hCaptcha solve failed — submission "
+                                    "did not go through this attempt."
+                                )
+                                ok = False
+                                action.ok = False
+                        elif _hc_value:
+                            logger.info(
+                                "[AgentLoop] Lever: hCaptcha token already present "
+                                "(resolved invisibly) — real submit should follow."
+                            )
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] Lever hCaptcha handling error (non-fatal): {exc}")
+
                 if ok and _is_submit:
                     # Flip into the dedicated POST-SUBMIT verification phase.
                     # The top-of-loop gate now owns code detection + Gmail
