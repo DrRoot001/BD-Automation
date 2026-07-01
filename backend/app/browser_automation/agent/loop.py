@@ -5719,6 +5719,8 @@ class AgentLoop:
                     r"submit|send application", _pre_click_text
                 ))
                 _lever_agentv = None
+                _lever_net_events: List[Dict[str, Any]] = []
+                _lever_net_handlers = None
                 if (
                     _pre_is_submit
                     and "lever" in (self.job_ctx or {}).get("platform", "").lower()
@@ -5728,6 +5730,55 @@ class AgentLoop:
                         _lever_agentv = AgentV(page=page, agent_config=AgentConfig())
                     except Exception as exc:
                         logger.debug(f"[AgentLoop] Lever: hcaptcha-challenger unavailable: {exc}")
+
+                    # Network instrumentation: whether our click on
+                    # #hcaptchaSubmitBtn actually fires a form POST to Lever's
+                    # server has been the mystery — the token gets injected,
+                    # the click is dispatched, but the visible form doesn't
+                    # transition. Watching every request from now until after
+                    # the post-click poll finishes tells us: (a) did any POST
+                    # to lever.co fire?, (b) what status code did it return?,
+                    # (c) if it was an XHR/fetch, what was the response body?
+                    # If NO POST ever fires, the click isn't reaching Lever's
+                    # form-submit handler. If it fires with 4xx, server-side
+                    # validation is rejecting. If it fires with 2xx, our
+                    # thank-you detection is what's wrong.
+                    def _on_req(req):
+                        try:
+                            _u = req.url or ""
+                            if req.method == "POST" and "lever.co" in _u:
+                                _lever_net_events.append({
+                                    "kind": "request", "method": req.method,
+                                    "url": _u, "time": time.monotonic(),
+                                })
+                                logger.info(
+                                    f"[AgentLoop] Lever NET → POST {_u} "
+                                    f"(headers={dict(req.headers).get('content-type','?')})"
+                                )
+                        except Exception:
+                            pass
+
+                    def _on_resp(resp):
+                        try:
+                            _u = resp.url or ""
+                            if "lever.co" in _u and resp.request.method in ("POST", "PUT"):
+                                _lever_net_events.append({
+                                    "kind": "response", "status": resp.status,
+                                    "url": _u, "time": time.monotonic(),
+                                })
+                                logger.info(
+                                    f"[AgentLoop] Lever NET ← {resp.status} "
+                                    f"{resp.request.method} {_u}"
+                                )
+                        except Exception:
+                            pass
+
+                    try:
+                        page.on("request", _on_req)
+                        page.on("response", _on_resp)
+                        _lever_net_handlers = (_on_req, _on_resp)
+                    except Exception as _exc:
+                        logger.debug(f"[AgentLoop] Lever net listener install failed: {_exc}")
 
                 ok = await _execute_action(
                     action, page, frame, self.resume_path, self.cover_letter_path
@@ -6022,6 +6073,47 @@ class AgentLoop:
                         # no coordinate/visibility requirement at all. Confirmed
                         # live: locator.click(force=True) failed here in practice.
                         if _hc_value:
+                            # Fast path: Lever's own onSuccess callback commonly
+                            # fires the form POST directly (multipart/form-data
+                            # to /apply) 5-10ms after ChallengeSignal.SUCCESS
+                            # and the server responds 302 → /thanks. By the time
+                            # our code gets here the win has ALREADY happened —
+                            # the button we're about to poll for is legitimately
+                            # gone because the page navigated. Check first:
+                            #   (a) has the URL changed to /thanks / a
+                            #       confirmation path?
+                            #   (b) did our NET listener already log a
+                            #       success-shaped POST response?
+                            # If either is true, log terminal success and skip
+                            # the click loop entirely — otherwise it errors
+                            # "hidden submit button never became reachable"
+                            # even though we actually won.
+                            _url_now = ""
+                            try:
+                                _url_now = page.url or ""
+                            except Exception:
+                                pass
+                            _net_win = any(
+                                ev.get("kind") == "response"
+                                and 200 <= ev.get("status", 0) < 400
+                                and "/apply" in ev.get("url", "")
+                                for ev in _lever_net_events
+                            )
+                            if "/thanks" in _url_now.lower() or _net_win:
+                                logger.info(
+                                    f"[AgentLoop] Lever: submission already landed "
+                                    f"before pre-click poll (url={_url_now!r}, "
+                                    f"net_win={_net_win}) — skipping button-click loop."
+                                )
+                                # Give the post-submit verification phase the
+                                # normal `submit_fired` flow — leave `ok` True.
+                                # (Fall through past the pre-click loop below.)
+                                _clicked = True  # sentinel: treat as already-clicked
+                                _lever_submit_confirmed = True  # for the terminal branch
+                            else:
+                                _clicked = False
+                                _lever_submit_confirmed = False
+
                             # Live evidence from a prior real run showed exactly
                             # what happens after AgentV SUCCESS on Lever:
                             #   t=0.0s   Execution context destroyed
@@ -6041,7 +6133,6 @@ class AgentLoop:
                             # reachable together, then click, THEN watch for
                             # terminal state.
                             _url_before_click = page.url
-                            _clicked = False
                             # Preferentially wait for hCaptcha's OWN callback to
                             # write a fresh token into the input after the reset
                             # — re-injecting our round-1 token (which is what
@@ -6055,7 +6146,7 @@ class AgentLoop:
                             # better than nothing.
                             _fresh_token_deadline = 12  # 6s @ 0.5s per tick
                             _reinjected = False
-                            for _wait_tick in range(30):  # up to 15s total
+                            for _wait_tick in range(0 if _clicked else 30):  # up to 15s total; skipped on fast-path
                                 try:
                                     _state = await page.evaluate(
                                         """() => {
