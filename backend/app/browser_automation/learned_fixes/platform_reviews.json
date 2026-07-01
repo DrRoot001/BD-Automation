@@ -210,6 +210,10 @@
       {
         "timestamp": "2026-07-01T18:41:19.086028",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T18:55:36.825848",
+        "error": "AgentLoop aborted: No application form or apply button visible on the page. Previous attempts to fill and navigate failed. The page shows a list of job postings, not the application form."
       }
     ]
   }

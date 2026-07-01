@@ -264,10 +264,10 @@
     "value": "I frequently use AI tools for optimizing data pipelines, real-time ML inference, and deploying scalable production ML systems. I often work with PyTorch and Tensorflow for model development and deployment, and leverage MLOps practices for CI/CD."
   },
   "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
-    "count": 12,
+    "count": 14,
     "field_type": "text",
     "label": "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]",
-    "last_seen": 1782931524,
+    "last_seen": 1782932396,
     "source": "agent_loop",
     "value": "California (CA)"
   },
@@ -464,10 +464,10 @@
     "value": "Yes"
   },
   "do you incorporate ai into your daily work": {
-    "count": 6,
+    "count": 8,
     "field_type": "text",
-    "label": "Do you incorporate AI into your daily work?",
-    "last_seen": 1782931372,
+    "label": "Do you incorporate AI into your daily work? *",
+    "last_seen": 1782932331,
     "source": "agent_loop",
     "value": "Yes"
   },
@@ -632,10 +632,10 @@
     "value": "I have 2+ years of experience in designing, developing, and deploying scalable production ML systems and robust data pipelines, which involves partnering with various stakeholders."
   },
   "how often do you use ai tools to assist with your work": {
-    "count": 5,
+    "count": 7,
     "field_type": "text",
-    "label": "How often do you use AI tools to assist with your work?",
-    "last_seen": 1782931405,
+    "label": "How often do you use AI tools to assist with your work? *",
+    "last_seen": 1782932363,
     "source": "agent_loop",
     "value": "Daily - I use AI for multiple use cases"
   },
@@ -864,10 +864,10 @@
     "value": "Yes"
   },
   "type your response": {
-    "count": 9,
+    "count": 11,
     "field_type": "text",
     "label": "Type your response",
-    "last_seen": 1782931489,
+    "last_seen": 1782932431,
     "source": "agent_loop",
     "value": "$150,000 - $180,000"
   },
