@@ -17,6 +17,7 @@ _PROVIDER_ENV = {
     "2captcha":   "TWO_CAPTCHA_API_KEY",
     "anticaptcha": "ANTI_CAPTCHA_API_KEY",
     "capsolver":  "CAPSOLVER_API_KEY",
+    "nopecha":    "NOPECHA_API_KEY",
     "ocilar":     "OCILAR_API_KEY",
     # "ai" provider uses the same Claude/LLM client the AgentLoop talks to —
     # no separate API key required; reuses ANTHROPIC_API_KEY / fallback chain.
@@ -129,6 +130,39 @@ class CaptchaService:
                 sol = body.get("solution", {})
                 return sol.get("gRecaptchaResponse") or sol.get("text") or ""
         raise TimeoutError("CapSolver: timed out waiting for solution")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # NopeCHA — Token API (https://nopecha.com/api-reference). Unlike
+    # 2Captcha/AntiCaptcha/CapSolver's createTask+poll shape, NopeCHA's submit
+    # response is `{"data": job_id}` directly (no errorId wrapper) and the
+    # poll endpoint is a GET with the job id in the query string, returning
+    # HTTP 409 (not a body flag) while the solve is still in progress.
+    # ──────────────────────────────────────────────────────────────────────────
+
+    async def _nopecha_submit_hcaptcha(self, client: httpx.AsyncClient, site_key: str, page_url: str) -> str:
+        resp = await client.post(
+            "https://api.nopecha.com/v1/token/hcaptcha",
+            json={"key": self.api_key, "sitekey": site_key, "url": page_url},
+        )
+        body = resp.json()
+        if resp.status_code != 200 or "data" not in body:
+            raise RuntimeError(f"NopeCHA submit failed: {body}")
+        return body["data"]  # job id
+
+    async def _nopecha_poll(self, client: httpx.AsyncClient, job_id: str, polls: int = 40) -> str:
+        for _ in range(polls):
+            await asyncio.sleep(0.5)
+            r = await client.get(
+                "https://api.nopecha.com/v1/token/hcaptcha",
+                params={"key": self.api_key, "id": job_id},
+            )
+            if r.status_code == 409:
+                continue  # still solving
+            body = r.json()
+            if r.status_code != 200 or "data" not in body:
+                raise RuntimeError(f"NopeCHA error: {body}")
+            return body["data"]  # solved token
+        raise TimeoutError("NopeCHA: timed out waiting for solution")
 
     # ──────────────────────────────────────────────────────────────────────────
     # Ocilar OCR
@@ -253,6 +287,9 @@ class CaptchaService:
                         "websiteKey": site_key,
                     })
                     token = await self._capsolver_poll(client, tid)
+                elif self.provider == "nopecha":
+                    jid = await self._nopecha_submit_hcaptcha(client, site_key, page_url)
+                    token = await self._nopecha_poll(client, jid)
                 else:
                     raise RuntimeError("Provider does not support hCaptcha token solving.")
         except Exception as exc:

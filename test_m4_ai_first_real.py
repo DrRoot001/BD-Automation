@@ -138,7 +138,7 @@ async def resolve_job(args) -> dict:
         return {
             "job_url": j.source_url, "platform": j.source or j.source_url,
             "title": j.title or "", "company": j.company or "",
-            "description": j.description or "",
+            "description": j.description or "", "id": str(j.id),
         }
 
     if args.job_id:
@@ -162,10 +162,109 @@ async def resolve_job(args) -> dict:
 
     if args.url:
         # Platform auto-detected from the host by the executor's get_adapter.
-        return {"job_url": args.url, "platform": args.url, "title": "", "company": "", "description": ""}
+        return {"job_url": args.url, "platform": args.url, "title": "", "company": "", "description": "", "id": None}
 
     logger.warning("No job specified — using DEFAULT_JOB_URL")
-    return {"job_url": DEFAULT_JOB_URL, "platform": DEFAULT_JOB_URL, "title": "", "company": "", "description": ""}
+    return {"job_url": DEFAULT_JOB_URL, "platform": DEFAULT_JOB_URL, "title": "", "company": "", "description": "", "id": None}
+
+
+# Small host-substring → source-name map, just for labeling ad-hoc Job rows
+# created below. Mirrors the ATS detection in adapters/registry.get_adapter,
+# but we don't need adapter classes here — just a clean "source" string.
+_SOURCE_FROM_HOST = [
+    ("lever.co", "lever"), ("greenhouse", "greenhouse"), ("ashbyhq", "ashby"),
+    ("myworkdayjobs", "workday"), ("icims.com", "icims"), ("linkedin", "linkedin"),
+    ("indeed.com", "indeed"), ("dice.com", "dice"), ("talent.com", "talent"),
+    ("remoterocketship", "remoterocketship"), ("remote100k", "remoterocketship"),
+]
+
+
+def _source_from_url(url: str) -> str:
+    low = (url or "").lower()
+    for needle, name in _SOURCE_FROM_HOST:
+        if needle in low:
+            return name
+    return "manual"
+
+
+async def ensure_job_and_application(job: dict, candidate_id: str) -> tuple[str, str]:
+    """Guarantee a real `jobs` row and a real `applications` row exist before
+    the pipeline runs, so the eventual SUBMITTED transition (via the M1 API's
+    PATCH /applications/{id}/status) has a genuine row to update instead of
+    silently 404ing against a locally-fabricated UUID.
+
+    Idempotent: safe to call every run against the same URL/candidate — reuses
+    the existing Job (by source_url) / Application (by candidate+job) row.
+    """
+    from sqlalchemy import select
+    from app.database import AsyncSessionLocal
+    from app.models.job import Job
+    from app.models.application import Application
+
+    async with AsyncSessionLocal() as s:
+        job_id = job.get("id")
+        if not job_id:
+            existing_job = (await s.execute(
+                select(Job).where(Job.source_url == job["job_url"])
+            )).scalar_one_or_none()
+            if existing_job:
+                job_id = str(existing_job.id)
+            else:
+                new_job = Job(
+                    title=job.get("title") or "(untitled — ad-hoc test run)",
+                    company=job.get("company") or "(unknown — ad-hoc test run)",
+                    source=_source_from_url(job["job_url"]),
+                    source_url=job["job_url"],
+                    description=job.get("description") or "",
+                )
+                s.add(new_job)
+                await s.commit()
+                await s.refresh(new_job)
+                job_id = str(new_job.id)
+                logger.info(f"[DB] Created Job row id={job_id} for {job['job_url']}")
+
+        existing_app = (await s.execute(
+            select(Application).where(
+                Application.candidate_id == candidate_id,
+                Application.job_id == job_id,
+            )
+        )).scalar_one_or_none()
+        if existing_app:
+            application_id = str(existing_app.id)
+            # The state machine treats FAILED (and other pre-submit states) as
+            # safely re-runnable, but this test harness re-runs the SAME
+            # candidate+job repeatedly while iterating on a fix — reset back
+            # to QUEUED so the next SUBMITTED transition isn't rejected as
+            # invalid against a stale terminal status from a prior attempt.
+            # Genuine post-submit states (SUBMITTED and beyond) are left
+            # alone — don't clobber a real successful application.
+            _POST_SUBMIT = {"SUBMITTED", "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2",
+                             "INTERVIEW_R3", "INTERVIEW_R4", "REJECTED", "OFFER", "WITHDRAWN"}
+            if existing_app.status not in _POST_SUBMIT:
+                existing_app.status = "QUEUED"
+                existing_app.error_message = None
+                existing_app.failure_reason = None
+                await s.commit()
+                logger.info(
+                    f"[DB] Reusing existing Application row id={application_id} "
+                    "— reset to QUEUED for a fresh attempt"
+                )
+            else:
+                logger.warning(
+                    f"[DB] Application row id={application_id} is already past "
+                    f"submission (status={existing_app.status!r}) — reusing as-is, "
+                    "NOT resetting. This run's status transition may be rejected "
+                    "by the state machine if it re-attempts SUBMITTED."
+                )
+        else:
+            new_app = Application(candidate_id=candidate_id, job_id=job_id, status="QUEUED")
+            s.add(new_app)
+            await s.commit()
+            await s.refresh(new_app)
+            application_id = str(new_app.id)
+            logger.info(f"[DB] Created Application row id={application_id} (status=QUEUED)")
+
+    return job_id, application_id
 
 
 async def resolve_files(candidate_id: str) -> tuple[str | None, str | None]:
@@ -231,7 +330,6 @@ async def main() -> int:
     os.environ["DRY_RUN_NO_SUBMIT"] = "false" if args.submit else "true"
     os.environ.setdefault("PLAYWRIGHT_HEADLESS", "true" if args.headless else "false")
 
-    from uuid import uuid4
     from app.browser_automation.services.executor import ApplicationExecutor
     from app.browser_automation.services.models import ApplicationPackage
     from app.browser_automation.llm import telemetry as tele
@@ -245,10 +343,15 @@ async def main() -> int:
         logger.error("No resume URL found in Supabase/DB for this candidate — aborting")
         return 2
 
+    # Real Job + Application rows so the SUBMITTED transition at the end of the
+    # run actually persists (previously a locally-fabricated uuid4() meant the
+    # PATCH /applications/{id}/status call had no real row to update).
+    job_id, application_id = await ensure_job_and_application(job, candidate_id)
+
     package = ApplicationPackage(
-        application_id=str(uuid4()),
+        application_id=application_id,
         candidate_id=candidate_id,
-        job_id=str(uuid4()),
+        job_id=job_id,
         job_title=job["title"], job_description=job["description"],
         job_url=job["job_url"], platform=job["platform"], ats_type=job["platform"],
         company=job["company"],
