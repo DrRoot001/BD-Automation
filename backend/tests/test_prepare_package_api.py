@@ -94,7 +94,7 @@ async def test_prepare_package_happy_path(
 ):
     """
     Test Case 1: Happy Path.
-    - All Gemini calls succeed, candidate score >= 89.
+    - All Gemini calls succeed, candidate score >= 75.
     - Assert correct responses are returned.
     - Assert progressive status progression: MATCHED -> RESUME_UPDATED -> COVER_LETTER_CREATED -> QUEUED.
     """
@@ -179,7 +179,7 @@ async def test_prepare_package_low_fit_score(
 ):
     """
     Test Case 2: Low Fit Score Gate.
-    - Candidate combined score < 89.
+    - Candidate combined score < 75.
     - Check that pipeline short-circuits.
     - Confirm status transitions directly to ANALYZED.
     - Assert that tailor, cover letter, and screening question logic were NOT called.
@@ -211,7 +211,7 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "Combined score (55.0) is below gate threshold of 89" in data["reason"]
+    assert "Combined score (55.0) is below gate threshold of 75" in data["reason"]
 
     # Assert gating works
     mock_tailor_resume.assert_not_called()

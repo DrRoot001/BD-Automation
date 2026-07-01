@@ -19,7 +19,7 @@ class MatchResult(BaseModel):
     fit_score: float              # 0-100
     ats_score: float              # 0-100
     combined_score: float         # (fit_score × 0.5) + (ats_score × 0.5)
-    should_apply: bool            # combined_score >= 89
+    should_apply: bool            # combined_score >= 75
     matching_skills: List[str]    # skills found in both resume and JD
     missing_skills: List[str]     # skills in JD but not in resume
     experience_match: float       # 0-100, years + domain relevance
@@ -40,9 +40,9 @@ async def score_job_fit(
     combined_score = ats_score
 
     try:
-        _apply_threshold = float(os.getenv("APPLY_SCORE_THRESHOLD", "89"))
+        _apply_threshold = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
     except ValueError:
-        _apply_threshold = 89.0
+        _apply_threshold = 75.0
     should_apply = combined_score >= _apply_threshold
 
     return MatchResult(
