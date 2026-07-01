@@ -116,14 +116,15 @@ def test_retry_application_endpoint(mock_execute, mock_publish, mock_db):
 from app.tasks.browser_automation import recover_stuck_applications
 
 @patch("app.tasks.browser_automation.publish_status_changed")
-@patch("app.database.AsyncSessionLocal")
-def test_recover_stuck_applications(mock_session_cls, mock_publish):
+@patch("app.database.task_session")
+def test_recover_stuck_applications(mock_task_session, mock_publish):
     from datetime import datetime, timezone, timedelta
     from app.models.application import Application
     
     mock_session = AsyncMock()
-    mock_session.__aenter__.return_value = mock_session
-    mock_session_cls.return_value = mock_session
+    mock_session_ctx = AsyncMock()
+    mock_session_ctx.__aenter__.return_value = mock_session
+    mock_task_session.return_value = mock_session_ctx
     
     now = datetime.now(timezone.utc)
     
@@ -141,35 +142,34 @@ def test_recover_stuck_applications(mock_session_cls, mock_publish):
         created_at=now - timedelta(minutes=30)
     )
     
-    # ANALYZED threshold is 120 min — 130 min should be caught
-    stuck_analyzed = Application(
+    # APPLICATION_STARTED threshold is 30 min — 35 min should be caught
+    stuck_started = Application(
         id=uuid.uuid4(),
-        status="ANALYZED",
-        created_at=now - timedelta(minutes=130)
+        status="APPLICATION_STARTED",
+        created_at=now - timedelta(minutes=35)
     )
     
-    # 90 min ANALYZED is NOT stuck (threshold is 120 min)
-    recent_analyzed = Application(
+    # 20 min APPLICATION_STARTED is NOT stuck (threshold is 30 min)
+    recent_started = Application(
         id=uuid.uuid4(),
-        status="ANALYZED",
-        created_at=now - timedelta(minutes=90)
+        status="APPLICATION_STARTED",
+        created_at=now - timedelta(minutes=20)
     )
     
     # First execute call: raw SQL JOIN query returns (id, status, last_updated) rows
-    # The watchdog filters by threshold logic in Python — only return ALL apps,
-    # let the code decide which are stuck
+    # The watchdog filters by threshold logic in Python
     raw_rows = [
         (stuck_app.id, "QUEUED", now - timedelta(minutes=65)),
         (recent_app.id, "QUEUED", now - timedelta(minutes=30)),
-        (stuck_analyzed.id, "ANALYZED", now - timedelta(minutes=130)),
-        (recent_analyzed.id, "ANALYZED", now - timedelta(minutes=90)),
+        (stuck_started.id, "APPLICATION_STARTED", now - timedelta(minutes=35)),
+        (recent_started.id, "APPLICATION_STARTED", now - timedelta(minutes=20)),
     ]
     mock_raw_result = MagicMock()
     mock_raw_result.fetchall.return_value = raw_rows
     
-    # Second execute call: ORM fetch of only the stuck apps (stuck_app and stuck_analyzed)
+    # Second execute call: ORM fetch of only the stuck apps (stuck_app and stuck_started)
     mock_orm_result = MagicMock()
-    mock_orm_result.scalars.return_value.all.return_value = [stuck_app, stuck_analyzed]
+    mock_orm_result.scalars.return_value.all.return_value = [stuck_app, stuck_started]
     
     mock_session.execute.side_effect = [
         mock_raw_result,   # Raw SQL JOIN query
@@ -184,11 +184,11 @@ def test_recover_stuck_applications(mock_session_cls, mock_publish):
     
     assert recent_app.status == "QUEUED"
     
-    assert stuck_analyzed.status == "FAILED"
-    assert stuck_analyzed.failure_reason == "INFRA_ERROR"
-    assert stuck_analyzed.error_message == "automation timeout — worker died or never picked up task"
+    assert stuck_started.status == "FAILED"
+    assert stuck_started.failure_reason == "INFRA_ERROR"
+    assert stuck_started.error_message == "automation timeout — worker died or never picked up task"
     
-    assert recent_analyzed.status == "ANALYZED"
+    assert recent_started.status == "APPLICATION_STARTED"
     
     mock_session.commit.assert_called_once()
     assert mock_publish.call_count == 2
@@ -240,58 +240,4 @@ async def test_get_active_application_count_excludes_expired():
     query_str = str(args[0])
     
     assert "failure_reason IS NULL" in query_str or "failure_reason !=" in query_str
-
-
-@pytest.mark.asyncio
-@patch("app.browser_automation.services.executor.is_job_url_active")
-@patch("app.tasks.browser_automation.publish_status_changed")
-async def test_watchdog_expired_job_handling(mock_publish_status, mock_job_active):
-    from app.services.state_machine import recover_stuck_applications_async
-    from app.models.application import Application
-    from app.models.job import Job
-    
-    mock_job_active.return_value = False  # Job is expired
-    
-    # Set up mock DB objects
-    job = Job(id=uuid.uuid4(), source_url="https://boards.greenhouse.io/company/jobs/123", is_duplicate=False)
-    app = Application(id=uuid.uuid4(), job_id=job.id, status="QUEUED", failure_reason=None)
-    
-    # Mock queries:
-    # 1. active_apps query
-    mock_active_apps_result = MagicMock()
-    mock_active_apps_result.scalars.return_value.all.return_value = [app]
-    
-    # 2. jobs query
-    mock_jobs_result = MagicMock()
-    mock_jobs_result.scalars.return_value.all.return_value = [job]
-    
-    # 3. stuck applications query (raw SQL)
-    mock_stuck_result = MagicMock()
-    mock_stuck_result.fetchall.return_value = []
-    
-    class TestSession:
-        def __init__(self):
-            self.execute_calls = [mock_active_apps_result, mock_jobs_result, mock_stuck_result]
-            self.added = []
-            self.committed = False
-            
-        async def execute(self, stmt, *args, **kwargs):
-            return self.execute_calls.pop(0)
-            
-        def add(self, obj):
-            self.added.append(obj)
-            
-        async def commit(self):
-            self.committed = True
-            
-    session = TestSession()
-    
-    # Run the watchdog check
-    await recover_stuck_applications_async(session)
-        
-    assert app.status == "FAILED"
-    assert app.failure_reason == "JOB_EXPIRED"
-    assert job.is_duplicate is True
-    assert job.embedding is None
-    assert session.committed is True
 

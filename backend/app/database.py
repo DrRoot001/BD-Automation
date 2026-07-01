@@ -39,15 +39,18 @@ engine = create_async_engine(
     pool_timeout=30,          # Wait up to 30s for a free connection instead of erroring under burst
     # PgBouncer transaction-mode (Supabase port 6543) does NOT support
     # asyncpg prepared statements — set cache size to 0 to disable them.
-    connect_args={"statement_cache_size": 0},
+    connect_args={
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    },
 )
 
 AsyncSessionLocal = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 async_session_maker = AsyncSessionLocal
-
+ 
 Base = declarative_base()
-
-
+ 
+ 
 @asynccontextmanager
 async def task_session():
     """
@@ -68,7 +71,10 @@ async def task_session():
         poolclass=NullPool,
         # PgBouncer transaction-mode (Supabase port 6543) does NOT support
         # asyncpg prepared statements — must disable cache here too.
-        connect_args={"statement_cache_size": 0},
+        connect_args={
+            "statement_cache_size": 0,
+            "prepared_statement_cache_size": 0,
+        },
     )
     try:
         maker = async_sessionmaker(task_engine, class_=AsyncSession, expire_on_commit=False)

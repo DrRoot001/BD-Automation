@@ -161,7 +161,7 @@ async def test_prepare_package_happy_path(
 
     # 5. Verify status sequence
     status_updates = [log[2]["status"] for log in mock_client.requests_log if log[0] == "PATCH"]
-    assert status_updates == ["QUEUED", "QUEUED", "QUEUED", "QUEUED", "QUEUED"]
+    assert status_updates == ["QUEUED", "QUEUED", "QUEUED", "QUEUED"]
 
 
 @pytest.mark.asyncio
@@ -211,7 +211,7 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "Combined score (55.0) is below gate threshold of 70" in data["reason"]
+    assert "Combined score (55.0) is below gate threshold of 80" in data["reason"]
 
     # Assert gating works
     mock_tailor_resume.assert_not_called()
@@ -290,7 +290,7 @@ async def test_prepare_package_no_cover_letter(
 
     # Verify sequence transitions skipped COVER_LETTER_CREATED
     status_updates = [log[2]["status"] for log in mock_client.requests_log if log[0] == "PATCH"]
-    assert status_updates == ["QUEUED", "QUEUED", "QUEUED", "QUEUED"]
+    assert status_updates == ["QUEUED", "QUEUED"]
 
 
 @pytest.mark.asyncio

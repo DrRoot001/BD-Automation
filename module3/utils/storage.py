@@ -43,6 +43,7 @@ SUPABASE_URL = (
 )
 SUPABASE_KEY = (
     _os.getenv("SUPABASE_KEY")
+    or _os.getenv("SUPABASE_ANON_KEY")
     or _os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY")
     or get_env_var_from_file(_env_local, "NEXT_PUBLIC_SUPABASE_ANON_KEY")
     or get_env_var_from_file(_env_fallback, "NEXT_PUBLIC_SUPABASE_ANON_KEY")

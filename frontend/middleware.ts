@@ -59,16 +59,24 @@ export async function middleware(request: NextRequest) {
 
   // 4. Action based on auth validation
   if (!user) {
+    const isLoginPath = url.pathname.startsWith('/login')
     if (isUnauthorized) {
+      if (isLoginPath) {
+        const response = NextResponse.next()
+        response.cookies.delete('auth_token')
+        return response
+      }
       const response = NextResponse.redirect(new URL('/login', request.url))
       response.cookies.delete('auth_token')
       return response
     }
+    
     // Transient error (network timeout, backend restart): pass through rather than
     // forcing a login redirect — the page-level queries will show their own error states.
     if (isTransientError) {
       return nextResponseWithHeaders
     }
+    
     // Unknown state (shouldn't happen): clear and redirect
     const response = NextResponse.redirect(new URL('/login', request.url))
     response.cookies.delete('auth_token')

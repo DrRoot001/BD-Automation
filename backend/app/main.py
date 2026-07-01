@@ -81,8 +81,8 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"[Startup] Failed to initialize interview_tracking table: {e}")
 
-    asyncio.create_task(_run_startup_watchdog())
-    asyncio.create_task(_init_db_tables())
+    await _run_startup_watchdog()
+    await _init_db_tables()
     
     yield
     await stop_redis_subscriber()

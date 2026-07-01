@@ -122,6 +122,8 @@ class JobBase(BaseModel):
     pay_period: Optional[str] = None
     job_type: Optional[str] = None
     posted_at: Optional[datetime] = None
+    ats_type: Optional[str] = None
+    job_category: Optional[str] = None
 
 class Job(JobBase):
     id: UUID

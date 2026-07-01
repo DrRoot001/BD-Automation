@@ -24,6 +24,14 @@
 
 
 import os
+import sys
+from pathlib import Path
+
+# Ensure the repo root (parent of backend/) is importable so that background tasks
+# can import modules from module2, module3, etc. out-of-the-box.
+_REPO_ROOT = str(Path(__file__).resolve().parents[2])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 import ssl
 from celery import Celery
 
