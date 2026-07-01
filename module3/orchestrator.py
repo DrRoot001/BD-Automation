@@ -263,7 +263,7 @@ async def orchestrate_application_package(
 
         # Check Gate Threshold
         if not match_result.should_apply and not skip_gate:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 80. Transitioning status to ANALYZED and STOPPING.")
+            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 89. Transitioning status to ANALYZED and STOPPING.")
             
             # Transition to ANALYZED
             update_payload = {
@@ -271,7 +271,7 @@ async def orchestrate_application_package(
                 "fit_score": match_result.fit_score,
                 "ats_score": match_result.ats_score,
                 "combined_score": match_result.combined_score,
-                "metadata": {"reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 80.0", "explanation": match_result.reasoning}
+                "metadata": {"reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 89.0", "explanation": match_result.reasoning}
             }
             await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
             
@@ -566,7 +566,7 @@ async def prepare_package_for_live_application(
         
         # Check Gate Threshold
         if not match_result.should_apply and not skip_gate:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 80. Transitioning status to ANALYZED and STOPPING.")
+            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 89. Transitioning status to ANALYZED and STOPPING.")
             
             # Transition to ANALYZED
             update_payload = {
@@ -574,13 +574,13 @@ async def prepare_package_for_live_application(
                 "fit_score": match_result.fit_score,
                 "ats_score": match_result.ats_score,
                 "combined_score": match_result.combined_score,
-                "metadata": {"reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 80.0", "explanation": match_result.reasoning}
+                "metadata": {"reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 89.0", "explanation": match_result.reasoning}
             }
             await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
             
             return {
                 "should_apply": False,
-                "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 80: {match_result.reasoning}"
+                "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 89: {match_result.reasoning}"
             }
 
         # Transition application to QUEUED
