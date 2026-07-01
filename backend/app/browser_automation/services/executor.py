@@ -659,11 +659,17 @@ class ApplicationExecutor:
                         )
 
                     else:
-                        # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR — submit was
-                        # never fired, so the scripted pipeline is safe to attempt.
-                        logger.warning(
+                        # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR
+                        # Mutual Exclusion: We no longer fall back to the deterministic 
+                        # pipeline if AgentLoop gets stuck. Running both on the same
+                        # React DOM causes conflicting state and lost data.
+                        logger.error(
                             f"[M4] AgentLoop non-terminal ({loop_result.status}) — "
-                            "falling back to scripted pipeline"
+                            "aborting application to prevent fallback conflict"
+                        )
+                        raise Exception(
+                            f"AgentLoop failed to complete ({loop_result.status}): {loop_result.error}. "
+                            "Failing application to prevent deterministic fallback conflict."
                         )
 
                 except Exception as exc:
@@ -1207,3 +1213,5 @@ class ApplicationExecutor:
                 execution_time_seconds=_elapsed(),
                 retry_count=retry_count,
             )
+        finally:
+            _cleanup_temp(_temp_resume, _temp_cover)

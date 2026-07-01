@@ -148,7 +148,7 @@ class PageAgent:
             # JPEG quality 50 keeps the screenshot small enough for cheap vision
             # while preserving enough detail for page-state classification.
             screenshot = await page.screenshot(
-                full_page=False, type="jpeg", quality=50, clip={"x": 0, "y": 0, "width": 1280, "height": 720},
+                full_page=True, type="jpeg", quality=50,
             )
             html = await ctx.content()
             dom = _truncate(html, 5_000)
@@ -209,7 +209,7 @@ class PageAgent:
             # JPEG quality 50 keeps the screenshot small enough for cheap vision
             # while preserving enough detail for page-state classification.
             screenshot = await page.screenshot(
-                full_page=False, type="jpeg", quality=50, clip={"x": 0, "y": 0, "width": 1280, "height": 720},
+                full_page=True, type="jpeg", quality=50,
             )
         except Exception as exc:
             logger.warning(f"[PageAgent] Could not capture for selectors: {exc}")

@@ -82,6 +82,7 @@ ActionKind = Literal[
     "wait",
     "abort",
     "done",
+    "solve_captcha",
 ]
 
 
@@ -101,6 +102,8 @@ class AgentAction:
     click_text: Optional[str] = None     # :has-text fallback if selector fails
     # navigate_url — for AI to self-recover when on wrong page
     url: Optional[str] = None
+    # solve_captcha
+    captcha_type: Optional[str] = None   # "recaptcha_v2" | "hcaptcha" | "image"
     # internal — set by the executor after the action runs
     step: int = 0
     ok: bool = True                      # False if Playwright couldn't execute
@@ -231,6 +234,7 @@ Action schema (return ONE per turn):
   wait           — no params (short pause; use after a click that triggers async load)
   abort          — {reason}  (ONLY after you've tried click_apply + scroll + wait)
   done           — {confirmation}
+  solve_captcha  — {captcha_type: "recaptcha_v2" | "hcaptcha" | "image"}
 
 DECISION POLICY — read in order:
 1. First turn → if page shows form fields, return verify_page. If it shows an Apply link
@@ -259,7 +263,7 @@ DECISION POLICY — read in order:
     a field exists is a real omission, not optional.
 6. After all visible fields filled → look for Next/Continue → next_step.
 7. After last page → click Submit → done with confirmation.
-8. CAPTCHA you can't solve → abort reason="captcha_wall".
+8. CAPTCHA detected → return solve_captcha with captcha_type="recaptcha_v2" | "hcaptcha" | "image"
 9. Login wall / bot detection → abort reason="blocked".
 10. Same field unfilled twice → skip and continue.
 11. Prefer #id selectors > [data-*] > short class chain. Never invent selectors not in the DOM.
@@ -941,14 +945,19 @@ async def _dom_snapshot(page: Page, frame: Optional[Frame] = None, is_iframe_mod
 
 
 async def _dom_hash(ctx) -> str:
-    """SHA1 of the body inner HTML and input values — used to detect DOM changes between steps."""
+    """SHA1 of form input values and basic text/node structure. 
+    Filters out innerHTML which changes constantly due to loaders/ads."""
     try:
-        html = await ctx.evaluate("""() => {
-            let html = document.body.innerHTML;
-            let vals = Array.from(document.querySelectorAll('input, select, textarea')).map(e => e.value).join('|');
-            return html + vals;
+        data = await ctx.evaluate("""() => {
+            let vals = Array.from(document.querySelectorAll('input, select, textarea')).map(e => {
+                if (e.type === 'checkbox' || e.type === 'radio') return e.checked;
+                return e.value;
+            }).join('|');
+            let formText = Array.from(document.querySelectorAll('form, button, [role="button"], label, h1, h2')).map(e => (e.textContent || '').trim()).join('|');
+            let nodeCount = document.querySelectorAll('*').length;
+            return vals + '|' + formText + '|' + nodeCount;
         }""")
-        return hashlib.sha1(html.encode()).hexdigest()[:16]
+        return hashlib.sha1(data.encode()).hexdigest()[:16]
     except Exception:
         return ""
 
@@ -959,7 +968,7 @@ async def _dom_hash(ctx) -> str:
 
 _VALID_KINDS: set[str] = {
     "verify_page", "fill_field", "upload_file", "click", "click_apply",
-    "scroll", "next_step", "navigate_url", "wait", "abort", "done",
+    "scroll", "next_step", "navigate_url", "wait", "abort", "done", "solve_captcha",
 }
 
 
@@ -978,6 +987,7 @@ def _parse_action(raw: Dict[str, Any], step: int) -> Optional[AgentAction]:
         confirmation=raw.get("confirmation") or None,
         click_text=raw.get("click_text") or None,
         url=raw.get("url") or None,
+        captcha_type=raw.get("captcha_type") or None,
         step=step,
         raw=raw,
     )
@@ -1322,6 +1332,23 @@ async def _execute_action(
         logger.warning("[AgentLoop] next_step: no Next button found")
         return False
 
+    if kind == "solve_captcha":
+        from ..captcha.service import CaptchaService
+        if not action.captcha_type:
+            logger.warning("[AgentLoop] solve_captcha: missing captcha_type")
+            return False
+        
+        logger.info(f"[AgentLoop] LLM requested solve_captcha for type={action.captcha_type!r}")
+        captcha_svc = CaptchaService() 
+        solution = await captcha_svc.solve(page, action.captcha_type)
+        if solution.success:
+            logger.info(f"[AgentLoop] Captcha solved successfully in {solution.solve_time_seconds:.1f}s")
+            await asyncio.sleep(2.0)
+            return True
+        else:
+            logger.warning("[AgentLoop] CaptchaService failed to solve captcha")
+            return False
+
     if kind == "click":
         sel = action.selector
         text = action.click_text
@@ -1604,7 +1631,7 @@ async def _execute_action(
                     await loc.click(timeout=5000)
                 except Exception:
                     pass
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.9)  # Forced delay for React hydration
                 # 2. Read the actual options — SCOPED to THIS field's own menu
                 #    (via aria-controls), so the phone widget's 200-country
                 #    dropdown and any other open react-select don't pollute the
@@ -1713,7 +1740,7 @@ async def _execute_action(
                 try:
                     await loc.fill("")
                     await loc.type(target_text, delay=40)
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(0.9)
                     await page.keyboard.press("Enter")
                     logger.info(f"[AgentLoop] combobox fallback type+Enter for {target_text!r}")
                     return True
@@ -2169,7 +2196,10 @@ class AgentLoop:
         # Append the action-schema/rules block (unchanged from the original
         # system prompt, just relocated so the identity card comes first).
         # Then the screening-answers block, if M3 provided any.
-        return base + resume_block + hints_block + screening_block + _ACTION_SCHEMA_BLOCK
+        schema_block = _ACTION_SCHEMA_BLOCK
+        if not self.cover_letter_path:
+            schema_block += "\n\nCRITICAL OVERRIDE: You DO NOT have a cover letter. If a cover letter field exists, DO NOT upload anything to it. Skip it entirely.\n"
+        return base + resume_block + hints_block + screening_block + schema_block
 
     # ──────────────────────────────────────────────────────────────────────
     # Lever 2: memory pre-fill — recall + apply known answers before the LLM
@@ -4483,14 +4513,13 @@ class AgentLoop:
                         except Exception:
                             _eff = "anthropic"
                         if _eff == "groq":
-                            sw, sh, sq = 720, 405, 28
+                            sq = 28
                         else:
-                            sw, sh, sq = 960, 540, 35
+                            sq = 35
                         screenshot = await page.screenshot(
-                            full_page=False,
+                            full_page=True,
                             type="jpeg",
                             quality=sq,
-                            clip={"x": 0, "y": 0, "width": sw, "height": sh},
                         )
                 except Exception as exc:
                     logger.error(f"[AgentLoop] step={step} capture failed: {exc}")

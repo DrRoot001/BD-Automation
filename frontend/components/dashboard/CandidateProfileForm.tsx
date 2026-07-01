@@ -145,6 +145,8 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
     location: 'US',
     work_auth: 'us_authorized',
     years_exp: '',
+    gmail: '',
+    password: '',
   })
   const [techStack, setTechStack] = useState<string[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -167,6 +169,8 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
         location: candidate.location || 'US',
         work_auth: candidate.work_auth || 'us_authorized',
         years_exp: candidate.years_exp != null ? String(candidate.years_exp) : '',
+        gmail: candidate.gmail || '',
+        password: candidate.password || '',
       })
       setTechStack(Array.isArray(candidate.tech_stack) ? candidate.tech_stack : [])
     }
@@ -254,6 +258,8 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
         tech_stack: techStack,
         years_exp: formData.years_exp ? parseInt(formData.years_exp) : null,
         linkedin_url: null,
+        gmail: formData.gmail.trim() || null,
+        password: formData.password || null,
       }
 
       let candidateId = candidate?.id
@@ -297,7 +303,7 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
       })
 
       if (!candidate) {
-        setFormData({ name: '', email: '', phone: '', location: 'US', work_auth: 'us_authorized', years_exp: '' })
+        setFormData({ name: '', email: '', phone: '', location: 'US', work_auth: 'us_authorized', years_exp: '', gmail: '', password: '' })
         setTechStack([])
         setResumeFile(null)
         if (fileInputRef.current) fileInputRef.current.value = ''
@@ -360,6 +366,28 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
               className={`input ${errors.email ? 'border-danger focus:border-danger' : ''}`}
             />
             {errors.email && <p className="text-danger text-xs mt-1">{errors.email}</p>}
+          </div>
+        </div>
+
+        {/* Gmail + Password */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="input-label">Gmail (for AI Login)</label>
+            <input
+              type="email" name="gmail"
+              value={formData.gmail} onChange={handleChange} onBlur={handleBlur}
+              placeholder="candidate@gmail.com"
+              className="input"
+            />
+          </div>
+          <div>
+            <label className="input-label">Password</label>
+            <input
+              type="password" name="password"
+              value={formData.password} onChange={handleChange}
+              placeholder="••••••••"
+              className="input"
+            />
           </div>
         </div>
 

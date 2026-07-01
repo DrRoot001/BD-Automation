@@ -1,0 +1,162 @@
+{
+  "are you at least 18 years of age": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you at least 18 years of age?*",
+    "last_seen": 1782856428,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "are you authorized to work lawfully in the united states": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you authorized to work lawfully in the United States?*",
+    "last_seen": 1782856478,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "do you currently work for datavant, cvs or any affiliates of either company": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you currently work for Datavant, CVS or any affiliates of either company?*",
+    "last_seen": 1782856481,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
+  "do you have a high school diploma or equivalent (ged)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you have a High School Diploma or Equivalent (GED)?*",
+    "last_seen": 1782856477,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1782855658,
+    "source": "agent_loop",
+    "value": "aliahmad5909071@gmail.com"
+  },
+  "first name": {
+    "count": 2,
+    "field_type": "text",
+    "label": "First Name*",
+    "last_seen": 1782856335,
+    "source": "agent_loop",
+    "value": "Ali"
+  },
+  "gender": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Gender*",
+    "last_seen": 1782856473,
+    "source": "rules",
+    "value": "Decline To Self Identify"
+  },
+  "have you ever worked for datavant or one of our affiliates (ciox health, arrohe": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Have you ever worked for Datavant or one of our affiliates? (Ciox Health, ArroHe",
+    "last_seen": 1782856406,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "have you ever worked for datavant or one of our affiliates (ciox health, arrohealth, iod, ecs, healthport, medal, medsave, chart one, discovery health, documentation solutions, smart corp, care communications, aetion, digital owl, ontellus)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Have you ever worked for Datavant or one of our affiliates? (Ciox Health, ArroHealth, IOD, ECS, Healthport, Medal, MedSave, Chart One, Discovery Health, Documentation Solutions, Smart Corp, Care Communications, Aetion, Digital Owl, Ontellus)?*",
+    "last_seen": 1782856475,
+    "source": "smart_infer",
+    "value": "Yes"
+  },
+  "i consent to receive text messages regarding my job application status, interview updates, and future job opportunities from datavant. you can opt out any time by texting stop. for assistance, text help. message & data rates may apply; messaging frequency may vary. visit www.datavant.com/privacy-policy to see our privacy policy": {
+    "count": 2,
+    "field_type": "select",
+    "label": "I consent to receive text messages regarding my job application status, interview updates, and future job opportunities from Datavant. You can opt out any time by texting STOP. For assistance, text HELP. Message & data rates may apply; Messaging frequency may vary. Visit www.datavant.com/privacy-policy to see our privacy policy.*",
+    "last_seen": 1782856616,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "if you selected \"employee referral\", please list the referring employee's full name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "If you selected \"Employee Referral\", please list the referring employee's full name.",
+    "last_seen": 1782856471,
+    "source": "rules",
+    "value": "Ali AHmad"
+  },
+  "last name": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Last Name*",
+    "last_seen": 1782856351,
+    "source": "agent_loop",
+    "value": "AHmad"
+  },
+  "location (city)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Location (City) *",
+    "last_seen": 1782856469,
+    "source": "rules",
+    "value": "US"
+  },
+  "phone": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone*",
+    "last_seen": 1782856468,
+    "source": "rules",
+    "value": "+15855844776"
+  },
+  "preferred first name": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Preferred First Name",
+    "last_seen": 1782856367,
+    "source": "agent_loop",
+    "value": "Ali"
+  },
+  "preferred name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred Name",
+    "last_seen": 1782855647,
+    "source": "agent_loop",
+    "value": "Ali AHmad"
+  },
+  "race": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Race*",
+    "last_seen": 1782856472,
+    "source": "rules",
+    "value": "Decline To Self Identify"
+  },
+  "veteran status": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Veteran Status*",
+    "last_seen": 1782856473,
+    "source": "rules",
+    "value": "I am not a protected veteran"
+  },
+  "will you now or in the future require datavant to participate in a government program to maintain your work authorization (such as completing training verification for opt or stem opt)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require Datavant to participate in a government program to maintain your work authorization (such as completing training verification for OPT or STEM OPT)?*",
+    "last_seen": 1782856480,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "will you now or in the future require datavant to sponsor your employment authorization (for example, through an h-1b or similar visa)": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now or in the future require Datavant to sponsor your employment authorization (for example, through an H-1B or similar visa)?*",
+    "last_seen": 1782856479,
+    "source": "smart_infer",
+    "value": "Yes"
+  }
+}

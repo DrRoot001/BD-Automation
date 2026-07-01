@@ -37,7 +37,7 @@ def generate_job_embedding(self, job_id: str):
                 logger.warning("[Embedding] Job %s not found", job_id)
                 return False
 
-            if job.embedding:
+            if job.embedding is not None:
                 logger.info("[Embedding] Job %s already has embedding", job_id)
                 return True
 

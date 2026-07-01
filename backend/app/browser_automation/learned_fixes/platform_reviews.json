@@ -4,7 +4,7 @@
     "failures": [
       {
         "timestamp": "2026-06-27T01:11:36.913603",
-        "error": "ApplicationPackage.resume_url is empty — cannot proceed"
+        "error": "ApplicationPackage.resume_url is empty \u2014 cannot proceed"
       }
     ]
   },
@@ -13,11 +13,11 @@
     "failures": [
       {
         "timestamp": "2026-06-27T01:12:35.537928",
-        "error": "BLOCKED: Workday Apply button not found — job may be closed or DOM changed"
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
       },
       {
         "timestamp": "2026-06-27T01:20:14.794790",
-        "error": "BLOCKED: Workday Apply button not found — job may be closed or DOM changed"
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
       }
     ]
   },
@@ -31,6 +31,14 @@
       {
         "timestamp": "2026-06-29T12:13:21.469341",
         "error": "Page.screenshot: Target page, context or browser has been closed"
+      },
+      {
+        "timestamp": "2026-06-30T21:54:48.072053",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-06-30T22:02:46.170937",
+        "error": "Page.evaluate: Connection closed while reading from the driver"
       }
     ]
   },
@@ -48,16 +56,16 @@
     "failures": [
       {
         "timestamp": "2026-06-27T16:38:15.235873",
-        "error": "BLOCKED: DICE_EMAIL / DICE_PASSWORD not configured — cannot log in to Dice (Easy Apply requires an authenticated seeker account)."
+        "error": "BLOCKED: DICE_EMAIL / DICE_PASSWORD not configured \u2014 cannot log in to Dice (Easy Apply requires an authenticated seeker account)."
       }
     ]
   },
   "www.remoterocketship.com": {
-    "needs_review": true,
+    "needs_review": false,
     "failures": [
       {
         "timestamp": "2026-06-29T13:48:19.402095",
-        "error": "BLOCKED: Workday Apply button not found — job may be closed or DOM changed"
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
       },
       {
         "timestamp": "2026-06-29T13:52:49.287050",
@@ -73,7 +81,24 @@
       },
       {
         "timestamp": "2026-06-29T21:39:49.126486",
-        "error": "BLOCKED: Workday Apply button not found — job may be closed or DOM changed"
+        "error": "BLOCKED: Workday Apply button not found \u2014 job may be closed or DOM changed"
+      },
+      {
+        "timestamp": "2026-06-30T22:02:45.116377",
+        "error": "BrowserType.launch: Connection closed while reading from the driver"
+      }
+    ]
+  },
+  "ashby": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-06-30T21:41:22.505746",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code)"
+      },
+      {
+        "timestamp": "2026-06-30T21:45:05.676034",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code)"
       }
     ]
   }
