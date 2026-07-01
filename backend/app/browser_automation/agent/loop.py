@@ -3438,9 +3438,39 @@ class AgentLoop:
              "Yes", ["yes", "i am authorized", "authorized", "yes, i am authorized"]),
             (r"(require|need).*(sponsor|visa)|sponsor\w*.*(now|future|work)",
              "No", ["no"]),
+            # Built In compliance questionnaire — three canonical questions
+            # every Built In application asks (per spec v1.0). Operator
+            # policy answers all three "No" unless the candidate profile
+            # explicitly says otherwise. Wording drifts per employer
+            # (\"currently or in the last five years\", \"close relative
+            # of a government official\", \"relationship that creates a
+            # conflict of interest\") — one broad regex per canonical
+            # category.
+            (r"government\s+official|\bgovernment\s+employee\b|"
+             r"(currently|past|last\s+five\s+years|last\s+5\s+years).{0,40}government|"
+             r"public\s+official\b",
+             "No", ["no"]),
+            (r"(close\s+)?relative.{0,20}(government|official|public\s+official)|"
+             r"family\s+member.{0,20}(government|official)",
+             "No", ["no"]),
+            (r"conflict\s+of\s+interest|relationship.{0,30}(conflict|interest)",
+             "No", ["no"]),
             (r"\blinkedin\b",
              _linkedin_policy_value(p),
              [_linkedin_policy_value(p).lower(), "n/a"]),
+            # Consent checkboxes — Palantir-style "Yes, I consent",
+            # GDPR-style "I agree to the terms", data-privacy tick-boxes,
+            # and anything that reads as a required affirmative for the
+            # candidate to proceed. Universal answer: Yes. Skipping this
+            # is why Palantir's form 400'd server-side despite a solved
+            # captcha (required field 'Yes, I consent' left unfilled).
+            (r"^\s*(yes,?\s*)?i\s+(consent|agree|acknowledge|accept|confirm)\b|"
+             r"\bi\s+(consent|agree|acknowledge|accept|confirm)\s+(to|that|with)\b|"
+             r"\bagree\s+to\s+(the\s+)?(terms|privacy|conditions|use|processing)\b|"
+             r"\bconsent\s+to\s+(the\s+)?(processing|use|collection|storage|sharing)\b|"
+             r"\bhereby\s+(consent|agree|acknowledge)\b",
+             "Yes", ["yes", "i consent", "i agree", "agree", "consent",
+                     "yes, i consent", "yes, i agree", "accepted", "on", "true"]),
             (r"(currently based in|country of residence|which country|where.*based|^country)",
              "United States", ["united states", "united states of america", "usa", "u.s.a."]),
             (r"gender identity|what is your gender|\bgender\b",

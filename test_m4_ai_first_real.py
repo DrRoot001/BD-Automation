@@ -176,6 +176,7 @@ _SOURCE_FROM_HOST = [
     ("myworkdayjobs", "workday"), ("icims.com", "icims"), ("linkedin", "linkedin"),
     ("indeed.com", "indeed"), ("dice.com", "dice"), ("talent.com", "talent"),
     ("remoterocketship", "remoterocketship"), ("remote100k", "remoterocketship"),
+    ("builtin.com", "builtin"),
 ]
 
 

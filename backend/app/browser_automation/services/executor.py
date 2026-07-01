@@ -302,8 +302,23 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
         if not filename.lower().endswith(suffix.lower()):
             filename += suffix
 
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, filename)
+        # Use a project-local, stable cache dir instead of the OS temp
+        # dir. Windows aggressively cleans %TEMP% (Storage Sense, tempfile
+        # module context managers elsewhere in this process, and any
+        # sibling cleanup call that walks tempfile.gettempdir()) — an
+        # already-downloaded resume can vanish between the executor's
+        # initial resolve and a later retry-attempt upload inside the
+        # AgentLoop, which is exactly what we saw on Palantir: the resume
+        # download succeeded on entry, but the file was gone by the time
+        # the form-fill retry called set_input_files → hard "Local file
+        # not found" failure at C:\Users\<u>\AppData\Local\Temp\... .
+        # A per-candidate cache under backend/data/ is out of every
+        # tempdir-cleanup path and survives across retries + runs.
+        _here = os.path.dirname(os.path.abspath(__file__))
+        _backend_root = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
+        cache_dir = os.path.join(_backend_root, "data", "upload_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        temp_path = os.path.join(cache_dir, filename)
         with open(temp_path, "wb") as f:
             f.write(resp.content)
 
@@ -315,6 +330,12 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
 
 
 def _cleanup_temp(*paths: Optional[str]) -> None:
+    # Only clean paths under the OS tempdir (legacy behavior — nothing
+    # writes here anymore since _resolve_file_to_local_path was moved to
+    # backend/data/upload_cache, but keep the guard for any pre-existing
+    # callers). The new cache dir is intentionally NOT cleaned: leaving
+    # the resume + cover letter cached across retries is a feature, not
+    # a leak — same candidate applying to N jobs reuses one download.
     for p in paths:
         if p and p.startswith(tempfile.gettempdir()):
             try:

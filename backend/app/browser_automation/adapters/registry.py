@@ -1,5 +1,6 @@
 from .ashby import AshbyAdapter
 from .base import BasePlatformAdapter
+from .builtin import BuiltInAdapter
 from .dice import DiceAdapter
 from .generic import GenericFormAdapter
 from .greenhouse import GreenhouseAdapter
@@ -24,6 +25,7 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "indeed": IndeedAdapter,
     "dice": DiceAdapter,
     "talent": TalentAdapter,
+    "builtin": BuiltInAdapter,
     "generic": GenericFormAdapter,
 }
 
@@ -57,4 +59,6 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
             cls = DiceAdapter
         elif "talent.com" in key or "talent" in normalized:
             cls = TalentAdapter
+        elif "builtin.com" in key or "builtin" in normalized:
+            cls = BuiltInAdapter
     return (cls or GenericFormAdapter)()

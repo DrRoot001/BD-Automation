@@ -186,6 +186,110 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    "builtin": {
+        "apply_selectors": [
+            "button:has-text('Easy Apply')",
+            "a:has-text('Easy Apply')",
+            "button:has-text('Apply Now')",
+            "a:has-text('Apply Now')",
+            "button:has-text('Apply')",
+            "[aria-label*='Easy Apply']",
+        ],
+        "submit_selectors": [
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit application')",
+            "button:has-text('Send Application')",
+            "button:has-text('Complete Application')",
+            "button:has-text('Submit')",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "application received",
+            "application complete",
+            "thank you for applying",
+            "thanks for applying",
+            "we've received your application",
+            "your application has been received",
+        ],
+        "url_hint": (
+            "Native Built In ATS at builtin.com/apply/job/<id> or "
+            "builtin.com/apply/... — the URL IS the application form; no "
+            "separate ATS redirect. Success page URL usually contains "
+            "/success, /submitted, /thank-you, or /confirmation but do NOT "
+            "rely on URL alone — body-text match is more reliable."
+        ),
+        "quirks": [
+            "Multi-step wizard on one page: Resume Upload → Personal Info → "
+            "Work Experience → Education → Compliance Questions → Review → "
+            "Submit. Progress through sections in that order; a Submit button "
+            "only becomes valid once every section is complete.",
+
+            "Resume upload happens FIRST, immediately after landing on the "
+            "apply page. Built In auto-parses the resume and pre-fills First "
+            "Name / Last Name / Email / Phone / Location / Experience / "
+            "Education. Wait up to ~30s for at least one field (firstName or "
+            "email) to become non-empty before moving on — that's the signal "
+            "parsing finished. Do NOT re-fill fields that Built In already "
+            "populated correctly from the resume; only fill ones that are "
+            "still empty. Overwriting a Built-In-parsed value is what causes "
+            "the auto-parse to reset and lose OTHER fields it had populated.",
+
+            "Education section commonly appears as a MODAL DIALOG "
+            "(role='dialog') — open the modal, fill School / Discipline / "
+            "Degree / Start Month / Start Year / End Month / End Year, save, "
+            "then wait for the modal to close before moving on. If an "
+            "education row already exists (from resume parse), skip; only "
+            "add education if the section is empty.",
+
+            "Work Experience is USUALLY auto-imported from the resume — "
+            "verify presence, do NOT edit unless a validation error appears "
+            "on that section. If Built In shows an experience card without "
+            "errors, leave it alone.",
+
+            "Most fields (school, discipline, degree, start/end month/year, "
+            "state, compliance dropdowns) use CUSTOM DROPDOWNS — not native "
+            "<select>. Algorithm: click to open → wait for the options list "
+            "to render → click the matching option → verify the trigger's "
+            "displayed text updated. If the click didn't stick (state "
+            "unchanged), retry once — this is a known Built In quirk with "
+            "React re-renders swallowing the first click.",
+
+            "Compliance section — SPONSORSHIP, GOVERNMENT OFFICIAL, "
+            "GOVERNMENT-OFFICIAL RELATIVE, CONFLICT OF INTEREST — these four "
+            "canonical questions are ALWAYS answered per operator policy: "
+            "sponsorship = NO (candidate is US-authorized), government "
+            "official = NO, relative-of-government-official = NO, conflict "
+            "of interest = NO. If Built In phrases them differently (\"Are "
+            "you currently or in the past five years a government "
+            "official?\", \"Is any close relative a government official?\", "
+            "\"Do you or a close relative have a relationship that creates "
+            "a conflict of interest?\"), normalise to those four canonical "
+            "categories and answer NO for all four unless the profile "
+            "explicitly says otherwise.",
+
+            "Selector priority per operator spec: (1) getByLabel — Playwright "
+            "role/label locator, (2) getByRole('button') / role-based, (3) "
+            "getByPlaceholder, (4) getByText. Do NOT use nth-child, "
+            "generated CSS class names, or absolute XPaths — the Built In "
+            "DOM is React-generated and those selectors break between "
+            "renders.",
+
+            "Pre-submit gate: before clicking Submit, verify RESUME PRESENT "
+            "+ EDUCATION PRESENT + COMPLIANCE QUESTIONS ANSWERED. If a "
+            "required field validation banner appears (\"Required\", "
+            "\"Missing\", \"Please Select\", \"Invalid\"), do NOT click "
+            "Submit — go back to the section that's flagged and fix it.",
+
+            "Success is confirmed by page-body text (\"Application "
+            "Submitted\" / \"Thank You\" / \"Application Received\" / "
+            "\"Application Complete\") AND typically a URL landing on "
+            "/success, /submitted, /thank-you, or /confirmation. Prefer "
+            "body-text match — do NOT depend solely on URL, some Built In "
+            "flows show the success message without redirecting.",
+        ],
+    },
+
     "icims": {
         "container": ".iCIMS_MainWrapper",
         "apply_selectors": [
