@@ -143,7 +143,7 @@
     ]
   },
   "https://jobs.lever.co/gohighlevel/1adc3097-fe4c-4be2-b893-e6bf2f78d523": {
-    "needs_review": false,
+    "needs_review": true,
     "failures": [
       {
         "timestamp": "2026-07-01T09:40:29.554784",
@@ -151,6 +151,64 @@
       },
       {
         "timestamp": "2026-07-01T12:47:00.526637",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T13:33:44.368117",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T13:40:09.067149",
+        "error": "Resume file could not be resolved: https://rdfnydteruigmajebxsm.supabase.co/storage/v1/object/public/updated_resume/Sabih_Haider_resume_v71.pdf"
+      },
+      {
+        "timestamp": "2026-07-01T13:59:29.358200",
+        "error": "AgentLoop aborted: Resume file exceeds maximum upload size. Cannot proceed."
+      },
+      {
+        "timestamp": "2026-07-01T14:15:34.200365",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T14:23:05.241227",
+        "error": "AgentLoop aborted: Resume file exceeds maximum upload size. Cannot proceed."
+      }
+    ]
+  },
+  "https://jobs.lever.co/gohighlevel/1a750f3c-8595-483b-a034-0db278452706": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T15:56:46.645393",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T16:07:44.124289",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T16:19:06.821595",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T16:30:06.216477",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      }
+    ]
+  },
+  "https://jobs.lever.co/gohighlevel/bf5d3445-59fd-44d8-b129-5801be177c52": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-01T17:51:46.005342",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T18:04:30.685049",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-01T18:41:19.086028",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]

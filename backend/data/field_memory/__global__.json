@@ -255,21 +255,77 @@
     "source": "agent_loop",
     "value": "Yes"
   },
-  "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
-    "count": 2,
-    "field_type": "text",
-    "label": "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]",
-    "last_seen": 1782909827,
-    "source": "agent_loop",
-    "value": "Washington (WA)"
-  },
-  "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]": {
+  "cards[2a416f61-2861-45de-a67a-c809e1d18af2][field2]": {
     "count": 1,
     "field_type": "text",
-    "label": "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]",
-    "last_seen": 1782909863,
+    "label": "cards[2a416f61-2861-45de-a67a-c809e1d18af2][field2]",
+    "last_seen": 1782931453,
     "source": "agent_loop",
-    "value": "$120,000 - $150,000"
+    "value": "I frequently use AI tools for optimizing data pipelines, real-time ML inference, and deploying scalable production ML systems. I often work with PyTorch and Tensorflow for model development and deployment, and leverage MLOps practices for CI/CD."
+  },
+  "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
+    "count": 12,
+    "field_type": "text",
+    "label": "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]",
+    "last_seen": 1782931524,
+    "source": "agent_loop",
+    "value": "California (CA)"
+  },
+  "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]": {
+    "count": 2,
+    "field_type": "text",
+    "label": "cards[6d1d76c2-c0d6-4ea3-9dac-2c4352487395][field0]",
+    "last_seen": 1782912622,
+    "source": "agent_loop",
+    "value": "120000"
+  },
+  "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field0]",
+    "last_seen": 1782928122,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field1]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field1]",
+    "last_seen": 1782928154,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "cards[a7449ac3-60e6-4148-967d-19f2faa395a2][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[a7449ac3-60e6-4148-967d-19f2faa395a2][field0]",
+    "last_seen": 1782927857,
+    "source": "agent_loop",
+    "value": "As a Senior Machine Learning Engineer, my focus is on optimizing the performance and scalability of production ML systems. A key North Star Metric I focus on is the reduction in inference latency and the increase in model accuracy, directly impacting user experience and business outcomes."
+  },
+  "cards[a7449ac3-60e6-4148-967d-19f2faa395a2][field1]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[a7449ac3-60e6-4148-967d-19f2faa395a2][field1]",
+    "last_seen": 1782927906,
+    "source": "agent_loop",
+    "value": "One challenging problem involved optimizing data pipelines and database performance for large-scale ML model training and inference. My contribution was to achieve 6x faster data load times and a 30% reduction in processing errors, which was crucial for solving complex, real-world ML problems and enhancing the reliability of our production ML systems."
+  },
+  "cards[f862472a-58ad-426d-8606-21d7ef1bad60][field0]": {
+    "count": 3,
+    "field_type": "text",
+    "label": "cards[f862472a-58ad-426d-8606-21d7ef1bad60][field0]",
+    "last_seen": 1782923162,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
+  "cards[f862472a-58ad-426d-8606-21d7ef1bad60][field1]": {
+    "count": 3,
+    "field_type": "text",
+    "label": "cards[f862472a-58ad-426d-8606-21d7ef1bad60][field1]",
+    "last_seen": 1782923196,
+    "source": "agent_loop",
+    "value": "N/A"
   },
   "degree": {
     "count": 2,
@@ -405,6 +461,22 @@
     "label": "Do you have hands-on experience building production user interfaces using modern frontend technologies such as React, HTMX, or similar frameworks?\n*",
     "last_seen": 1782051437,
     "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "do you incorporate ai into your daily work": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Do you incorporate AI into your daily work?",
+    "last_seen": 1782931372,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "do you incorporate ai into your daily work✱": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Do you incorporate AI into your daily work?✱",
+    "last_seen": 1782928297,
+    "source": "smart_infer",
     "value": "Yes"
   },
   "do you live in santiago?": {
@@ -543,6 +615,30 @@
     "source": "agent_loop",
     "value": "5 years"
   },
+  "how many years of experience do you have leading complex employee relations matters": {
+    "count": 1,
+    "field_type": "text",
+    "label": "How many years of experience do you have leading complex employee relations matters?",
+    "last_seen": 1782922572,
+    "source": "agent_loop",
+    "value": "As a Senior Machine Learning Engineer, I have 5 years of experience leading complex technical projects, optimizing data pipelines, and managing end-to-end production deployments of ML models. This involved navigating intricate technical challenges and collaborating with cross-functional teams to ensure successful outcomes."
+  },
+  "how many years of progressive hrbp experience do you have, including directly partnering with senior gtm leaders (sales, marketing, customer success) in a high-growth technology company": {
+    "count": 1,
+    "field_type": "text",
+    "label": "How many years of progressive HRBP experience do you have, including directly partnering with senior GTM leaders (Sales, Marketing, Customer Success) in a high-growth technology company?",
+    "last_seen": 1782922522,
+    "source": "agent_loop",
+    "value": "I have 2+ years of experience in designing, developing, and deploying scalable production ML systems and robust data pipelines, which involves partnering with various stakeholders."
+  },
+  "how often do you use ai tools to assist with your work": {
+    "count": 5,
+    "field_type": "text",
+    "label": "How often do you use AI tools to assist with your work?",
+    "last_seen": 1782931405,
+    "source": "agent_loop",
+    "value": "Daily - I use AI for multiple use cases"
+  },
   "i confirm and agree": {
     "count": 1,
     "field_type": "checkbox",
@@ -582,6 +678,14 @@
     "last_seen": 1782467933,
     "source": "agent_loop",
     "value": "N/A"
+  },
+  "org": {
+    "count": 1,
+    "field_type": "text",
+    "label": "org",
+    "last_seen": 1782930288,
+    "source": "agent_loop",
+    "value": "MST Developers"
   },
   "pick your favorite color": {
     "count": 1,
@@ -759,13 +863,21 @@
     "source": "llm:0.70",
     "value": "Yes"
   },
+  "type your response": {
+    "count": 9,
+    "field_type": "text",
+    "label": "Type your response",
+    "last_seen": 1782931489,
+    "source": "agent_loop",
+    "value": "$150,000 - $180,000"
+  },
   "veteran status": {
-    "count": 2,
-    "field_type": "select",
-    "label": "Veteran Status*",
-    "last_seen": 1782856473,
-    "source": "rules",
-    "value": "I am not a protected veteran"
+    "count": 3,
+    "field_type": "text",
+    "label": "Veteran Status",
+    "last_seen": 1782915058,
+    "source": "agent_loop",
+    "value": "No"
   },
   "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
     "count": 1,
@@ -774,6 +886,22 @@
     "last_seen": 1782075701,
     "source": "screening",
     "value": "No specific accommodations needed at this time."
+  },
+  "what are some use cases that you solve with the help of ai tools which tools or models do you often use": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What are some use cases that you solve with the help of AI tools? Which tools or models do you often use? *",
+    "last_seen": 1782930972,
+    "source": "agent_loop",
+    "value": "I frequently use AI tools for optimizing data pipelines, real-time ML inference, and MLOps automation. I often work with PyTorch and Tensorflow for model development and deployment, leveraging them for tasks like predictive analytics and natural language processing."
+  },
+  "what are some use cases that you solve with the help of ai tools which tools or models do you use often": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What are some use cases that you solve with the help of AI tools? Which tools or models do you use often?",
+    "last_seen": 1782928621,
+    "source": "agent_loop",
+    "value": "I frequently use AI tools for optimizing data pipelines, enhancing database performance, and deploying scalable production ML systems. I often work with PyTorch and Tensorflow for model training and inference, and leverage MLOps practices for CI/CD pipelines."
   },
   "what are your salary expectations": {
     "count": 1,
@@ -792,12 +920,12 @@
     "value": "Software Engineer"
   },
   "what is your expected compensation": {
-    "count": 1,
+    "count": 6,
     "field_type": "text",
     "label": "What is your expected compensation?",
-    "last_seen": 1782898651,
+    "last_seen": 1782918001,
     "source": "agent_loop",
-    "value": "$120,000 - $150,000 USD"
+    "value": "$120,000 - $150,000"
   },
   "when is the earliest you would want to start working with us": {
     "count": 1,

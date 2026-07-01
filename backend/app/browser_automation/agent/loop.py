@@ -44,6 +44,31 @@ from ..llm import LLMUnavailable, get_llm
 
 logger = logging.getLogger(__name__)
 
+
+def _linkedin_policy_value(profile: Optional[Dict[str, Any]]) -> str:
+    """Value to fill into any LinkedIn-URL field, per operator policy.
+
+    Default (unset / opted-out): ``"N/A"`` — the historical operator stance is
+    "do NOT expose the candidate's real LinkedIn URL on application forms."
+
+    Override: when the env var ``ALLOW_REAL_LINKEDIN`` is set to a truthy
+    value (``1`` / ``true`` / ``yes``) AND the profile carries a real
+    ``linkedin.com``-hosted URL, return that URL instead. Some ATSes (Lever
+    in particular) treat LinkedIn as a REQUIRED field with client-side URL
+    validation and silently reject the form when it holds the literal string
+    ``"N/A"`` — the submit "succeeds" locally but the server never records
+    the application. Opting in via env restores the real URL for those cases
+    without changing the production default.
+    """
+    li = ((profile or {}).get("linkedin_url") or "").strip()
+    if (
+        os.getenv("ALLOW_REAL_LINKEDIN", "").strip().lower() in ("1", "true", "yes")
+        and "linkedin.com" in li.lower()
+    ):
+        return li
+    return "N/A"
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tunables
 # ─────────────────────────────────────────────────────────────────────────────
@@ -644,6 +669,17 @@ _DOM_SNAPSHOT_JS = """() => {
             // Filter out aria-invalid='true' on visible empty inputs without a message
             const style = window.getComputedStyle(el);
             if (style.display === 'none' || style.visibility === 'hidden') return;
+            // getComputedStyle only reflects the element's OWN display/
+            // visibility — a hidden ANCESTOR (e.g. Lever's permanently
+            // display:none `.resume-upload-oversize` wrapper) doesn't show up
+            // here, so an inner error-message tag reads as "visible" even
+            // though nothing is rendered on screen, poisoning every turn's
+            // context with a phantom error the AI can never resolve.
+            // checkVisibility() walks the whole ancestor chain.
+            const reallyVisible = typeof el.checkVisibility === 'function'
+                ? el.checkVisibility({checkVisibilityCSS: true, checkOpacity: true})
+                : el.offsetParent !== null;
+            if (!reallyVisible) return;
             if (txt.length < 3 || txt.length > 200) return;
             if (seenErrTexts.has(txt)) return;
             seenErrTexts.add(txt);
@@ -1729,13 +1765,14 @@ async def _execute_action(
             and "github" not in _lbl
         )
         if _is_linkedin_field:
-            if value.strip().upper() != "N/A":
+            _li_target = _linkedin_policy_value(self.profile)
+            if value.strip() != _li_target and value.strip().upper() != _li_target.upper():
                 logger.info(
                     f"[AgentLoop] LinkedIn policy override: AI proposed {value[:50]!r} "
-                    f"for {action.field_label!r}, forcing 'N/A'"
+                    f"for {action.field_label!r}, forcing {_li_target!r}"
                 )
-                value = "N/A"
-                action.value = "N/A"
+                value = _li_target
+                action.value = _li_target
         try:
             loc = ctx.locator(sel).first
             if await loc.count() == 0:
@@ -2399,9 +2436,10 @@ class AgentLoop:
             f"  Phone       : {p.get('phone','')}",
             f"  Location    : {p.get('location','')}",
             # Operator policy: do NOT expose the candidate's real LinkedIn URL
-            # on application forms. The literal answer for any LinkedIn-URL
-            # field is "N/A".
-            f"  LinkedIn URL: N/A  (policy — do NOT submit real LinkedIn URL on forms)",
+            # on application forms — default answer is "N/A". Env override
+            # ALLOW_REAL_LINKEDIN=1 flips this to the profile's real
+            # linkedin.com URL for ATSes that reject N/A on required fields.
+            f"  LinkedIn URL: {_linkedin_policy_value(p)}  (policy: {'real URL (opted in)' if _linkedin_policy_value(p) != 'N/A' else 'do NOT submit real LinkedIn URL on forms'})",
             f"  Website     : {p.get('website','')}",
             f"  Current role: {p.get('current_title','')} at {p.get('current_company','')}",
             f"  Experience  : {p.get('experience_years','')} years",
@@ -2677,13 +2715,14 @@ class AgentLoop:
                 and "website" not in _lbl_l
                 and "portfolio" not in _lbl_l
                 and "github" not in _lbl_l
-                and str(answer).strip().upper() != "N/A"
             ):
-                logger.info(
-                    f"[AgentLoop] memory pre-fill LinkedIn override: {label!r} "
-                    f"was {str(answer)[:50]!r}, forcing 'N/A'"
-                )
-                answer = "N/A"
+                _li_target = _linkedin_policy_value(self.profile)
+                if str(answer).strip() != _li_target and str(answer).strip().upper() != _li_target.upper():
+                    logger.info(
+                        f"[AgentLoop] memory pre-fill LinkedIn override: {label!r} "
+                        f"was {str(answer)[:50]!r}, forcing {_li_target!r}"
+                    )
+                    answer = _li_target
 
             # ── Combobox / native-select: COMMIT via the proven option-click
             # path (the same _commit_policy_field used by deterministic prefill),
@@ -3400,7 +3439,8 @@ class AgentLoop:
             (r"(require|need).*(sponsor|visa)|sponsor\w*.*(now|future|work)",
              "No", ["no"]),
             (r"\blinkedin\b",
-             "N/A", ["n/a"]),
+             _linkedin_policy_value(p),
+             [_linkedin_policy_value(p).lower(), "n/a"]),
             (r"(currently based in|country of residence|which country|where.*based|^country)",
              "United States", ["united states", "united states of america", "usa", "u.s.a."]),
             (r"gender identity|what is your gender|\bgender\b",
@@ -5323,6 +5363,20 @@ class AgentLoop:
                                         if (!txt || txt.length < 3 || txt.length > 200) return;
                                         const st = window.getComputedStyle(el);
                                         if (st.display === 'none' || st.visibility === 'hidden') return;
+                                        // getComputedStyle only reflects the element's OWN
+                                        // display/visibility — a hidden ANCESTOR (e.g. Lever's
+                                        // `.resume-upload-oversize` wrapper, which stays
+                                        // display:none forever unless the client-side oversize
+                                        // check actually fires) doesn't show up here, so an
+                                        // inner error-message tag can read as "visible" even
+                                        // though nothing is rendered on screen. checkVisibility()
+                                        // walks the whole ancestor chain and is the accurate
+                                        // rendered-on-screen test; fall back to offsetParent for
+                                        // browsers without it.
+                                        const reallyVisible = typeof el.checkVisibility === 'function'
+                                            ? el.checkVisibility({checkVisibilityCSS: true, checkOpacity: true})
+                                            : el.offsetParent !== null;
+                                        if (!reallyVisible) return;
                                         if (seen.has(txt)) return;
                                         seen.add(txt);
                                         out.push(txt.slice(0, 160));
@@ -5655,6 +5709,26 @@ class AgentLoop:
                         await asyncio.sleep(0.3)
                         continue
 
+                # Computed here (before execution) rather than after, because
+                # hcaptcha-challenger's AgentV must attach its page.on("response")
+                # listener BEFORE the submit click fires hcaptcha.execute() —
+                # the getcaptcha/hsw.js network exchange it needs to observe
+                # are one-time events, not state we can inspect after the fact.
+                _pre_click_text = ((action.selector or "") + " " + (action.click_text or "")).lower()
+                _pre_is_submit = action.kind == "click" and bool(re.search(
+                    r"submit|send application", _pre_click_text
+                ))
+                _lever_agentv = None
+                if (
+                    _pre_is_submit
+                    and "lever" in (self.job_ctx or {}).get("platform", "").lower()
+                ):
+                    try:
+                        from hcaptcha_challenger import AgentV, AgentConfig
+                        _lever_agentv = AgentV(page=page, agent_config=AgentConfig())
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] Lever: hcaptcha-challenger unavailable: {exc}")
+
                 ok = await _execute_action(
                     action, page, frame, self.resume_path, self.cover_letter_path
                 )
@@ -5712,19 +5786,205 @@ class AgentLoop:
                 # "Submit" forever and the form will never actually send.
                 if ok and _is_submit and "lever" in (self.job_ctx or {}).get("platform", "").lower():
                     try:
-                        await asyncio.sleep(2.0)  # give Lever's own invisible resolution a chance first
-                        _hc_ctx = frame or page
-                        _hc_value = await _hc_ctx.evaluate(
-                            "() => { const el = document.getElementById('hcaptchaResponseInput'); "
-                            "return el ? el.value : null; }"
-                        )
+                        # Poll #hcaptchaResponseInput for up to 5s — many Lever
+                        # postings resolve their hCaptcha INVISIBLY (no challenge
+                        # frame ever renders, hcaptcha.execute() returns a
+                        # pass:true response, the token is injected into the
+                        # input by hCaptcha's own callback). In that mode there
+                        # is nothing for AgentV to solve, and calling it errors
+                        # with "Cannot find a valid challenge frame". A short
+                        # poll catches this common case before we spend
+                        # AgentV's budget on a non-existent challenge.
+                        # #hcaptchaResponseInput is top-level Lever DOM — always
+                        # use `page` (not `frame`, which may point at a nested
+                        # frame and return null even when the top-level input
+                        # has a value).
+                        _hc_value = None
+                        for _pre_tick in range(10):
+                            await asyncio.sleep(0.5)
+                            try:
+                                _v = await page.evaluate(
+                                    "() => { const el = document.getElementById('hcaptchaResponseInput'); "
+                                    "return el ? el.value : null; }"
+                                )
+                            except Exception:
+                                continue
+                            if _v:
+                                _hc_value = _v
+                                logger.info(
+                                    f"[AgentLoop] Lever: hCaptcha resolved invisibly at "
+                                    f"t={(_pre_tick+1)*0.5:.1f}s — token present without AgentV."
+                                )
+                                break
+                            if _pre_tick == 3:
+                                # First 2s only — after that keep polling but
+                                # don't spam the log.
+                                logger.info(
+                                    "[AgentLoop] Lever: invisible resolution not "
+                                    "yet complete after 2s — will keep polling "
+                                    "another 3s before invoking AgentV."
+                                )
+                            _hc_value = _v  # keep last-seen (None or "")
+                        if _hc_value is not None and not _hc_value and _lever_agentv is not None:
+                            # Attempt 1: hcaptcha-challenger's AgentV, listener
+                            # already attached pre-click above. It intercepts
+                            # hCaptcha's own /getcaptcha/ response — if hCaptcha's
+                            # server-side risk check already says "pass": true,
+                            # it captures that directly; otherwise it injects
+                            # hCaptcha's own hsw.js into this real page and runs
+                            # hCaptcha's real verification function. No external
+                            # token farm, reuses our existing GEMINI_API_KEY.
+                            try:
+                                logger.info(
+                                    "[AgentLoop] Lever: trying hcaptcha-challenger "
+                                    "(AgentV) before falling back to nopecha."
+                                )
+                                from hcaptcha_challenger.models import ChallengeSignal
+                                # 100s, not 60s: live runs showed a successful
+                                # drag-drop solve taking ~39s once and >60s
+                                # another time — 60 was cutting off genuine
+                                # in-progress solves. Close to the library's
+                                # own EXECUTION_TIMEOUT(120)+RESPONSE_TIMEOUT(30)
+                                # budget while still leaving room in our own
+                                # 360s AgentLoop wall-clock for the rest of the
+                                # flow (nopecha fallback, hidden-button click).
+                                signal = await asyncio.wait_for(
+                                    _lever_agentv.wait_for_challenge(), timeout=100,
+                                )
+                                logger.info(f"[AgentLoop] Lever: AgentV signal={signal}")
+                                # Instrumentation: dump top-of-page state at the
+                                # exact moment SUCCESS fires. Prior runs lost this
+                                # evidence entirely — if the run turns out to have
+                                # submitted successfully already, this proves it.
+                                try:
+                                    _sig_snap = await page.evaluate(
+                                        """() => ({
+                                            url: window.location.href,
+                                            title: document.title,
+                                            hasSubmitBtn: !!document.getElementById('hcaptchaSubmitBtn'),
+                                            hasRespInput: !!document.getElementById('hcaptchaResponseInput'),
+                                            respLen: (document.getElementById('hcaptchaResponseInput') || {}).value?.length || 0,
+                                            hasForm: !!document.querySelector('form[action*="/apply"], form.application-form, form#application-form'),
+                                            bodyHead: (document.body && document.body.innerText || '').slice(0, 300),
+                                        })"""
+                                    )
+                                    logger.info(f"[AgentLoop] Lever @SUCCESS snap: {_sig_snap}")
+                                except Exception as _e:
+                                    logger.info(
+                                        f"[AgentLoop] Lever @SUCCESS snap failed ({_e}) — "
+                                        "context likely destroyed by post-solve navigation."
+                                    )
+                                if signal == ChallengeSignal.SUCCESS and _lever_agentv.cr_list:
+                                    # Read the solved token directly from AgentV's
+                                    # own captured CaptchaResponse instead of
+                                    # re-querying the DOM immediately — hCaptcha's
+                                    # internal iframes commonly reload right after
+                                    # a challenge round completes, which destroys
+                                    # the execution context and made the naive
+                                    # re-query below race and fail on the first
+                                    # live test (signal=SUCCESS was thrown away).
+                                    _cr = _lever_agentv.cr_list[-1]
+                                    _agentv_token = _cr.generated_pass_UUID or None
+                                    if _agentv_token:
+                                        logger.info(
+                                            "[AgentLoop] Lever: AgentV solved the "
+                                            "challenge — injecting its token directly "
+                                            "(skipping DOM re-query)."
+                                        )
+                                        # Page may have just navigated/reloaded an
+                                        # internal iframe from the challenge round —
+                                        # give it a moment before touching the DOM.
+                                        await page.wait_for_timeout(1000)
+                                        try:
+                                            await page.evaluate(
+                                                """(token) => {
+                                                    const el = document.getElementById('hcaptchaResponseInput');
+                                                    if (el) {
+                                                        el.value = token;
+                                                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                                                    }
+                                                }""",
+                                                _agentv_token,
+                                            )
+                                            _hc_value = _agentv_token
+                                        except Exception as exc:
+                                            logger.warning(
+                                                f"[AgentLoop] Lever: AgentV token injection failed: {exc}"
+                                            )
+                            except Exception as exc:
+                                logger.warning(f"[AgentLoop] Lever: AgentV attempt failed (non-fatal): {exc}")
+                                # Salvage: AgentV's page.on("response") listener
+                                # may have captured a pass:true CaptchaResponse
+                                # BEFORE wait_for_challenge decided there was no
+                                # challenge frame to solve (invisible pass case).
+                                # Its own cr_list is the source of truth for
+                                # "did hCaptcha give us a token" — check it
+                                # regardless of whether wait_for_challenge threw.
+                                try:
+                                    if _lever_agentv is not None and _lever_agentv.cr_list:
+                                        _cr_salv = _lever_agentv.cr_list[-1]
+                                        _t_salv = _cr_salv.generated_pass_UUID or None
+                                        if _t_salv:
+                                            logger.info(
+                                                "[AgentLoop] Lever: AgentV wait threw "
+                                                "but its network listener captured a "
+                                                "passing response — using its token."
+                                            )
+                                            try:
+                                                await page.evaluate(
+                                                    """(token) => {
+                                                        const el = document.getElementById('hcaptchaResponseInput');
+                                                        if (el) {
+                                                            el.value = token;
+                                                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                                                        }
+                                                    }""",
+                                                    _t_salv,
+                                                )
+                                            except Exception:
+                                                pass
+                                            _hc_value = _t_salv
+                                except Exception:
+                                    pass
+                                # Whether or not we salvaged from cr_list, give
+                                # Lever's own invisible resolution one more
+                                # chance to populate the input before falling
+                                # to the deterministic (NopeCHA / fail) path.
+                                if not _hc_value:
+                                    for _post_tick in range(10):  # up to 5s more
+                                        await asyncio.sleep(0.5)
+                                        try:
+                                            _v = await page.evaluate(
+                                                "() => { const el = document.getElementById('hcaptchaResponseInput'); "
+                                                "return el ? el.value : null; }"
+                                            )
+                                        except Exception:
+                                            continue
+                                        if _v:
+                                            _hc_value = _v
+                                            logger.info(
+                                                f"[AgentLoop] Lever: token appeared "
+                                                f"post-AgentV-fail at t={(_post_tick+1)*0.5:.1f}s "
+                                                "— Lever's own invisible resolution."
+                                            )
+                                            break
                         if _hc_value is not None and not _hc_value:
                             logger.info(
                                 "[AgentLoop] Lever: submit clicked but hCaptcha token not "
                                 "set — solving hCaptcha deterministically."
                             )
                             from ..captcha.service import CaptchaService
-                            _captcha_svc = CaptchaService()
+                            # Hard-coded to nopecha (not the global CAPTCHA_PROVIDER)
+                            # deliberately: CapSolver's account doesn't support
+                            # hCaptcha on this site ("we don't support this
+                            # service" — confirmed live). NopeCHA solves the
+                            # actual widget via local AI, not a generic token
+                            # farm, and its Token API explicitly targets
+                            # invisible/programmatic hcaptcha.execute() sites
+                            # like Lever's. Scoped to this Lever-only call site
+                            # so Greenhouse/Ashby/Talent/Dice's already-validated
+                            # CapSolver-based flows are untouched.
+                            _captcha_svc = CaptchaService(provider="nopecha")
                             _solution = await _captcha_svc.solve(page, "hcaptcha")
                             if _solution.success and _solution.token:
                                 await _hc_ctx.evaluate(
@@ -5737,23 +5997,7 @@ class AgentLoop:
                                     }""",
                                     _solution.token,
                                 )
-                                # Lever's own onSuccess callback (which would
-                                # normally auto-click the real hidden submit
-                                # button) isn't reachable from outside — click
-                                # it ourselves. force=True bypasses the
-                                # visibility check since it's deliberately
-                                # hidden via class="hidden".
-                                try:
-                                    await _hc_ctx.locator("#hcaptchaSubmitBtn").click(force=True, timeout=5000)
-                                    logger.info(
-                                        "[AgentLoop] Lever: hCaptcha solved and hidden "
-                                        "real submit button clicked."
-                                    )
-                                    await asyncio.sleep(2.0)
-                                except Exception as exc:
-                                    logger.warning(f"[AgentLoop] Lever hidden submit-button click failed: {exc}")
-                                    ok = False
-                                    action.ok = False
+                                _hc_value = _solution.token
                             else:
                                 logger.warning(
                                     "[AgentLoop] Lever: hCaptcha solve failed — submission "
@@ -5761,11 +6005,207 @@ class AgentLoop:
                                 )
                                 ok = False
                                 action.ok = False
-                        elif _hc_value:
-                            logger.info(
-                                "[AgentLoop] Lever: hCaptcha token already present "
-                                "(resolved invisibly) — real submit should follow."
-                            )
+                        # Regardless of which path produced the token (Lever's own
+                        # natural invisible resolution, AgentV, or NopeCHA), Lever's
+                        # onSuccess callback that would normally auto-click the real
+                        # hidden submit button is unreachable from outside (scoped
+                        # inside a closure, not window.onSuccess) — so ANY genuine
+                        # token still requires us to click #hcaptchaSubmitBtn
+                        # ourselves. class="hidden" is display:none, which has NO
+                        # bounding box at all — Playwright's force=True only skips
+                        # actionability checks (visible/stable/covered), it still
+                        # needs a bounding box to compute click coordinates, so it
+                        # fails with "Element is not visible" on a display:none
+                        # target regardless. A JS-level .click() call sidesteps
+                        # that entirely — it invokes the browser's native click
+                        # handling (and the form's submit-button semantics) with
+                        # no coordinate/visibility requirement at all. Confirmed
+                        # live: locator.click(force=True) failed here in practice.
+                        if _hc_value:
+                            # Live evidence from a prior real run showed exactly
+                            # what happens after AgentV SUCCESS on Lever:
+                            #   t=0.0s   Execution context destroyed
+                            #            (page/frame reload during hCaptcha's
+                            #             own crumb-round reset)
+                            #   t=0.5s   hasForm=False, hasBtn=False
+                            #            (form briefly removed from DOM)
+                            #   t=1.0s   hasForm=False, hasBtn=False
+                            #   t=1.5s   hasForm=True,  hasBtn=True
+                            #            (form + hidden submit button
+                            #             REAPPEAR — this is the window)
+                            #   t=2.0s+  form stays present until we click
+                            # So the correct move is NOT to click once at t=0
+                            # (button not there yet) and NOT to look for URL
+                            # change (there won't be one until AFTER our click)
+                            # — it's to poll for the button + token to become
+                            # reachable together, then click, THEN watch for
+                            # terminal state.
+                            _url_before_click = page.url
+                            _clicked = False
+                            # Preferentially wait for hCaptcha's OWN callback to
+                            # write a fresh token into the input after the reset
+                            # — re-injecting our round-1 token (which is what
+                            # this branch used to do) makes the form POST a
+                            # stale token that Lever's server silently rejects
+                            # (confirmed: form stays present, no navigation, no
+                            # thank-you, even though our click "succeeded"
+                            # locally). Only fall back to injecting our saved
+                            # token if hCaptcha's callback hasn't fired after
+                            # ~6s of waiting — at that point the stale token is
+                            # better than nothing.
+                            _fresh_token_deadline = 12  # 6s @ 0.5s per tick
+                            _reinjected = False
+                            for _wait_tick in range(30):  # up to 15s total
+                                try:
+                                    _state = await page.evaluate(
+                                        """() => {
+                                            const btn = document.getElementById('hcaptchaSubmitBtn');
+                                            const inp = document.getElementById('hcaptchaResponseInput');
+                                            return {
+                                                hasBtn: !!btn,
+                                                hasInp: !!inp,
+                                                inpLen: (inp && inp.value || '').length,
+                                            };
+                                        }"""
+                                    )
+                                except Exception as _e:
+                                    logger.debug(
+                                        f"[AgentLoop] Lever pre-click wait t={_wait_tick*0.5:.1f}s "
+                                        f"context not ready ({_e}); waiting."
+                                    )
+                                    await asyncio.sleep(0.5)
+                                    continue
+
+                                if _state.get("hasBtn") and _state.get("hasInp"):
+                                    _inp_len = _state.get("inpLen", 0)
+                                    if _inp_len > 0:
+                                        # hCaptcha's own callback wrote a fresh
+                                        # token OR our reinjection landed and
+                                        # nothing overwrote it. Either way the
+                                        # form-side belief matches what will get
+                                        # POSTed — click now.
+                                        try:
+                                            _clicked = await page.evaluate(
+                                                "() => { const el = document.getElementById('hcaptchaSubmitBtn'); "
+                                                "if (el) { el.click(); return true; } return false; }"
+                                            )
+                                        except Exception as _e3:
+                                            logger.debug(
+                                                f"[AgentLoop] Lever click race @t={_wait_tick*0.5:.1f}s: "
+                                                f"{_e3}; retrying."
+                                            )
+                                            await asyncio.sleep(0.5)
+                                            continue
+                                        if _clicked:
+                                            logger.info(
+                                                f"[AgentLoop] Lever: #hcaptchaSubmitBtn clicked "
+                                                f"at t={_wait_tick*0.5:.1f}s "
+                                                f"(inp_len={_inp_len} — hCaptcha's own token"
+                                                f"{' + our reinjection fallback' if _reinjected else ''})."
+                                            )
+                                            break
+                                    else:
+                                        # Button back, input empty. Give hCaptcha
+                                        # up to _fresh_token_deadline ticks to
+                                        # write its own token; then fall back to
+                                        # our saved round-1 value.
+                                        if _wait_tick >= _fresh_token_deadline and not _reinjected:
+                                            logger.info(
+                                                f"[AgentLoop] Lever t={_wait_tick*0.5:.1f}s: "
+                                                "hCaptcha's own callback hasn't written a "
+                                                "fresh token within 6s — falling back to "
+                                                "reinjecting our saved token."
+                                            )
+                                            try:
+                                                await page.evaluate(
+                                                    """(token) => {
+                                                        const el = document.getElementById('hcaptchaResponseInput');
+                                                        if (el) {
+                                                            el.value = token;
+                                                            el.dispatchEvent(new Event('change', {bubbles: true}));
+                                                        }
+                                                    }""",
+                                                    _hc_value,
+                                                )
+                                                _reinjected = True
+                                            except Exception as _e2:
+                                                logger.warning(
+                                                    f"[AgentLoop] Lever token reinject failed: {_e2}"
+                                                )
+                                await asyncio.sleep(0.5)
+
+                            if not _clicked:
+                                logger.error(
+                                    "[AgentLoop] Lever: hidden submit button never "
+                                    "became reachable within 10s of SUCCESS."
+                                )
+                                ok = False
+                                action.ok = False
+                            else:
+                                # Now watch for terminal-state signals: URL
+                                # change, form gone, thank-you text. Give the
+                                # click ~8s to propagate through Lever's
+                                # server-side submission handler.
+                                _lever_submit_confirmed = False
+                                _ctx_destroyed_streak = 0
+                                for _tick in range(16):
+                                    await asyncio.sleep(0.5)
+                                    try:
+                                        _snap = await page.evaluate(
+                                            """() => ({
+                                                url: window.location.href,
+                                                title: document.title,
+                                                hasForm: !!document.querySelector('form[action*="/apply"], form.application-form, form#application-form'),
+                                                hasThanks: /thank\\s*you|application (?:sent|received|submitted)|we've received|received your application|success(?:fully)?\\s+(?:submitted|applied)/i.test(
+                                                    (document.body && document.body.innerText) || ''
+                                                ),
+                                            })"""
+                                        )
+                                        _ctx_destroyed_streak = 0
+                                        logger.info(
+                                            f"[AgentLoop] Lever post-click-real t={(_tick+1)*0.5:.1f}s: "
+                                            f"url={_snap.get('url')!r} "
+                                            f"hasForm={_snap.get('hasForm')} "
+                                            f"hasThanks={_snap.get('hasThanks')}"
+                                        )
+                                        if _snap.get("hasThanks"):
+                                            logger.info(
+                                                "[AgentLoop] Lever: terminal SUCCESS — "
+                                                "thank-you/received string present."
+                                            )
+                                            _lever_submit_confirmed = True
+                                            break
+                                        if (not _snap.get("hasForm")) and _snap.get("url") != _url_before_click:
+                                            logger.info(
+                                                "[AgentLoop] Lever: terminal SUCCESS — "
+                                                "URL changed and form gone."
+                                            )
+                                            _lever_submit_confirmed = True
+                                            break
+                                    except Exception as _e:
+                                        _ctx_destroyed_streak += 1
+                                        logger.info(
+                                            f"[AgentLoop] Lever post-click-real evaluate threw "
+                                            f"({_e}) — streak={_ctx_destroyed_streak}."
+                                        )
+                                        if _ctx_destroyed_streak >= 3:
+                                            logger.info(
+                                                "[AgentLoop] Lever: repeated context-destroyed "
+                                                "post-click — treating as in-flight submission."
+                                            )
+                                            _lever_submit_confirmed = True
+                                            break
+
+                                if _lever_submit_confirmed:
+                                    logger.info(
+                                        "[AgentLoop] Lever: submission confirmed."
+                                    )
+                                else:
+                                    logger.info(
+                                        "[AgentLoop] Lever: click landed but no explicit "
+                                        "thank-you within 8s — trusting downstream "
+                                        "verification to catch it."
+                                    )
                     except Exception as exc:
                         logger.debug(f"[AgentLoop] Lever hCaptcha handling error (non-fatal): {exc}")
 
