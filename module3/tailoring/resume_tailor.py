@@ -158,8 +158,8 @@ async def tailor_resume(
     final_resume_json = resume_json
 
     # Always run at least one iteration if it's a contract role,
-    # otherwise run if the score is less than or equal to 89.0 (not greater than 89).
-    while (current_ats_score <= 89.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
+    # otherwise run if the score is less than or equal to 75.0 (not greater than 75).
+    while (current_ats_score <= 75.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
