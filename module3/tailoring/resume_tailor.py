@@ -81,15 +81,29 @@ async def tailor_resume(
     job: NormalizedJob,
     candidate_profile: dict,
     output_pdf_dir: str = "backend/data/tailored_resumes",
-    version: int = 1
+    version: int = 1,
+    prefetched_ats_score: Optional[float] = None,
+    prefetched_missing_keywords: Optional[List[str]] = None,
 ) -> TailoredResume:
-    """Tailor a candidate's resume by looping through the Fabricator Agent."""
-    
-    ats_score_before_obj = await calculate_ats_score(resume, job)
-    ats_score_before = ats_score_before_obj.overall
-    
+    """Tailor a candidate's resume by looping through the Fabricator Agent.
+
+    If prefetched_ats_score and prefetched_missing_keywords are provided (e.g. already
+    computed by score_job_fit() in the orchestrator), the initial calculate_ats_score()
+    LLM call is skipped, saving one full Gemini round-trip.
+    """
+
+    if prefetched_ats_score is not None and prefetched_missing_keywords is not None:
+        # Reuse the score already computed by the orchestrator — no extra LLM call
+        ats_score_before = prefetched_ats_score
+        current_missing_keywords = list(prefetched_missing_keywords)
+        print(f"[TAILOR] Using prefetched ATS score: {ats_score_before} (skipping redundant LLM call)")
+    else:
+        ats_score_before_obj = await calculate_ats_score(resume, job)
+        ats_score_before = ats_score_before_obj.overall
+        current_missing_keywords = ats_score_before_obj.missing_keywords
+
     current_ats_score = ats_score_before
-    current_missing_keywords = ats_score_before_obj.missing_keywords
+
     
     # Constructing the initial payload for the LLM
     resume_json = {
@@ -153,7 +167,7 @@ async def tailor_resume(
     elif job.title and "contract" in job.title.lower():
         is_contract = True
 
-    max_loops = 5
+    max_loops = 2
     loop_count = 0
     final_resume_json = resume_json
 

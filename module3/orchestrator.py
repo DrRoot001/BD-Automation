@@ -298,7 +298,12 @@ async def orchestrate_application_package(
 
         # Step 1: Resume Tailoring
         print("[ORCHESTRATOR] Running Step 1: Resume Tailoring...")
-        tailored_resume = await tailor_resume(resume_data, job, candidate, version=next_version)
+        tailored_resume = await tailor_resume(
+            resume_data, job, candidate,
+            version=next_version,
+            prefetched_ats_score=match_result.ats_score,
+            prefetched_missing_keywords=match_result.missing_skills,
+        )
         print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
 
         # Upload Tailored Resume to Supabase
@@ -607,7 +612,12 @@ async def prepare_package_for_live_application(
         
         # Step 1: Resume Tailoring
         print("[ORCHESTRATOR] Running Step 1: Resume Tailoring...")
-        tailored_resume = await tailor_resume(resume_data, job, candidate, version=next_version)
+        tailored_resume = await tailor_resume(
+            resume_data, job, candidate,
+            version=next_version,
+            prefetched_ats_score=match_result.ats_score,
+            prefetched_missing_keywords=match_result.missing_skills,
+        )
         
         # Upload Tailored Resume to Supabase
         remote_resume_url = await upload_file_to_supabase(
