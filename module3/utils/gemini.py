@@ -65,7 +65,7 @@ def _clean_response_text(text: str, is_json: bool) -> str:
                 text = text[first_bracket:last_bracket + 1]
     return text.strip()
 
-async def _generate_with_openrouter(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type):
+async def _generate_with_openrouter(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type, system_instruction=None):
     openrouter_model = "anthropic/claude-3-haiku"
 
     if isinstance(contents, list):
@@ -80,9 +80,14 @@ async def _generate_with_openrouter(api_key, contents, response_schema, temperat
     else:
         user_content = str(contents)
 
+    messages = []
+    if system_instruction:
+        messages.append({"role": "system", "content": system_instruction})
+    messages.append({"role": "user", "content": user_content})
+
     payload = {
         "model": openrouter_model,
-        "messages": [{"role": "user", "content": user_content}],
+        "messages": messages,
         "temperature": temperature,
         "max_tokens": 1500,
     }
@@ -154,7 +159,7 @@ async def _generate_with_openrouter(api_key, contents, response_schema, temperat
                 await asyncio.sleep(1.0)
     return None
 
-async def _generate_with_gemini(api_key, contents, response_schema, temperature, max_retries, initial_delay, model, response_mime_type):
+async def _generate_with_gemini(api_key, contents, response_schema, temperature, max_retries, initial_delay, model, response_mime_type, system_instruction=None):
     # Bound every Gemini call. The genai SDK's generate_content is a blocking
     # call with NO default timeout, so a single stalled response (which we hit
     # mid-pipeline) blocks the whole run indefinitely. http_options.timeout is
@@ -175,8 +180,8 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
     elif response_mime_type:
         config_args["response_mime_type"] = response_mime_type
 
-    if temperature is not None:
-        config_args["temperature"] = temperature
+    if system_instruction:
+        config_args["system_instruction"] = system_instruction
 
     config = types.GenerateContentConfig(**config_args)
 
@@ -227,7 +232,7 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
                 await asyncio.sleep(1.0)
     return None
 
-async def _generate_with_groq(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type):
+async def _generate_with_groq(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type, system_instruction=None):
     groq_model = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     if isinstance(contents, list):
@@ -242,9 +247,14 @@ async def _generate_with_groq(api_key, contents, response_schema, temperature, m
     else:
         user_content = str(contents)
 
+    messages = []
+    if system_instruction:
+        messages.append({"role": "system", "content": system_instruction})
+    messages.append({"role": "user", "content": user_content})
+
     payload = {
         "model": groq_model,
-        "messages": [{"role": "user", "content": user_content}],
+        "messages": messages,
         "temperature": temperature,
         "max_tokens": 1500,
     }
@@ -325,7 +335,7 @@ class AnthropicResponse:
                 
         self.usage_metadata = UsageMetadata(prompt_tokens, completion_tokens)
 
-async def _generate_with_anthropic(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type):
+async def _generate_with_anthropic(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type, system_instruction=None):
     model = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5-20251001")
 
     if isinstance(contents, list):
@@ -348,14 +358,21 @@ async def _generate_with_anthropic(api_key, contents, response_schema, temperatu
     if temperature is not None:
         payload["temperature"] = temperature
 
+    system_prompt = system_instruction or ""
     if response_schema or response_mime_type == "application/json":
-        system_prompt = "You are a strict JSON assistant. You must respond with valid JSON and nothing else."
+        json_prompt = "You are a strict JSON assistant. You must respond with valid JSON and nothing else."
         if response_schema:
             if hasattr(response_schema, "model_json_schema"):
                 schema_desc = json.dumps(response_schema.model_json_schema(), indent=2)
             else:
                 schema_desc = str(response_schema)
-            system_prompt += f"\nReturn a valid JSON object matching this JSON Schema:\n{schema_desc}"
+            json_prompt += f"\nReturn a valid JSON object matching this JSON Schema:\n{schema_desc}"
+        if system_prompt:
+            system_prompt = f"{system_prompt}\n\n{json_prompt}"
+        else:
+            system_prompt = json_prompt
+
+    if system_prompt:
         payload["system"] = system_prompt
 
     headers = {
@@ -425,7 +442,8 @@ async def generate_content_with_retry(
     max_retries: int = 10,
     initial_delay: float = 5.0,
     model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
-    response_mime_type: str = None
+    response_mime_type: str = None,
+    system_instruction: str = None
 ) -> Any:
     """
     Wrap model generation with retry, trying available providers in fallback sequence.
@@ -512,28 +530,32 @@ async def generate_content_with_retry(
             if provider_type == "groq":
                 res = await _generate_with_groq(
                     api_key, contents, response_schema, temperature, 
-                    current_max_retries, initial_delay, response_mime_type
+                    current_max_retries, initial_delay, response_mime_type,
+                    system_instruction=system_instruction
                 )
                 _working_provider_key = api_key
                 return res
             elif provider_type == "openrouter":
                 res = await _generate_with_openrouter(
                     api_key, contents, response_schema, temperature, 
-                    current_max_retries, initial_delay, response_mime_type
+                    current_max_retries, initial_delay, response_mime_type,
+                    system_instruction=system_instruction
                 )
                 _working_provider_key = api_key
                 return res
             elif provider_type == "gemini":
                 res = await _generate_with_gemini(
                     api_key, contents, response_schema, temperature, 
-                    current_max_retries, initial_delay, model, response_mime_type
+                    current_max_retries, initial_delay, model, response_mime_type,
+                    system_instruction=system_instruction
                 )
                 _working_provider_key = api_key
                 return res
             elif provider_type == "anthropic":
                 res = await _generate_with_anthropic(
                     api_key, contents, response_schema, temperature,
-                    current_max_retries, initial_delay, response_mime_type
+                    current_max_retries, initial_delay, response_mime_type,
+                    system_instruction=system_instruction
                 )
                 _working_provider_key = api_key
                 return res

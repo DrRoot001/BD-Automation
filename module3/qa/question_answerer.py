@@ -37,7 +37,7 @@ async def answer_screening_questions(
     
     questions_list_text = "\n".join([f"- {q}" for q in questions])
 
-    prompt = (
+    system_instruction = (
         "You are an assistant helping a candidate fill out a job application. Draft professional, concise, "
         "and factual answers for the following screening questions. Follow these rules:\n\n"
         
@@ -47,8 +47,10 @@ async def answer_screening_questions(
         "4. For yes/no questions about sponsorship or work authorization, use candidate_work_auth "
         "to determine if they are authorized to work (e.g., if 'us_authorized', they do not need visa sponsorship in the US).\n"
         "5. For salary expectations, use the job salary range if available (e.g. state a number aligned with the job range), "
-        "or list 'Negotiable based on package'.\n\n"
-        
+        "or list 'Negotiable based on package'."
+    )
+
+    user_prompt = (
         f"--- CANDIDATE DETAILS ---\n"
         f"Name: {candidate_profile.get('name', 'Candidate')}\n"
         f"Work Authorization: {candidate_profile.get('work_auth', 'us_authorized')}\n"
@@ -68,7 +70,8 @@ async def answer_screening_questions(
     from module3.utils.gemini import generate_content_with_retry
 
     response = await generate_content_with_retry(
-        contents=prompt,
+        contents=user_prompt,
+        system_instruction=system_instruction,
         response_schema=QuestionAnswers,
         temperature=0.3
     )

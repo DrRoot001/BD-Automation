@@ -71,11 +71,10 @@ async def generate_cover_letter(
 
     from module3.utils.gemini import generate_content_with_retry
     
-    full_prompt = f"SYSTEM INSTRUCTION:\n{_COVER_LETTER_SYSTEM}\n\n{user_prompt}"
-
     try:
         response = await generate_content_with_retry(
-            contents=full_prompt,
+            contents=user_prompt,
+            system_instruction=_COVER_LETTER_SYSTEM,
             temperature=0.2,
             response_mime_type="application/json"
         )

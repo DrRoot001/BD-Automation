@@ -81,9 +81,9 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
 
     from module3.utils.gemini import generate_content_with_retry
     
-    full_prompt = f"{_SYSTEM_PROMPT}\n\n{combined_prompt}"
     response = await generate_content_with_retry(
-        contents=full_prompt,
+        contents=combined_prompt,
+        system_instruction=_SYSTEM_PROMPT,
         temperature=0.0,
         response_mime_type="application/json"
     )

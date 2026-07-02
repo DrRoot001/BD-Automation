@@ -84,7 +84,7 @@ async def orchestrate_application_package(
     job_id: str,
     base_resume_pdf_path: Optional[str] = None,
     screening_questions: Optional[List[str]] = None,
-    api_base_url: str = "http://127.0.0.1:8000",
+    api_base_url: Optional[str] = None,
     skip_gate: bool = False,
     existing_app_id: Optional[str] = None,
     prefetched_match_result: Optional[MatchResult] = None,
@@ -106,6 +106,8 @@ async def orchestrate_application_package(
     If prefetched_match_result is provided the LLM scoring step is skipped and
     the precomputed scores are used, avoiding a redundant second Gemini call.
     """
+    if not api_base_url:
+        api_base_url = os.getenv("API_URL", "http://127.0.0.1:8000")
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
     
     async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
@@ -308,10 +310,11 @@ async def orchestrate_application_package(
 
         # Upload Tailored Resume to Supabase
         candidate_name = candidate.get("name") or candidate_id
+        clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
         remote_resume_url = await upload_file_to_supabase(
             tailored_resume.pdf_url,
             "updated_resume",
-            f"{safe_filename(candidate_name, default=candidate_id, extension='')}_resume_v{next_version}.pdf"
+            f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_resume.pdf"
         )
         resume_pdf_url = remote_resume_url
         tailored_resume.pdf_url = remote_resume_url
@@ -371,10 +374,12 @@ async def orchestrate_application_package(
         print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
         
         # Upload Cover letter to Supabase
+        candidate_name = candidate.get("name") or candidate_id
+        clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
         remote_cl_url = await upload_file_to_supabase(
             cover_letter_url, 
             "cover_letter",
-            f"{candidate_id}_{job_id}_cl.pdf"
+            f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_cover_letter.pdf"
         )
         cover_letter_url = remote_cl_url
 
@@ -438,13 +443,15 @@ async def prepare_package_for_live_application(
     job_id: str,
     needs_cover_letter: bool,
     screening_questions: List[str],
-    api_base_url: str = "http://127.0.0.1:8000",
+    api_base_url: Optional[str] = None,
     skip_gate: bool = False
 ) -> Dict[str, any]:
     """
     Prepare tailored resume, cover letter (if needed), and answer screening questions for live application.
     Runs synchronously and only executes required pipeline steps.
     """
+    if not api_base_url:
+        api_base_url = os.getenv("API_URL", "http://127.0.0.1:8000")
     print(f"\n[ORCHESTRATOR] Synchronous package preparation for Candidate: {candidate_id} | Job: {job_id}")
     
     async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
@@ -620,10 +627,12 @@ async def prepare_package_for_live_application(
         )
         
         # Upload Tailored Resume to Supabase
+        candidate_name = candidate.get("name") or candidate_id
+        clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
         remote_resume_url = await upload_file_to_supabase(
             tailored_resume.pdf_url, 
             "updated_resume",
-            f"{candidate_id}_{job_id}_v{next_version}.pdf"
+            f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_resume.pdf"
         )
         resume_pdf_url = remote_resume_url
         tailored_resume.pdf_url = remote_resume_url
@@ -695,10 +704,11 @@ async def prepare_package_for_live_application(
             
             # Upload Cover letter to Supabase
             candidate_name = candidate.get("name") or candidate_id
+            clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
             remote_cl_url = await upload_file_to_supabase(
                 cover_letter_url,
                 "cover_letter",
-                f"{safe_filename(candidate_name, default=candidate_id, extension='')}_cover_letter.pdf"
+                f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_cover_letter.pdf"
             )
             cover_letter_url = remote_cl_url
             
