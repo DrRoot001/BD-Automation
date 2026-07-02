@@ -867,6 +867,33 @@ async def fill_form(page: Page, form: DetectedForm, profile: Dict,
                         did_fill = True
                         logger.info(f"FILLED [radio] '{label}' = checked")
 
+            elif field.field_type == "checkbox" and field.multi_select and field.options:
+                # Multi-select group. value_to_fill may name one or several
+                # options (comma/semicolon separated). Check each checkbox whose
+                # visible label OR underlying value matches; never guess-check
+                # when we have no value (checking arbitrary boxes is worse than
+                # leaving an optional group blank).
+                wanted = {w.strip().lower() for w in re.split(r"[,;/|]", str(value_to_fill or "")) if w.strip()}
+                checked_any = False
+                if wanted:
+                    pairs = list(zip(field.options, field.raw_values or [None] * len(field.options)))
+                    for opt_label, opt_val in pairs:
+                        if opt_label.strip().lower() in wanted or (opt_val and opt_val.strip().lower() in wanted):
+                            try:
+                                box = (page.locator(f"{field.selector}[value='{opt_val}']").first
+                                       if opt_val else page.get_by_label(opt_label, exact=False).first)
+                                await box.check(force=True, timeout=ACTION_TIMEOUT_MS)
+                                checked_any = True
+                            except Exception as ce:
+                                logger.debug(f"checkbox-group option '{opt_label}' check failed: {ce}")
+                if checked_any:
+                    filled_count += 1
+                    did_fill = True
+                    logger.info(f"FILLED [checkbox-group] '{label}' = {sorted(wanted)}")
+                elif field.required:
+                    logger.warning(f"Required checkbox group '{label}' had no matching option for '{value_to_fill}'")
+                    required_failures.append((label, matched_key))
+
             elif field.field_type == "checkbox":
                 if str(value_to_fill).lower() in ("yes", "true", "1", "on"):
                     await locator.check(force=True, timeout=ACTION_TIMEOUT_MS)

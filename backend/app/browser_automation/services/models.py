@@ -30,3 +30,8 @@ class ApplicationResult(BaseModel):
     execution_time_seconds: float
     retry_count: int
     platform_response: Optional[Dict] = None
+    # False when the final status PATCH to the M1 API failed. The employer-facing
+    # action (submit) still happened — this flag distinguishes "we applied but
+    # couldn't record it" from "we applied and recorded it", so a caller can
+    # reconcile the DB WITHOUT re-running the apply (which would double-submit).
+    db_persisted: bool = True

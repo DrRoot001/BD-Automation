@@ -67,6 +67,8 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "File inputs are hidden; after upload, Greenhouse replaces them with a filename-display element.",
             "EEO / demographic fields (gender, race, veteran, disability) appear at the bottom — answer them using the candidate's DECLARED values in the identity card (do NOT auto-decline): gender inferred from first name, race=South Asian (else Asian), veteran=No, disability=No, transgender=No.",
             "Multi-step: some forms have a 'Continue' button between sections — use next_step action.",
+            "On job-boards.greenhouse.io an 'I agree to the terms' checkbox can be required before the Resume upload appears — tick it first.",
+            "The EEO/demographic block has exactly 6 fields — count them and verify all 6 are answered before submitting.",
         ],
     },
 
@@ -188,105 +190,62 @@ _HINTS: Dict[str, Dict[str, Any]] = {
 
     "builtin": {
         "apply_selectors": [
+            "a:has-text('Apply')",
+            "button:has-text('Apply')",
             "button:has-text('Easy Apply')",
             "a:has-text('Easy Apply')",
-            "button:has-text('Apply Now')",
-            "a:has-text('Apply Now')",
-            "button:has-text('Apply')",
-            "[aria-label*='Easy Apply']",
         ],
+        # Submit selectors are for the DELEGATED ATS, not Built In itself —
+        # Built In's own flow ends at the mini-form + Continue. Once the
+        # adapter delegates to the real ATS (iCIMS / Greenhouse / Lever /
+        # etc.) the underlying adapter's own submit selectors take over.
+        # These stay as a safety net for the "generic" fallback path.
         "submit_selectors": [
             "button:has-text('Submit Application')",
             "button:has-text('Submit application')",
-            "button:has-text('Send Application')",
-            "button:has-text('Complete Application')",
             "button:has-text('Submit')",
             "button[type='submit']",
         ],
         "success_patterns": [
             "application submitted",
             "application received",
-            "application complete",
             "thank you for applying",
             "thanks for applying",
             "we've received your application",
-            "your application has been received",
         ],
         "url_hint": (
-            "Native Built In ATS at builtin.com/apply/job/<id> or "
-            "builtin.com/apply/... — the URL IS the application form; no "
-            "separate ATS redirect. Success page URL usually contains "
-            "/success, /submitted, /thank-you, or /confirmation but do NOT "
-            "rely on URL alone — body-text match is more reliable."
+            "Built In (builtin.com/job/...) is a CLICK-THROUGH JOB BOARD, "
+            "NOT a native ATS. The adapter's navigate_to_application does "
+            "a 3-field mini-form dance (first-name / last-name / email + "
+            "Continue) which opens the REAL ATS (iCIMS / Greenhouse / "
+            "Lever / Workable) in a new tab, then re-navigates the "
+            "current page to that resolved ATS URL. From that point on, "
+            "the target ATS's own adapter drives everything — hints for "
+            "the target ATS take over automatically."
         ),
         "quirks": [
-            "Multi-step wizard on one page: Resume Upload → Personal Info → "
-            "Work Experience → Education → Compliance Questions → Review → "
-            "Submit. Progress through sections in that order; a Submit button "
-            "only becomes valid once every section is complete.",
+            "Built In is a JOB BOARD wrapper, not an ATS. The actual "
+            "application form lives on whatever ATS the employer uses "
+            "(iCIMS, Greenhouse, Lever, Workable, etc.). The adapter's "
+            "navigate_to_application handles the click-through: fills "
+            "the 3-field inline mini-form (first-name / last-name / "
+            "email), clicks Continue, catches the new-tab handoff, and "
+            "re-navigates to that ATS URL. AgentLoop never really sees "
+            "the Built In DOM — by the time it starts perceiving, the "
+            "page is already on the target ATS.",
 
-            "Resume upload happens FIRST, immediately after landing on the "
-            "apply page. Built In auto-parses the resume and pre-fills First "
-            "Name / Last Name / Email / Phone / Location / Experience / "
-            "Education. Wait up to ~30s for at least one field (firstName or "
-            "email) to become non-empty before moving on — that's the signal "
-            "parsing finished. Do NOT re-fill fields that Built In already "
-            "populated correctly from the resume; only fill ones that are "
-            "still empty. Overwriting a Built-In-parsed value is what causes "
-            "the auto-parse to reset and lose OTHER fields it had populated.",
+            "If the adapter's click-through fails (Continue doesn't open "
+            "a new tab within 15s, or the resolved URL isn't a known "
+            "ATS host), a generic fallback runs and the AgentLoop's "
+            "vision agent has to salvage whatever is on-screen. This is "
+            "a best-effort recovery — most Built In postings depend on "
+            "the click-through path working.",
 
-            "Education section commonly appears as a MODAL DIALOG "
-            "(role='dialog') — open the modal, fill School / Discipline / "
-            "Degree / Start Month / Start Year / End Month / End Year, save, "
-            "then wait for the modal to close before moving on. If an "
-            "education row already exists (from resume parse), skip; only "
-            "add education if the section is empty.",
-
-            "Work Experience is USUALLY auto-imported from the resume — "
-            "verify presence, do NOT edit unless a validation error appears "
-            "on that section. If Built In shows an experience card without "
-            "errors, leave it alone.",
-
-            "Most fields (school, discipline, degree, start/end month/year, "
-            "state, compliance dropdowns) use CUSTOM DROPDOWNS — not native "
-            "<select>. Algorithm: click to open → wait for the options list "
-            "to render → click the matching option → verify the trigger's "
-            "displayed text updated. If the click didn't stick (state "
-            "unchanged), retry once — this is a known Built In quirk with "
-            "React re-renders swallowing the first click.",
-
-            "Compliance section — SPONSORSHIP, GOVERNMENT OFFICIAL, "
-            "GOVERNMENT-OFFICIAL RELATIVE, CONFLICT OF INTEREST — these four "
-            "canonical questions are ALWAYS answered per operator policy: "
-            "sponsorship = NO (candidate is US-authorized), government "
-            "official = NO, relative-of-government-official = NO, conflict "
-            "of interest = NO. If Built In phrases them differently (\"Are "
-            "you currently or in the past five years a government "
-            "official?\", \"Is any close relative a government official?\", "
-            "\"Do you or a close relative have a relationship that creates "
-            "a conflict of interest?\"), normalise to those four canonical "
-            "categories and answer NO for all four unless the profile "
-            "explicitly says otherwise.",
-
-            "Selector priority per operator spec: (1) getByLabel — Playwright "
-            "role/label locator, (2) getByRole('button') / role-based, (3) "
-            "getByPlaceholder, (4) getByText. Do NOT use nth-child, "
-            "generated CSS class names, or absolute XPaths — the Built In "
-            "DOM is React-generated and those selectors break between "
-            "renders.",
-
-            "Pre-submit gate: before clicking Submit, verify RESUME PRESENT "
-            "+ EDUCATION PRESENT + COMPLIANCE QUESTIONS ANSWERED. If a "
-            "required field validation banner appears (\"Required\", "
-            "\"Missing\", \"Please Select\", \"Invalid\"), do NOT click "
-            "Submit — go back to the section that's flagged and fix it.",
-
-            "Success is confirmed by page-body text (\"Application "
-            "Submitted\" / \"Thank You\" / \"Application Received\" / "
-            "\"Application Complete\") AND typically a URL landing on "
-            "/success, /submitted, /thank-you, or /confirmation. Prefer "
-            "body-text match — do NOT depend solely on URL, some Built In "
-            "flows show the success message without redirecting.",
+            "Compliance policy answers (sponsorship / government "
+            "official / gov-official-relative / conflict-of-interest — "
+            "all default NO) live in loop.py's _policy_fields and apply "
+            "on the target ATS's form. No Built In-specific compliance "
+            "wiring is needed here.",
         ],
     },
 
@@ -592,6 +551,302 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    "glassdoor": {
+        "container": ".modal-content, [data-test='JobApplicationModal']",
+        "apply_selectors": [
+            "button[data-test='applyButtonGDP']",
+            "button:has-text('Easy Apply')",
+            "button:has-text('Apply Now')",
+            "a:has-text('Apply on company site')",
+        ],
+        "submit_selectors": [
+            "button[data-test='submit-application']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit')",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "your application has been submitted",
+            "application sent",
+            "thank you for applying",
+        ],
+        "url_hint": (
+            "Job pages live on glassdoor.com (/job-listing/... or /Job/...). "
+            "Two branches: (a) EASY APPLY — button[data-test='applyButtonGDP'] "
+            "opens an in-page modal (.modal-content / "
+            "[data-test='JobApplicationModal']); (b) EXTERNAL — 'Apply on "
+            "company site' links out to the employer ATS; the GlassdoorAdapter "
+            "resolves that URL and delegates to the target ATS adapter, whose "
+            "hints then take over."
+        ),
+        "quirks": [
+            "Account required: set GLASSDOOR_EMAIL and GLASSDOOR_PASSWORD — the adapter logs in BEFORE the job page loads. Never type credentials yourself.",
+            "Cloudflare Turnstile challenge may appear on login (and occasionally on apply) — the CaptchaService handles it; if the page looks stalled on a 'verify you are human' widget, wait rather than acting.",
+            "Some listings redirect to an external ATS ('Apply on company site') — treat as passthrough; the target ATS's quirks are authoritative once the form loads.",
+            "Easy Apply opens a MODAL within the page — scope all selectors inside .modal-content / [data-test='JobApplicationModal'].",
+        ],
+    },
+
+    "ziprecruiter": {
+        "container": "form[data-testid='apply-form'], .apply-modal",
+        "apply_selectors": [
+            "button[data-testid='joblist-apply-button']",
+            "button:has-text('1-Click Apply')",
+            "button:has-text('Apply')",
+            "a:has-text('Apply Now')",
+        ],
+        "submit_selectors": [
+            "button:has-text('Apply Now')",
+            "button:has-text('Submit Application')",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "applied successfully",
+            "application submitted",
+            "you've applied",
+            "you have applied",
+        ],
+        "url_hint": (
+            "Job pages live on ziprecruiter.com. Clicking Apply either "
+            "completes IMMEDIATELY (1-Click Apply using the pre-built account "
+            "profile — a 'You've applied' confirmation appears with NO form) "
+            "or opens an apply modal/form with screening questions."
+        ),
+        "quirks": [
+            "Account required: ZIPRECRUITER_EMAIL + ZIPRECRUITER_PASSWORD — the adapter logs in BEFORE the job page loads.",
+            "US phone number required at account setup (one-time, pre-configured MANUALLY by the operator — SMS verification is not automatable).",
+            "Only Easy Apply postings are driven — skip listings whose CTA reads 'Apply on company site'.",
+            "hCaptcha may appear at login — the CaptchaService handles it; wait rather than acting if a captcha widget is visible.",
+            "1-Click Apply may finish with NO form at all — if a confirmation like 'You've applied' appears right after the Apply click, the application is DONE; do not hunt for fields.",
+            "Rate limit: ~5 applications/hour per account — aggressive throttling; expect the platform rate limiter to slow runs down.",
+        ],
+    },
+
+    "himalayas": {
+        "apply_selectors": [
+            "button:has-text('Quick Apply')",
+            "button:has-text('Quick apply')",
+            "a:has-text('Quick apply')",
+            "a:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thanks for applying",
+            "application sent",
+        ],
+        "url_hint": (
+            "Listings live on himalayas.app. Two branches: (a) a native "
+            "'Quick Apply' form hosted by Himalayas (name/email/resume, "
+            "sometimes screening questions); (b) an external Apply link to "
+            "the employer ATS (Greenhouse/Lever/Ashby) — the adapter resolves "
+            "and delegates, so the target ATS's hints take over."
+        ),
+        "quirks": [
+            "No auth wall and no captcha observed — anonymous apply.",
+            "If the 'Quick Apply' button is missing, the listing is an external-ATS passthrough; the adapter scans page anchors for a known ATS host and delegates.",
+            "Native Quick Apply form is plain HTML — standard fill + button[type='submit'].",
+        ],
+    },
+
+    "remoteok": {
+        "apply_selectors": [
+            "a:has-text('Apply')",
+            "a:has-text('Apply Now')",
+            "button:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+        ],
+        "url_hint": (
+            "remoteok.com is a PURE AGGREGATOR — every listing's Apply "
+            "button links out to the underlying ATS (Greenhouse/Lever/Ashby) "
+            "or an email address. The RemoteRocketship passthrough resolves "
+            "the external ATS link and delegates."
+        ),
+        "quirks": [
+            "Pure aggregator — resolve the external ATS link and delegate; the target ATS's quirks are authoritative once the form loads.",
+            "Listings whose Apply resolves to a mailto: link cannot be driven — abort those.",
+        ],
+    },
+
+    "adzuna": {
+        "apply_selectors": [
+            "a:has-text('Apply Now')",
+            "a:has-text('Apply')",
+            "button:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+        ],
+        "url_hint": (
+            "adzuna.com is a PURE LINK AGGREGATOR — 'Apply Now' always "
+            "redirects to the external employer ATS. The RemoteRocketship "
+            "passthrough resolves the link and delegates."
+        ),
+        "quirks": [
+            "Pure aggregator — resolve the external ATS link and delegate; the target ATS's quirks are authoritative once the form loads.",
+            "The redirect may hop through an adzuna tracking URL before landing on the ATS — judge the page by its FINAL host, not the click target.",
+        ],
+    },
+
+    "hiringcafe": {
+        "apply_selectors": [
+            "button:has-text('Apply')",
+            "a:has-text('Apply')",
+            "a:has-text('Apply Now')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+        ],
+        "url_hint": (
+            "thehiring.cafe is an AGGREGATOR — listings embed or link to an "
+            "underlying ATS (Ashby/Greenhouse/Lever). The RemoteRocketship "
+            "passthrough resolves the external ATS link and delegates."
+        ),
+        "quirks": [
+            "Pure aggregator — resolve the external ATS link and delegate; the target ATS's quirks are authoritative once the form loads.",
+            "Some listings EMBED the ATS form in-page — if form fields are visible on a thehiring.cafe URL, look for the ATS iframe (e.g. #grnhse_iframe, #ashby_embed_iframe) before assuming a native form.",
+        ],
+    },
+
+    "workable": {
+        "apply_selectors": [
+            "button:has-text('Apply for this job')",
+            "a:has-text('Apply for this job')",
+            "button:has-text('Apply')",
+            "a:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+            "your application has been submitted",
+            "we've received your application",
+        ],
+        "url_hint": (
+            "Workable-hosted forms live on apply.workable.com/<company>/j/<id>/ "
+            "(also *.workable.com). Single-page application form: contact fields, "
+            "resume upload, then screening questions. No login wall for apply."
+        ),
+        "quirks": [
+            "Resume upload auto-parses and pre-fills name/email/phone — verify the parsed values instead of retyping over them.",
+            "Country/phone use a custom intl-tel-input widget; target the visible combobox, not the hidden input.",
+            "Screening answers render as custom radio/checkbox/select groups below the resume — scroll to the bottom before submit.",
+            "OneTrust/cookie consent banner often overlays the form — dismiss it first.",
+        ],
+    },
+
+    "smartrecruiters": {
+        "apply_selectors": [
+            "button:has-text('Interested')",
+            "a:has-text('Interested')",
+            "button:has-text('Apply')",
+            "a:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Apply')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+            "your application was sent",
+            "application received",
+        ],
+        "url_hint": (
+            "SmartRecruiters listings live on jobs.smartrecruiters.com/<company>/<id>; "
+            "the Apply/'I'm Interested' button opens a hosted multi-section form "
+            "(may route through app.smartrecruiters.com). No login wall for apply."
+        ),
+        "quirks": [
+            "Multi-section form (Personal / Experience / Questions) — sections expand inline; fill top-to-bottom and scroll before submit.",
+            "Resume upload parses and pre-fills fields; verify rather than overwrite.",
+            "Some postings redirect from jobs.smartrecruiters.com to app.smartrecruiters.com — judge the page by its final host.",
+        ],
+    },
+
+    "rippling": {
+        "apply_selectors": [
+            "button:has-text('Apply')",
+            "a:has-text('Apply')",
+            "button:has-text('Apply for this role')",
+            "a:has-text('Apply Now')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+            "we've received your application",
+        ],
+        "url_hint": (
+            "Rippling-hosted ATS forms live on ats.rippling.com/<company>/jobs/<id>. "
+            "Bespoke single-page form (contact + resume + questions). No login wall."
+        ),
+        "quirks": [
+            "Bespoke React form with non-standard class names — prefer accessible selectors (label/aria) over CSS classes.",
+            "Resume upload may pre-fill contact fields; verify parsed values.",
+        ],
+    },
+
+    "pinpointhq": {
+        "apply_selectors": [
+            "button:has-text('Apply')",
+            "a:has-text('Apply')",
+            "button:has-text('Apply for this job')",
+            "a:has-text('Apply Now')",
+        ],
+        "submit_selectors": [
+            "button[type='submit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "application submitted",
+            "thank you for applying",
+            "application received",
+        ],
+        "url_hint": (
+            "PinpointHQ-hosted careers pages live on <company>.pinpointhq.com "
+            "(and *.pinpoint.hr). Apply opens a hosted form: contact + resume + "
+            "screening questions. No login wall for apply."
+        ),
+        "quirks": [
+            "Standard hosted form; resume upload auto-parses contact fields — verify rather than overwrite.",
+            "Screening questions render below the fold — scroll to the bottom before submit.",
+        ],
+    },
+
     "generic": {
         "apply_selectors": [
             "a:has-text('Apply')",
@@ -631,7 +886,9 @@ def get_platform_hints(platform: str) -> Dict[str, Any]:
     key = (platform or "generic").lower().strip()
     if key in _HINTS:
         return _HINTS[key]
-    normalized = key.replace("-", "").replace("_", "")
+    # Dots are stripped too so dotted hosts match compact keys (e.g.
+    # jobs.source='thehiring.cafe' → 'thehiringcafe' → matches 'hiringcafe').
+    normalized = key.replace("-", "").replace("_", "").replace(".", "")
     # Most specific first so e.g. 'smartapply' wins before any looser match.
     for k in _HINTS:
         if k == "generic":

@@ -150,7 +150,7 @@ class AgentAction:
     # navigate_url — for AI to self-recover when on wrong page
     url: Optional[str] = None
     # solve_captcha
-    captcha_type: Optional[str] = None   # "recaptcha_v2" | "hcaptcha" | "image"
+    captcha_type: Optional[str] = None   # "recaptcha_v2" | "hcaptcha" | "image" | "turnstile"
     # internal — set by the executor after the action runs
     step: int = 0
     ok: bool = True                      # False if Playwright couldn't execute
@@ -281,7 +281,7 @@ Action schema (return ONE per turn):
   wait           — no params (short pause; use after a click that triggers async load)
   abort          — {reason}  (ONLY after you've tried click_apply + scroll + wait)
   done           — {confirmation}
-  solve_captcha  — {captcha_type: "recaptcha_v2" | "hcaptcha" | "image"}
+  solve_captcha  — {captcha_type: "recaptcha_v2" | "hcaptcha" | "image" | "turnstile"}
 
 DECISION POLICY — read in order:
 1. First turn → if page shows form fields, return verify_page. If it shows an Apply link
@@ -310,7 +310,9 @@ DECISION POLICY — read in order:
     a field exists is a real omission, not optional.
 6. After all visible fields filled → look for Next/Continue → next_step.
 7. After last page → click Submit → done with confirmation.
-8. CAPTCHA detected → return solve_captcha with captcha_type="recaptcha_v2" | "hcaptcha" | "image"
+8. CAPTCHA detected → return solve_captcha with captcha_type="recaptcha_v2" | "hcaptcha" | "image".
+   Cloudflare Turnstile (DOM shows type=turnstile_captcha or type=challenge_page) — use
+   solve_captcha with captcha_type="turnstile".
 9. Login wall / bot detection → abort reason="blocked".
 10. Same field unfilled twice → skip and continue.
 11. Prefer #id selectors > [data-*] > short class chain. Never invent selectors not in the DOM.
@@ -643,11 +645,15 @@ _SCOPED_OPTIONS_JS = r"""(s) => {
 # ─────────────────────────────────────────────────────────────────────────────
 
 _DOM_SNAPSHOT_JS = """() => {
-    // Bumped from 25 to 50. Long Greenhouse forms (Vercel, Stripe, Coinbase)
-    // often have 30+ interactive elements counting demographic questions at
-    // the bottom. With cap=25 those were getting silently truncated — the AI
-    // never saw the demographic fields and clicked Submit prematurely.
-    const MAX_FIELDS = 50;
+    // Bumped 25 → 50 → 80. Long Greenhouse forms (Vercel, Stripe, Coinbase)
+    // plus EEO/demographic sections can exceed 50 interactive elements; at
+    // cap=50 the tail was silently truncated so the AI never saw the last
+    // fields and clicked Submit prematurely. 80 covers essentially every real
+    // application form while keeping the serialized snapshot within budget
+    // (each entry is a compact object). If a form genuinely exceeds this the
+    // completeness gate below still counts the untruncated required set, so a
+    // premature submit is blocked rather than silently allowed.
+    const MAX_FIELDS = 80;
     const MAX_ERRORS = 10;
 
     // Pass 1 — collect validation-error messages so the AI can see what the
@@ -1160,7 +1166,7 @@ _DOM_SNAPSHOT_JS = """() => {
         if (val) {
             formStatus.filled += 1;
         } else {
-            if (formStatus.unfilled.length < 15) {
+            if (formStatus.unfilled.length < 25) {
                 let label = el.getAttribute('aria-label') || '';
                 if (!label && el.id) {
                     const lbl = document.querySelector(`label[for="${el.id}"]`);
@@ -1171,6 +1177,51 @@ _DOM_SNAPSHOT_JS = """() => {
             }
         }
     });
+
+    // ── CAPTCHA / bot-check detection ────────────────────────────────────
+    // Surface Cloudflare Turnstile widgets and full-page challenge
+    // interstitials as first-class entries so the AI knows a bot-check is
+    // blocking progress and can emit solve_captcha(captcha_type="turnstile")
+    // instead of wandering (Turnstile renders as an unlabeled iframe the
+    // field-walk above can never see).
+    try {
+        // Challenge PAGE: Cloudflare's "Just a moment..." interstitial
+        // replaces the whole document — every other element on the page is
+        // part of the bot-check, not the real site.
+        if (/just a moment/i.test(document.title || '') || document.querySelector('#challenge-running')) {
+            out.push({
+                sel: 'body', type: 'challenge_page',
+                label: 'Cloudflare challenge interstitial — the WHOLE page is a bot-check; use solve_captcha captcha_type="turnstile"',
+            });
+        }
+        // Turnstile WIDGET. IMPORTANT: [data-sitekey] alone is ambiguous —
+        // reCAPTCHA v2 and hCaptcha containers carry it too — so require an
+        // explicit turnstile marker (class/id on the element or an ancestor)
+        // or the challenges.cloudflare.com iframe before classifying.
+        let tsSitekey = null;
+        let tsFound = false;
+        document.querySelectorAll('.cf-turnstile, [data-sitekey]').forEach(el => {
+            const marker = ((el.getAttribute('class') || '') + ' ' + (el.id || '')).toLowerCase();
+            const isTurnstile = marker.includes('turnstile')
+                || !!el.closest('.cf-turnstile, [class*="turnstile" i], [id*="turnstile" i]');
+            if (!isTurnstile) return;
+            tsFound = true;
+            if (!tsSitekey) tsSitekey = el.getAttribute('data-sitekey') || null;
+        });
+        let tsSel = '.cf-turnstile';
+        if (!tsFound && document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
+            tsFound = true;   // embedded widget rendered without the .cf-turnstile host div
+            tsSel = 'iframe[src*="challenges.cloudflare.com"]';  // no .cf-turnstile host exists here
+        }
+        if (tsFound) {
+            out.push({
+                sel: tsSel, type: 'turnstile_captcha', sitekey: tsSitekey,
+                label: 'Cloudflare Turnstile widget'
+                    + (tsSitekey ? ' (sitekey=' + tsSitekey + ')' : '')
+                    + ' — use solve_captcha captcha_type="turnstile"',
+            });
+        }
+    } catch (e) {}
 
     return { fields: out, errors: errorOut, formStatus: formStatus };
 }"""
@@ -1243,6 +1294,49 @@ async def _dom_hash(ctx) -> str:
         return hashlib.sha1(data.encode()).hexdigest()[:16]
     except Exception:
         return ""
+
+
+# Consent-manager "accept" buttons handled by the per-turn overlay reflex.
+# Ordered vendor-specific → generic text match; each is tried with a short
+# timeout so a page with no overlays costs almost nothing per turn.
+_OVERLAY_DISMISS_SELECTORS: tuple[str, ...] = (
+    "#onetrust-accept-btn-handler",                                # OneTrust
+    "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",      # Cookiebot
+    ".osano-cm-accept-all",                                        # Osano
+    'button:has-text("Accept all")',
+    'button:has-text("Accept All Cookies")',
+)
+
+
+async def _dismiss_overlays(page: Page) -> bool:
+    """Deterministic pre-LLM reflex: click away cookie/consent overlays that
+    would otherwise cover the form in the screenshot and waste an LLM turn.
+
+    Complements the one-time pre-loop JS dismissal in run() — CMPs frequently
+    re-render their banner AFTER an in-page navigation (Apply click → form
+    route), which the pre-loop pass can't see. Runs before every perception
+    capture; the caller's miss-counter stops calling it once nothing has been
+    dismissed for a few consecutive turns.
+
+    Never raises; returns True if anything was clicked.
+    """
+    dismissed = False
+    for sel in _OVERLAY_DISMISS_SELECTORS:
+        try:
+            loc = page.locator(sel).first
+            if await loc.count() == 0:
+                continue
+            # Text-matched "Accept all" buttons exist hidden inside CMP
+            # preference panels — only click when actually visible.
+            if not await loc.is_visible():
+                continue
+            await loc.click(timeout=400)
+            logger.info(f"[AgentLoop] overlay reflex: dismissed {sel!r}")
+            dismissed = True
+        except Exception:
+            # Timeout / detached / obscured — all non-fatal by design.
+            continue
+    return dismissed
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1649,7 +1743,16 @@ async def _execute_action(
             return False
         
         logger.info(f"[AgentLoop] LLM requested solve_captcha for type={action.captcha_type!r}")
-        captcha_svc = CaptchaService() 
+        # Read the operator-configured provider — turnstile is dispatched by
+        # CaptchaService.solve() to solve_turnstile(), which hard-requires
+        # provider=="capsolver"; the class default ("2captcha") would make the
+        # turnstile path always fail. Match the other call sites.
+        provider = os.getenv("CAPTCHA_PROVIDER", "capsolver").lower()
+        captcha_svc = CaptchaService(provider=provider)
+        # captcha_type passes through verbatim — CaptchaService.solve() accepts
+        # "recaptcha_v2" | "hcaptcha" | "image" | "turnstile" (Cloudflare
+        # Turnstile is surfaced to the LLM via the DOM snapshot's
+        # turnstile_captcha / challenge_page entries).
         solution = await captcha_svc.solve(page, action.captcha_type)
         if solution.success:
             logger.info(f"[AgentLoop] Captcha solved successfully in {solution.solve_time_seconds:.1f}s")
@@ -1673,6 +1776,20 @@ async def _execute_action(
                 loc = ctx.locator(s).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.scroll_into_view_if_needed()
+                    # Idempotency guard: a plain click TOGGLES a checkbox/radio,
+                    # so if the AI re-issues a click on an already-checked box it
+                    # turns OFF and the loop oscillates (observed on Lever's
+                    # multi-select language cards → STUCK abort). If the target
+                    # is a checkbox/radio already in the checked state, treat as
+                    # success without re-toggling.
+                    try:
+                        _cb_type = await loc.evaluate(
+                            "el => (el.tagName === 'INPUT') ? (el.type || '') : ''"
+                        )
+                        if _cb_type in ("checkbox", "radio") and await loc.is_checked():
+                            return True
+                    except Exception:
+                        pass
                     box = await loc.bounding_box()
                     if box:
                         await _bezier_mouse_move(page, box["x"] + box["width"]/2, box["y"] + box["height"]/2)
@@ -1776,8 +1893,61 @@ async def _execute_action(
         try:
             loc = ctx.locator(sel).first
             if await loc.count() == 0:
-                logger.warning(f"[AgentLoop] fill_field: selector not found: {sel!r}")
-                return False
+                # Selector fallback chain — the AI's CSS selector went stale
+                # (SPA class churn, re-render between plan and act). Rather than
+                # bounce back for a full LLM re-plan, resolve the SAME field by
+                # the human label the AI already named. get_by_label /
+                # get_by_placeholder take PLAIN strings (no CSS-injection risk).
+                # A wrong fuzzy match is caught by the confirm/duplicate-qualifier
+                # guard below (all field types) plus the demographic-swap defence
+                # further down (demographic fields).
+                _fallback_loc = None
+                _fl = (action.field_label or "").strip()
+                if _fl:
+                    for _desc, _make in (
+                        ("get_by_label", lambda: ctx.get_by_label(_fl, exact=False)),
+                        ("get_by_placeholder", lambda: ctx.get_by_placeholder(_fl, exact=False)),
+                    ):
+                        try:
+                            _cand = _make().first
+                            if await _cand.count() > 0:
+                                _fallback_loc = _cand
+                                logger.info(
+                                    f"[AgentLoop] fill_field: selector {sel!r} stale — "
+                                    f"resolved via {_desc} on label {_fl!r}"
+                                )
+                                break
+                        except Exception:
+                            continue
+                if _fallback_loc is None:
+                    logger.warning(
+                        f"[AgentLoop] fill_field: selector not found: {sel!r} "
+                        f"(no label fallback matched for {action.field_label!r})"
+                    )
+                    return False
+                # Guard against fuzzy (exact=False) label matching resolving a
+                # SIMILAR-but-wrong field — the classic trap is "Confirm Email" /
+                # "Re-enter Password" matching a request for "Email"/"Password".
+                # The demographic-swap check below only guards demographic fields,
+                # so reject here when the resolved label carries a confirm/repeat
+                # qualifier the AI's label lacks. Applies to ALL field types.
+                try:
+                    _resolved_label = (await _fallback_loc.evaluate(
+                        "(el) => (el.getAttribute('aria-label')"
+                        " || (el.labels && el.labels[0] && el.labels[0].textContent)"
+                        " || el.getAttribute('placeholder') || el.name || '')"
+                    ) or "").lower()
+                except Exception:
+                    _resolved_label = ""
+                _qual = re.search(r"\b(confirm|re-?enter|repeat|verify|again|second)\b", _resolved_label)
+                if _qual and _qual.group(0) not in _fl.lower():
+                    logger.warning(
+                        f"[AgentLoop] fill_field: fallback for {action.field_label!r} "
+                        f"resolved to {_resolved_label[:60]!r} (qualifier {_qual.group(0)!r}) "
+                        f"— rejecting to avoid filling a confirm/duplicate field; AI re-plans."
+                    )
+                    return False
+                loc = _fallback_loc
             field_type = await loc.evaluate("el => el.type || el.tagName.toLowerCase()")
             field_type = (field_type or "text").lower()
 
@@ -1891,8 +2061,40 @@ async def _execute_action(
                 return True
 
             if field_type in ("checkbox",):
-                if value.lower() in ("yes", "true", "1", "on", "agree"):
+                v = (value or "").strip()
+                vl = v.lower()
+                if vl in ("no", "false", "0", "off", "unchecked", "decline"):
+                    # Explicit negative — ensure UNchecked (idempotent).
+                    try:
+                        await loc.uncheck(force=True, timeout=5000)
+                    except Exception:
+                        pass
+                    return True
+                if vl in ("yes", "true", "1", "on", "agree", "checked", ""):
+                    # Boolean/consent checkbox — ensure checked (idempotent;
+                    # .check() is a no-op if already checked, so re-issuing the
+                    # same fill_field never toggles it back off).
                     await loc.check(force=True, timeout=5000)
+                    return True
+                # Otherwise the value names a SPECIFIC option in a checkbox
+                # GROUP that shares one `name` — Lever "multiple-select" cards
+                # render every option as
+                #   <input type=checkbox name=cards[..][field0] value="English (ENG)">
+                # so ALL options match `sel` and `.first` is the wrong target.
+                # A plain toggle-click also oscillates when the AI re-issues it.
+                # Target the exact option by value and .check() it idempotently.
+                opt = None
+                if sel:
+                    try:
+                        cand = ctx.locator(f'{sel}[value="{v}"]').first
+                        if await cand.count() > 0:
+                            opt = cand
+                    except Exception:
+                        opt = None
+                try:
+                    await (opt or loc).check(force=True, timeout=5000)
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] checkbox option check failed for {v!r}: {exc}")
                 return True
 
             if field_type == "radio":
@@ -2392,6 +2594,18 @@ class AgentLoop:
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
         self._platform = platform
         self.verify_gate_limit = self._hints.get("verify_gate_limit", 20)
+        # Phase 5.1 — dynamic platform re-detection. Track the host we last
+        # classified against so mid-run re-detection only fires when the host
+        # TRULY changes (anti-thrash), and cache whether the visual success
+        # classifier (Phase 5.2) has already been consumed this run so it
+        # never runs in a tight loop.
+        self._last_classified_host: Optional[str] = None
+        try:
+            from urllib.parse import urlparse as _up
+            self._last_classified_host = (_up(str(job_context.get("job_url") or "")).hostname or "").lower() or None
+        except Exception:
+            self._last_classified_host = None
+        self._visual_success_calls: int = 0
         self._llm = get_llm()
         # Build the identity-anchored system prompt. Rebuilt if the effective
         # provider changes mid-session (e.g. Anthropic exhausts and Groq takes
@@ -2401,6 +2615,150 @@ class AgentLoop:
         except Exception:
             self._prompt_provider = "anthropic"
         self._system_prompt = self._build_system_prompt()
+
+    async def _maybe_reclassify_platform(self, page: "Page", *, submit_fired: bool, is_iframe_mode: bool) -> None:
+        """Phase 5.1 — re-detect the ATS platform from the CURRENT page URL and,
+        if it has genuinely changed to a *known* platform, swap in that
+        platform's hints + rebuild the (cached) system prompt mid-run.
+
+        WHY: a run can start on an aggregator/redirect (RemoteRocketship,
+        Glassdoor, an Apply CTA that bounces to the real ATS) and only land on
+        the true Greenhouse/Lever/Ashby form a couple of navigations later. If
+        self._platform is still "generic" (or the aggregator's key) the LLM
+        never gets that ATS's playbook and loses the wizard/iframe knowledge.
+
+        Constraints (must NOT thrash or desync an in-progress fill):
+          * Pure string mapping — NO LLM call, cheap enough to run every step.
+          * Only act when the HOST truly changed since we last classified
+            (tracked on self._last_classified_host).
+          * Never DOWNGRADE a specific platform to "generic"/unknown.
+          * Skip once a submit has fired — swapping the platform context after
+            we've committed the form would desync post-submit handling.
+          * Skip in iframe mode — the platform context is bound to the OUTER
+            frame the loop is scoped to; the inner form URL is irrelevant.
+        Degrades to a no-op on any error.
+        """
+        if submit_fired or is_iframe_mode:
+            return
+        try:
+            url = page.url or ""
+        except Exception:
+            return
+        if not url or url == "about:blank":
+            return
+        try:
+            from urllib.parse import urlparse
+            host = (urlparse(url).hostname or "").lower()
+        except Exception:
+            return
+        if not host or host == self._last_classified_host:
+            return  # host unchanged — nothing to do (anti-thrash)
+        # Record the host we're classifying NOW so a failed/ignored detection
+        # on this host doesn't re-run the mapping every subsequent step.
+        self._last_classified_host = host
+        try:
+            from ..adapters.remoterocketship import _detect_ats_from_url
+            new_key = _detect_ats_from_url(url)
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] platform re-detect mapping failed (non-fatal): {exc}")
+            return
+        # Never downgrade to generic/unknown; only switch to a KNOWN platform
+        # that actually carries a hints entry, and only if it differs.
+        if not new_key or new_key == "generic":
+            return
+        if new_key == self._platform:
+            return
+        try:
+            from ..adapters.hints import _HINTS as _KNOWN_HINTS
+            if new_key not in _KNOWN_HINTS:
+                return
+        except Exception:
+            return
+        old = self._platform
+        try:
+            self._platform = new_key
+            self._hints = get_platform_hints(new_key)
+            self.verify_gate_limit = self._hints.get("verify_gate_limit", self.verify_gate_limit)
+            self._system_prompt = self._build_system_prompt()
+            logger.info(
+                f"[AgentLoop] platform re-detected mid-run: {old} -> {new_key} ({url})"
+            )
+        except Exception as exc:
+            # Roll back to the previous platform on any failure so we never
+            # leave the loop in a half-swapped state.
+            self._platform = old
+            logger.debug(f"[AgentLoop] platform re-detect swap failed (non-fatal): {exc}")
+
+    async def _classify_submit_visual(self, page: "Page") -> Optional[str]:
+        """Phase 5.2 — one LLM VISION classification used ONLY as a post-submit
+        tiebreaker when text/URL pattern detection is inconclusive.
+
+        Screenshots the current page and asks the model to bucket it into
+        exactly one of: "success" | "error" | "verification_gate" |
+        "still_on_form". Reuses the loop's existing LLM client + screenshot
+        plumbing (self._llm.generate_json with image_bytes) — no new client,
+        no new provider. Returns the lowercased single-word classification, or
+        None if disabled / the call fails / the answer is unparseable (in which
+        case the caller keeps its EXISTING behavior).
+        """
+        # Env gate — default ON (only fires when already inconclusive AND
+        # post-submit), but MUST be skippable.
+        if os.getenv("AGENT_LOOP_VISUAL_SUCCESS", "true").strip().lower() in ("0", "false", "no", "off"):
+            return None
+        # Hard cap: post-submit only, at most twice per run — never a loop.
+        if self._visual_success_calls >= 2:
+            return None
+        self._visual_success_calls += 1
+        try:
+            try:
+                _eff = self._llm.effective_provider()
+            except Exception:
+                _eff = "anthropic"
+            sq = 28 if _eff == "groq" else 35
+            shot = await page.screenshot(full_page=True, type="jpeg", quality=sq)
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] visual-success screenshot failed (non-fatal): {exc}")
+            return None
+        _system = (
+            "You are a strict-JSON API. Look at the screenshot of a web page shown "
+            "immediately AFTER a job-application form was submitted. Classify what "
+            "the page now shows into EXACTLY ONE of these values: "
+            "\"success\" (a confirmation the application was received/sent), "
+            "\"error\" (an error, rejection, or 'try again' message), "
+            "\"verification_gate\" (a captcha, email/OTP code entry, or human-verification challenge), "
+            "\"still_on_form\" (the application form is still visible, unsent). "
+            "Respond with exactly {\"classification\": \"<one of the four>\"} and nothing else."
+        )
+        try:
+            from ..llm import telemetry as _tele
+            _tele.set_label("agent_loop.visual_success")
+        except Exception:
+            pass
+        try:
+            obj = await self._llm.generate_json(
+                prompt="Classify the post-submit page.",
+                image_bytes=shot,
+                temperature=0.0,
+                timeout_s=STEP_TIMEOUT_S,
+                system=_system,
+            )
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] visual-success LLM call failed (non-fatal): {exc}")
+            return None
+        # Parse defensively — accept a dict with a "classification" key, or a
+        # bare string, and normalize to one of the four known labels.
+        raw = None
+        if isinstance(obj, dict):
+            raw = obj.get("classification") or obj.get("result") or obj.get("label")
+        elif isinstance(obj, str):
+            raw = obj
+        if not isinstance(raw, str):
+            return None
+        val = raw.strip().strip('"').lower()
+        for known in ("success", "error", "verification_gate", "still_on_form"):
+            if known in val:
+                return known
+        return None
 
     async def _human_delay(self, kind: str = "default") -> None:
         """Sleep a small randomized interval to mimic human pacing and reduce
@@ -3406,6 +3764,14 @@ class AgentLoop:
                 state_name, state_abbr = resolved
         salary = (p.get("salary_expectation") or "").strip()
         phone = (p.get("phone") or "").strip()
+        email = (p.get("email") or "").strip()
+        full_name = (
+            p.get("name")
+            or " ".join(x for x in [p.get("first_name", ""), p.get("last_name", "")] if x)
+        ).strip()
+        # Today's date, for signature-date fields (e.g. EEO disability signature).
+        from datetime import date as _date
+        today_mmddyyyy = _date.today().strftime("%m/%d/%Y")
 
         entries = [
             # dv01-style consent multi-select: "...your application acknowledges
@@ -3516,6 +3882,31 @@ class AgentLoop:
                 (r"\bphone\b|phone\s*number|mobile\s*number|\bmobile\b|cell\s*phone|contact\s+(number|phone)",
                  phone, [phone]),
             )
+        # Name / email — stable identity data, like phone. Fill them
+        # deterministically so the standard contact block ("Full name", "Email")
+        # doesn't cost one LLM turn each. Regexes are ANCHORED to the dedicated
+        # fields so they never touch "Preferred Name", "Name Pronunciation",
+        # "First/Last name", "Company name", or the "…URL" fields. The anchored
+        # `^…name$` also matches the EEO "Name" signature field — which SHOULD
+        # get the full name, so that's correct.
+        if full_name:
+            entries.append(
+                (r"^\s*(full\s+)?name\s*[✱*]?\s*$|enter\s+your\s+(full\s+)?name|applicant\s+name|candidate\s+name|legal\s+name",
+                 full_name, [full_name]),
+            )
+        if email:
+            entries.append(
+                (r"^\s*e-?mail(\s+address)?\s*[✱*]?\s*$|\byour\s+e-?mail\b",
+                 email, [email]),
+            )
+        # Signature DATE — a field labelled exactly "Date" (EEO disability
+        # signature date). Anchored so it never grabs "Start date" / "Available
+        # date" etc. Filling today deterministically both saves an LLM turn AND
+        # fixes the AI inventing a stale/wrong date for the signature.
+        entries.append(
+            (r"^\s*date\s*[✱*]?\s*$|signature\s*date|date\s+of\s+signature",
+             today_mmddyyyy, [today_mmddyyyy]),
+        )
         # dv01-style consent multi-select policy is inserted at the TOP of
         # `entries` above (priority over the generic acknowledge rule).
         return entries
@@ -4104,12 +4495,32 @@ class AgentLoop:
             else:
                 return False  # invisible/on-submit turnstile or non-captcha gate
 
+        # ── Per-step cost guard ──────────────────────────────────────────────
+        # This settle is invoked on EVERY loop turn. A Turnstile token is only
+        # consumed at SUBMIT (not during field-fill), lasts ~300s once issued,
+        # and on many boards (Lever, Greenhouse) the widget is PASSIVE — the
+        # form submits fine without a pre-populated token. Running the full
+        # managed-wait + CapSolver on every turn burned ~25s/turn and timed the
+        # run out before it ever reached Submit (Lever: 10 turns × ~35s = 360s
+        # wall-clock, aborted pre-submit). So throttle the expensive path to at
+        # most once per _TS_RETRY_S; in between, do a cheap token re-read only.
+        # A token acquired within the window is still valid at submit time.
+        import time as _t
+        _TS_RETRY_S = 90.0
+        _now = _t.monotonic()
+        _last = getattr(self, "_turnstile_last_attempt_ts", 0.0)
+        if _last and (_now - _last) < _TS_RETRY_S:
+            return len(await self._read_turnstile_token(ctx)) > 20
+        self._turnstile_last_attempt_ts = _now
+
         logger.info(
             "[AgentLoop] Cloudflare Turnstile widget detected — settling "
             "(managed-token wait → CapSolver fallback)…"
         )
-        import time as _t
-        deadline = _t.monotonic() + 25.0
+        # Managed token, when it comes, populates within a few seconds; a 25s
+        # wait per attempt was overkill. CapSolver below is the real fallback
+        # for boards that genuinely gate submit on the token.
+        deadline = _t.monotonic() + 8.0
         while _t.monotonic() < deadline:
             try:
                 for f in page.frames:
@@ -4148,6 +4559,48 @@ class AgentLoop:
             "solves reCAPTCHA — it cannot solve Turnstile."
         )
         return False
+
+    async def _solve_turnstile_flaresolverr(self, page: Page, ctx, flaresolverr_url: str) -> bool:
+        """Best-effort Cloudflare clearance via FlareSolverr.
+
+        FlareSolverr solves Cloudflare interstitials / "Just a moment" gates
+        (including the managed-Turnstile page-gate) by running its own browser
+        and returning clearance cookies bound to (egress IP, UA). It does NOT
+        mint a token for a standalone Turnstile *widget*, so this helps only
+        when the Turnstile is a Cloudflare page-gate. We inject the returned
+        cookies, reload, and report whether a token materialized.
+
+        Previously this method was REFERENCED in _settle_turnstile but never
+        defined — calling it raised AttributeError (caught upstream, logged at
+        debug) whenever FLARESOLVERR_URL was set. This is the real implementation.
+        Non-fatal: returns False on any failure.
+        """
+        try:
+            from ..browser.flaresolverr import clear_cloudflare, to_playwright_cookies
+        except Exception:
+            return False
+        try:
+            result = await clear_cloudflare(page.url)
+            if not result:
+                return False
+            cookies = to_playwright_cookies(result.get("cookies") or [])
+            if cookies:
+                try:
+                    await page.context.add_cookies(cookies)
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] FlareSolverr cookie inject failed: {exc}")
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=20_000)
+            except Exception:
+                pass
+            token = await self._read_turnstile_token(ctx)
+            if len(token) > 20:
+                logger.info("[AgentLoop] Turnstile token present after FlareSolverr clearance")
+                return True
+            return False
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] FlareSolverr turnstile attempt failed: {exc}")
+            return False
 
     async def _solve_turnstile_capsolver(self, page: Page, ctx, key: str) -> bool:
         """Solve Cloudflare Turnstile via the CapSolver.com REST API
@@ -4286,7 +4739,7 @@ class AgentLoop:
             return False
         try:
             code = await fetch_verification_code(
-                self.candidate_id, after_epoch=after_epoch, timeout_s=90.0
+                self.candidate_id, after_epoch=after_epoch, timeout_s=None
             )
         except Exception as exc:
             if "GMAIL_AUTH_FAILED" in str(exc):
@@ -4355,6 +4808,10 @@ class AgentLoop:
         prev_dom_hash = ""
         page_verified = False
         is_iframe_mode = frame is not None
+        # Overlay-reflex fuel: consecutive turns where _dismiss_overlays found
+        # nothing. Once it misses 3 turns in a row we stop calling it so pages
+        # without CMP banners don't pay the locator probes every single step.
+        overlay_reflex_misses = 0
 
         # ── Backward-navigation guard state ──────────────────────────────
         # Multi-step ATS flows (iCIMS, Workday, LinkedIn) move FORWARD only:
@@ -4398,6 +4855,33 @@ class AgentLoop:
         page.on("frameattached", on_frame_attached)
         page.on("framenavigated", on_frame_navigated)
         page.on("framedetached", on_frame_detached)
+        # Every page that got the frame-lifecycle listeners above — a tab
+        # switch (see the popup handling at the top of the step loop) installs
+        # them on the new page too, and the finally block removes them from
+        # every page in this list.
+        _frame_listener_pages: List[Any] = [page]
+
+        # ── Multi-tab / popup handling ──────────────────────────────────────
+        # Some Apply buttons open the real application form in a NEW tab
+        # (target=_blank). Without this the loop keeps screenshotting the old
+        # job-listing tab forever and goes STUCK. The context listener only
+        # RECORDS the popup; the actual switch happens synchronously at the
+        # top of the step loop so the working `page` reference never changes
+        # mid-action.
+        original_page = page
+        _popup_state: Dict[str, Any] = {"pending": None}
+
+        def _on_context_page(new_pg: Any) -> None:
+            _popup_state["pending"] = new_pg
+            try:
+                logger.info(f"[AgentLoop] new tab/popup opened (url={new_pg.url!r})")
+            except Exception:
+                pass
+
+        try:
+            page.context.on("page", _on_context_page)
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] popup listener install failed (non-fatal): {exc}")
 
         # ── Pre-loop: dismiss cookie / consent banners ──────────────────────
         # Cookie banners (OneTrust, Cookiebot, Osano, TrustArc, etc.) overlay
@@ -4565,10 +5049,90 @@ class AgentLoop:
                         steps_taken=step,
                         actions=actions,
                     )
+
+                # ── Multi-tab switch check ───────────────────────────────────
+                # A click last turn may have opened the real flow in a new tab
+                # (recorded by the context "page" listener). Switch the working
+                # page reference so screenshots, DOM snapshots and actions all
+                # target the new tab. Skipped in iframe mode: there the actions
+                # and snapshots are bound to `frame` (which lives in the
+                # ORIGINAL page), so switching only the page would desync
+                # perception from action.
+                _new_pg = _popup_state.get("pending")
+                if _new_pg is not None:
+                    _popup_state["pending"] = None
+                    try:
+                        if not _new_pg.is_closed():
+                            try:
+                                await _new_pg.wait_for_load_state(
+                                    "domcontentloaded", timeout=8000
+                                )
+                            except Exception:
+                                pass  # slow tab — judge it by whatever URL it has now
+                            _new_url = _new_pg.url or ""
+                            if not _new_url or _new_url == "about:blank":
+                                logger.info(
+                                    "[AgentLoop] new tab stayed blank — ignoring it"
+                                )
+                            elif is_iframe_mode:
+                                logger.info(
+                                    f"[AgentLoop] new tab ({_new_url}) ignored — loop is "
+                                    "iframe-scoped to the original page"
+                                )
+                            else:
+                                logger.info(f"[AgentLoop] switched to new tab: {_new_url}")
+                                page = _new_pg
+                                # Re-arm the overlay reflex: the new tab may
+                                # render its own cookie/consent banner.
+                                overlay_reflex_misses = 0
+                                _frame_listener_pages.append(page)
+                                page.on("frameattached", on_frame_attached)
+                                page.on("framenavigated", on_frame_navigated)
+                                page.on("framedetached", on_frame_detached)
+                                try:
+                                    visited_urls.add(_norm_url(page.url))
+                                except Exception:
+                                    pass
+                                try:
+                                    await page.bring_to_front()
+                                except Exception:
+                                    pass
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] tab-switch check failed (non-fatal): {exc}")
+
+                # If the tab we switched to has since closed (some flows open a
+                # transient window that closes itself), fall back to the
+                # original page rather than driving a dead handle.
+                try:
+                    if page is not original_page and page.is_closed():
+                        logger.info(
+                            "[AgentLoop] working tab closed — falling back to original page"
+                        )
+                        page = original_page
+                except Exception:
+                    pass
+
                 if transition_state["is_transitioning"]:
                     from ..frame_utils import wait_for_stability
                     await wait_for_stability(page, frame, is_iframe_mode)
                     transition_state["is_transitioning"] = False
+                    # Re-arm the overlay reflex on a main-frame navigation: a
+                    # CMP banner that re-renders after an Apply-click route
+                    # change must still be dismissed even if the reflex had
+                    # gone quiet after 3 prior no-op turns.
+                    overlay_reflex_misses = 0
+
+                # ── Phase 5.1: dynamic platform re-detection ─────────────────
+                # After any tab-switch / navigation has settled (above), the
+                # working page may now point at the REAL ATS form even though
+                # we started on an aggregator or redirect. Re-classify the
+                # platform from the current URL (pure string mapping, no LLM)
+                # and swap in that ATS's hints/playbook if it truly changed.
+                # No-ops post-submit / in iframe mode / when the host is
+                # unchanged — see _maybe_reclassify_platform for the guards.
+                await self._maybe_reclassify_platform(
+                    page, submit_fired=submit_fired, is_iframe_mode=is_iframe_mode
+                )
 
                 # ── Check frame attachment ──
                 live_frame = None
@@ -4775,6 +5339,59 @@ class AgentLoop:
                                     steps_taken=step,
                                     actions=actions,
                                 )
+                            # ── Phase 5.2: visual success classification ─────
+                            # We are now at the INCONCLUSIVE point: submit has
+                            # fired, no OTP wall appeared, and no rejection
+                            # banner matched — the ONLY current signal for
+                            # SUBMITTED is "absence of a code screen", which is
+                            # a false positive when the server silently kept us
+                            # on the form or showed a visual-only error/captcha
+                            # the text scan didn't catch. Break the tie with ONE
+                            # vision classification (gated, ≤2/run). This does
+                            # NOT touch the confident-success/failure fast paths
+                            # above — it only refines this ambiguous branch.
+                            _visual = await self._classify_submit_visual(page)
+                            if _visual == "error" or _visual == "still_on_form":
+                                # The page is visually NOT a confirmation —
+                                # don't declare SUBMITTED on absence-of-OTP
+                                # alone. Reset the confirm-turn counter and give
+                                # the flow another turn to resolve (bounded by
+                                # the wall-clock + the ≤2 classifier cap, after
+                                # which _classify_submit_visual returns None and
+                                # the existing SUBMITTED path below resumes).
+                                logger.info(
+                                    f"[AgentLoop] POST-SUBMIT: visual classifier says "
+                                    f"'{_visual}' — NOT treating as SUBMITTED yet; re-observing."
+                                )
+                                post_submit_no_code_turns = 0
+                                await asyncio.sleep(2.0)
+                                continue
+                            if _visual == "verification_gate":
+                                # A captcha / code / human-verification screen
+                                # the text scan missed. Fall through to the loop
+                                # so the post-submit verification phase (top of
+                                # the next iteration) can detect + handle it.
+                                logger.info(
+                                    "[AgentLoop] POST-SUBMIT: visual classifier detected a "
+                                    "verification_gate — deferring to verification handling."
+                                )
+                                post_submit_no_code_turns = 0
+                                await asyncio.sleep(2.0)
+                                continue
+                            if _visual == "success":
+                                logger.info(
+                                    "[AgentLoop] POST-SUBMIT: visual classifier confirms "
+                                    "success — returning SUBMITTED (visual_success_classification)."
+                                )
+                                return LoopResult(
+                                    success=True,
+                                    status="SUBMITTED",
+                                    confirmation="visual_success_classification",
+                                    steps_taken=step,
+                                    actions=actions,
+                                )
+                            # _visual is None (disabled / call failed / cap hit /
+                            # unparseable) → keep the EXISTING behavior unchanged.
                             logger.info(
                                 "[AgentLoop] POST-SUBMIT: no verification wall after "
                                 "2 turns — application submitted. Returning SUBMITTED."
@@ -4871,6 +5488,22 @@ class AgentLoop:
                     await self._settle_turnstile(page, live_frame or frame)
                 except Exception as exc:
                     logger.debug(f"[AgentLoop] turnstile settle non-fatal: {exc}")
+
+                # ── Overlay auto-dismissal reflex (pre-LLM, deterministic) ───
+                # Cookie/consent banners re-render after in-page navigations
+                # (Apply click → form route) — clear them BEFORE the screenshot
+                # so the AI never sees (or tries to interact with) them. Stops
+                # probing after 3 consecutive turns with nothing to dismiss.
+                if overlay_reflex_misses < 3:
+                    try:
+                        if await _dismiss_overlays(page):
+                            overlay_reflex_misses = 0
+                            await asyncio.sleep(0.5)  # let the banner animate out
+                        else:
+                            overlay_reflex_misses += 1
+                    except Exception as exc:
+                        logger.debug(f"[AgentLoop] overlay reflex failed (non-fatal): {exc}")
+                        overlay_reflex_misses += 1
 
                 # ── Capture perception ──────────────────────────────────────────
                 # Lever 1 (cost optimization): if the DOM hasn't changed since
@@ -5115,6 +5748,60 @@ class AgentLoop:
                     return bool(re.search(r"submit|apply|send application", s, re.I))
 
                 if _is_submit_click(action):
+                    # ── LinkedIn-URL policy enforcement (last line of defence) ──
+                    # The pre-fill and memory overrides already rewrite LinkedIn
+                    # fields to the policy value, but a real URL could still
+                    # reach a field via browser autofill or a React re-render
+                    # reverting our value. Scan every text/url field one final
+                    # time RIGHT before submit and rewrite any non-policy value,
+                    # using the React-aware native setter so controlled inputs
+                    # actually update. No-op when nothing matches / already clean.
+                    try:
+                        _li_policy = _linkedin_policy_value(self.profile)
+                        _li_ctx = live_frame or page
+                        _rewrote = await _li_ctx.evaluate(
+                            """(target) => {
+                                const isLI = (el) => {
+                                    let hay = ((el.getAttribute('aria-label')||'') + ' '
+                                        + (el.name||'') + ' ' + (el.id||'') + ' '
+                                        + (el.placeholder||'')).toLowerCase();
+                                    if (el.id) {
+                                        const l = document.querySelector('label[for="'+el.id+'"]');
+                                        if (l) hay += ' ' + (l.textContent||'').toLowerCase();
+                                    }
+                                    if (!hay.includes('linkedin')) return false;
+                                    if (/website|portfolio|github/.test(hay)) return false;
+                                    return true;
+                                };
+                                let n = 0;
+                                document.querySelectorAll(
+                                    'input[type="text"], input[type="url"], input:not([type]), textarea'
+                                ).forEach(el => {
+                                    if (!isLI(el)) return;
+                                    const v = (el.value||'').trim();
+                                    if (v && v.toUpperCase() !== target.toUpperCase()) {
+                                        const proto = el.tagName === 'TEXTAREA'
+                                            ? window.HTMLTextAreaElement.prototype
+                                            : window.HTMLInputElement.prototype;
+                                        const setter = Object.getOwnPropertyDescriptor(proto, 'value').set;
+                                        setter.call(el, target);
+                                        el.dispatchEvent(new Event('input', {bubbles:true}));
+                                        el.dispatchEvent(new Event('change', {bubbles:true}));
+                                        n++;
+                                    }
+                                });
+                                return n;
+                            }""",
+                            _li_policy,
+                        )
+                        if _rewrote:
+                            logger.warning(
+                                f"[AgentLoop] Pre-submit LinkedIn policy: rewrote "
+                                f"{_rewrote} field(s) to {_li_policy!r} before submit."
+                            )
+                    except Exception as _li_exc:
+                        logger.debug(f"[AgentLoop] pre-submit LinkedIn scan skipped: {_li_exc}")
+
                     prior_submits = sum(1 for a in actions if _is_submit_click(a))
                     # Hard cap: 3 submit attempts total. Past that, the server
                     # is rejecting for reasons the AI can't fix from the DOM
@@ -5918,7 +6605,8 @@ class AgentLoop:
                             try:
                                 logger.info(
                                     "[AgentLoop] Lever: trying hcaptcha-challenger "
-                                    "(AgentV) before falling back to nopecha."
+                                    "(AgentV) — the only integrated hCaptcha solver "
+                                    "that runs (NopeCHA fallback requires NOPECHA_API_KEY)."
                                 )
                                 from hcaptcha_challenger.models import ChallengeSignal
                                 # 100s, not 60s: live runs showed a successful
@@ -6029,8 +6717,8 @@ class AgentLoop:
                                     pass
                                 # Whether or not we salvaged from cr_list, give
                                 # Lever's own invisible resolution one more
-                                # chance to populate the input before falling
-                                # to the deterministic (NopeCHA / fail) path.
+                                # chance to populate the input before failing
+                                # (no keyless fallback remains — see below).
                                 if not _hc_value:
                                     for _post_tick in range(10):  # up to 5s more
                                         await asyncio.sleep(0.5)
@@ -6050,44 +6738,34 @@ class AgentLoop:
                                             )
                                             break
                         if _hc_value is not None and not _hc_value:
-                            logger.info(
-                                "[AgentLoop] Lever: submit clicked but hCaptcha token not "
-                                "set — solving hCaptcha deterministically."
+                            # No token from AgentV (hcaptcha-challenger) or from
+                            # Lever's own invisible resolution. We deliberately do
+                            # NOT fall back to a paid token farm here:
+                            #   • CapSolver's account returns "We don't support
+                            #     this service" for hCaptcha (confirmed live), so
+                            #     the global CAPTCHA_PROVIDER can't help.
+                            #   • NopeCHA needs NOPECHA_API_KEY, which isn't
+                            #     configured — the old CaptchaService(provider=
+                            #     "nopecha") fallback just burned 3 failing
+                            #     attempts + log noise on every submit and never
+                            #     produced a token.
+                            # hcaptcha-challenger (AgentV, Gemini-vision) is the
+                            # only integrated hCaptcha solver that actually runs.
+                            # When it can't produce a token, the reliable fix is a
+                            # residential PROXY_URL (Lever's invisible hCaptcha then
+                            # passes with no challenge) or a NOPECHA_API_KEY — not
+                            # another keyless farm call. Report submit-not-completed.
+                            logger.warning(
+                                "[AgentLoop] Lever: hCaptcha token not obtained "
+                                "(AgentV / invisible resolution did not yield one, and "
+                                "no configured token solver supports Lever hCaptcha). "
+                                "Submission did NOT go through this attempt. Set a "
+                                "residential PROXY_URL or NOPECHA_API_KEY to clear this gate."
                             )
-                            from ..captcha.service import CaptchaService
-                            # Hard-coded to nopecha (not the global CAPTCHA_PROVIDER)
-                            # deliberately: CapSolver's account doesn't support
-                            # hCaptcha on this site ("we don't support this
-                            # service" — confirmed live). NopeCHA solves the
-                            # actual widget via local AI, not a generic token
-                            # farm, and its Token API explicitly targets
-                            # invisible/programmatic hcaptcha.execute() sites
-                            # like Lever's. Scoped to this Lever-only call site
-                            # so Greenhouse/Ashby/Talent/Dice's already-validated
-                            # CapSolver-based flows are untouched.
-                            _captcha_svc = CaptchaService(provider="nopecha")
-                            _solution = await _captcha_svc.solve(page, "hcaptcha")
-                            if _solution.success and _solution.token:
-                                await _hc_ctx.evaluate(
-                                    """(token) => {
-                                        const el = document.getElementById('hcaptchaResponseInput');
-                                        if (el) {
-                                            el.value = token;
-                                            el.dispatchEvent(new Event('change', {bubbles: true}));
-                                        }
-                                    }""",
-                                    _solution.token,
-                                )
-                                _hc_value = _solution.token
-                            else:
-                                logger.warning(
-                                    "[AgentLoop] Lever: hCaptcha solve failed — submission "
-                                    "did not go through this attempt."
-                                )
-                                ok = False
-                                action.ok = False
+                            ok = False
+                            action.ok = False
                         # Regardless of which path produced the token (Lever's own
-                        # natural invisible resolution, AgentV, or NopeCHA), Lever's
+                        # natural invisible resolution or AgentV), Lever's
                         # onSuccess callback that would normally auto-click the real
                         # hidden submit button is unreachable from outside (scoped
                         # inside a closure, not window.onSuccess) — so ANY genuine
@@ -6614,6 +7292,17 @@ class AgentLoop:
                 actions=actions,
             )
         finally:
-            page.remove_listener("frameattached", on_frame_attached)
-            page.remove_listener("framenavigated", on_frame_navigated)
-            page.remove_listener("framedetached", on_frame_detached)
+            # The working `page` may have been rebound to a popup tab —
+            # remove the frame-lifecycle listeners from EVERY page they were
+            # installed on, not just the current one.
+            for _pg in _frame_listener_pages:
+                try:
+                    _pg.remove_listener("frameattached", on_frame_attached)
+                    _pg.remove_listener("framenavigated", on_frame_navigated)
+                    _pg.remove_listener("framedetached", on_frame_detached)
+                except Exception:
+                    pass
+            try:
+                original_page.context.remove_listener("page", _on_context_page)
+            except Exception:
+                pass

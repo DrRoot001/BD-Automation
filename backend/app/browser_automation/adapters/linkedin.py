@@ -76,9 +76,20 @@ class LinkedInEasyApplyAdapter(BasePlatformAdapter):
         except Exception:
             content = ""
         if any(h in content[:6_000] for h in _AUTH_WALL_HINTS):
+            # We hit an auth wall despite whatever session was restored, so the
+            # persisted LinkedIn session is stale. LinkedIn has no automated
+            # login here (storage_state is seeded manually), so clear the dead
+            # file — the next re-seed then starts clean instead of merging with
+            # expired cookies — and surface an actionable LOGIN_REQUIRED error.
+            try:
+                from .session_utils import invalidate_session_file
+                invalidate_session_file("linkedin")
+            except Exception:
+                pass
             raise RuntimeError(
-                "BLOCKED: LinkedIn requires an authenticated session. "
-                "Seed cookies via context_manager.save_session() for this candidate."
+                "LOGIN_REQUIRED: LinkedIn session expired or unauthenticated. "
+                "Stale session file cleared — re-seed cookies via "
+                "context_manager.save_session() for this candidate."
             )
 
         # Open Easy Apply modal

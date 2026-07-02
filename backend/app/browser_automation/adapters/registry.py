@@ -3,7 +3,9 @@ from .base import BasePlatformAdapter
 from .builtin import BuiltInAdapter
 from .dice import DiceAdapter
 from .generic import GenericFormAdapter
+from .glassdoor import GlassdoorAdapter
 from .greenhouse import GreenhouseAdapter
+from .himalayas import HimalayasAdapter
 from .icims import ICIMSAdapter
 from .indeed import IndeedAdapter
 from .lever import LeverAdapter
@@ -11,6 +13,7 @@ from .linkedin import LinkedInEasyApplyAdapter
 from .remoterocketship import RemoteRocketshipAdapter
 from .talent import TalentAdapter
 from .workday import WorkdayAdapter
+from .ziprecruiter import ZipRecruiterAdapter
 
 
 ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
@@ -26,6 +29,16 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "dice": DiceAdapter,
     "talent": TalentAdapter,
     "builtin": BuiltInAdapter,
+    "glassdoor": GlassdoorAdapter,
+    "ziprecruiter": ZipRecruiterAdapter,
+    "himalayas": HimalayasAdapter,
+    # Pure aggregators — the RemoteRocketship passthrough (scrape the ATS
+    # link off the listing, delegate to the inner ATS adapter) handles them.
+    "remoteok": RemoteRocketshipAdapter,
+    "adzuna": RemoteRocketshipAdapter,
+    "hiringcafe": RemoteRocketshipAdapter,
+    "thehiring.cafe": RemoteRocketshipAdapter,
+    "thehiringcafe": RemoteRocketshipAdapter,
     "generic": GenericFormAdapter,
 }
 
@@ -61,4 +74,18 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
             cls = TalentAdapter
         elif "builtin.com" in key or "builtin" in normalized:
             cls = BuiltInAdapter
+        elif "glassdoor" in normalized:
+            cls = GlassdoorAdapter
+        elif "ziprecruiter" in normalized:
+            cls = ZipRecruiterAdapter
+        elif "himalayas.app" in key or "himalayas" in normalized:
+            cls = HimalayasAdapter
+        # Aggregators → RemoteRocketship passthrough. "hiringcafe" only
+        # matches after dot-stripping ("thehiring.cafe" → "thehiringcafe").
+        elif "remoteok.com" in key or "remoteok" in normalized:
+            cls = RemoteRocketshipAdapter
+        elif "adzuna" in normalized:
+            cls = RemoteRocketshipAdapter
+        elif "thehiring.cafe" in key or "hiringcafe" in normalized.replace(".", ""):
+            cls = RemoteRocketshipAdapter
     return (cls or GenericFormAdapter)()

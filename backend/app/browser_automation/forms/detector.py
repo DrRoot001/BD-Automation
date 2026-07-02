@@ -203,6 +203,11 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
     has_file_upload = False
     seen_selectors = set()  # Deduplicate
     radio_groups: Dict[str, dict] = {}  # name -> {label, options, required, selector}
+    # name -> list of per-checkbox {el, value, label, required}. A name with 2+
+    # entries is a multi-select group ("select all that apply"); a name with 1
+    # entry is a plain boolean checkbox (consent/terms) and is emitted exactly
+    # as the single-checkbox path did before this consolidation.
+    checkbox_groups: Dict[str, list] = {}
 
     for el in elements:
         # Skip hidden inputs (except file inputs which are often hidden for styling)
@@ -288,6 +293,39 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
                 radio_groups[name_attr]["options"].append(visible_text or value_attr)
             continue
 
+        # ── Special handling for checkboxes with a shared name: defer, then
+        #    consolidate post-loop. A single named checkbox is re-emitted as a
+        #    plain boolean field (identical to the old behavior); 2+ sharing a
+        #    name become one multi-select group. Unnamed checkboxes fall through
+        #    to the generic per-element path below (unchanged). ──
+        if type_attr == "checkbox" and name_attr:
+            value_attr = await el.get_attribute("value") or ""
+            req_attr = await el.get_attribute("required")
+            aria_req = await el.get_attribute("aria-required")
+            # Visible option label (wrapping <label> text / adjacent sibling).
+            visible_text = await el.evaluate("""el => {
+                let lbl = el.closest('label');
+                if (lbl) {
+                    let clone = lbl.cloneNode(true);
+                    clone.querySelectorAll('input').forEach(c => c.remove());
+                    let t = clone.textContent.trim();
+                    if (t.length > 0) return t;
+                }
+                let next = el.nextSibling;
+                if (next && next.nodeType === 3 && next.textContent.trim())
+                    return next.textContent.trim();
+                if (next && next.nodeType === 1)
+                    return next.textContent.trim();
+                return '';
+            }""")
+            checkbox_groups.setdefault(name_attr, []).append({
+                "el": el,
+                "value": value_attr,
+                "label": visible_text or value_attr,
+                "required": (req_attr is not None) or (aria_req == "true"),
+            })
+            continue
+
         # ── Extract label using multi-strategy engine ──
         label_text = await _extract_label_for_element(page, el, id_attr, name_attr, aria_label)
 
@@ -365,6 +403,48 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
         ))
         logger.debug(f"Detected radio group: name='{name}', label='{group['label']}', "
                      f"options={group['options']}, values={group.get('values')}, required={group['required']}")
+
+    # ── Emit checkbox fields: multi-select groups vs single booleans ──
+    for name, members in checkbox_groups.items():
+        selector = f"input[name='{name}']"
+        if selector in seen_selectors:
+            continue
+        seen_selectors.add(selector)
+        if len(members) >= 2:
+            # Multi-select "select all that apply" group.
+            group_label = await _extract_radio_group_label(page, members[0]["el"])
+            options = [m["label"] for m in members if m["label"]]
+            values = [m["value"] for m in members if m["value"]]
+            required = any(m["required"] for m in members) or ("*" in (group_label or ""))
+            fields.append(FormField(
+                selector=selector,
+                field_type="checkbox",
+                label=(group_label or name),
+                required=required,
+                options=options or None,
+                raw_values=values or None,
+                multi_select=True,
+            ))
+            logger.debug(f"Detected checkbox group: name='{name}', label='{group_label}', "
+                         f"options={options}, values={values}, required={required}")
+        else:
+            # Lone named checkbox → boolean field, same shape as the pre-existing
+            # single-checkbox path (label via the full multi-strategy engine).
+            el = members[0]["el"]
+            id_attr = await el.get_attribute("id") or ""
+            aria_label = await el.get_attribute("aria-label") or ""
+            label_text = await _extract_label_for_element(page, el, id_attr, name, aria_label)
+            required = members[0]["required"] or ("*" in label_text)
+            single_selector = f"#{id_attr}" if id_attr else selector
+            fields.append(FormField(
+                selector=single_selector,
+                field_type="checkbox",
+                label=label_text.strip(),
+                required=required,
+                options=None,
+            ))
+            logger.debug(f"Detected checkbox: name='{name}', label='{label_text.strip()}', "
+                         f"selector='{single_selector}', required={required}")
 
     # ── Detect Greenhouse-style React-Select custom dropdowns ─────────────────
     # Greenhouse hides the real input (visibility:hidden) and renders a div with
@@ -487,11 +567,60 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
         form_type = "EXTERNAL_FORM"
 
     # ── Detect multi-step ──
+    # Best-effort dynamic step count. Order of confidence:
+    #   1. An explicit "Step N of M" / "Step N / M" progress caption (most ATS
+    #      wizards render one) — gives both current and total exactly.
+    #   2. A visible progress rail: count discrete step/progress markers.
+    #   3. Presence of a Next/Continue button with no countable rail → at least
+    #      2 steps, but total unknown (kept as a floor, not a guess).
     steps = 1
     current_step = 1
-    next_btn = await page.query_selector("button:has-text('Next')")
-    if next_btn:
-        steps = 2  # Placeholder for actual step detection
+    try:
+        step_info = await page.evaluate(r"""() => {
+            const bodyText = (document.body && document.body.innerText || '');
+            // "Step 2 of 5", "Step 2 / 5", "2 of 5", "2/5"
+            const m = bodyText.match(/(?:step\s+)?(\d{1,2})\s*(?:of|\/)\s*(\d{1,2})/i);
+            if (m) {
+                const cur = parseInt(m[1], 10), tot = parseInt(m[2], 10);
+                if (tot >= 1 && tot <= 30 && cur >= 1 && cur <= tot) {
+                    return {total: tot, current: cur, source: 'caption'};
+                }
+            }
+            // Progress rail: elements that look like discrete step markers.
+            const railSel = [
+                '[class*="progress"] [class*="step"]',
+                'ol[class*="step"] > li', 'ul[class*="step"] > li',
+                '[data-step]', '[class*="stepper"] [class*="step"]',
+                '[role="tablist"][aria-label*="step" i] [role="tab"]',
+            ].join(', ');
+            const nodes = Array.from(document.querySelectorAll(railSel))
+                .filter(n => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0; });
+            if (nodes.length >= 2 && nodes.length <= 30) {
+                // Current = index of the marker flagged active/current, else 1.
+                let cur = 1;
+                nodes.forEach((n, i) => {
+                    const c = (n.className || '') + ' ' + (n.getAttribute('aria-current') || '')
+                        + ' ' + (n.getAttribute('aria-selected') || '');
+                    if (/active|current|selected|true/i.test(c)) cur = i + 1;
+                });
+                return {total: nodes.length, current: cur, source: 'rail'};
+            }
+            return null;
+        }""")
+    except Exception as exc:
+        logger.debug(f"Multi-step detection error (non-fatal): {exc}")
+        step_info = None
+
+    if step_info:
+        steps = step_info["total"]
+        current_step = step_info["current"]
+        logger.debug(f"Multi-step detected: {current_step}/{steps} (via {step_info['source']})")
+    else:
+        next_btn = await page.query_selector(
+            "button:has-text('Next'), button:has-text('Continue')"
+        )
+        if next_btn:
+            steps = 2  # multi-step, exact total unknown (floor of 2)
 
     # ── Detect captcha ──
     has_captcha = False
