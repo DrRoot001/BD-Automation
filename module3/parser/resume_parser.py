@@ -148,107 +148,108 @@ async def parse_resume(file_path: str, candidate_id: Optional[str] = None, resum
     """Parse a PDF resume into structured ResumeData using Gemini API. Handles both text and image-based PDFs."""
     temp_file_path = None
     original_url = file_path
-    if file_path.startswith("http://") or file_path.startswith("https://"):
-        print(f"Downloading remote resume: {file_path}")
-        import httpx
-        import tempfile
-        try:
-            # httpx defaults to a 5s timeout; Supabase storage can be slower than
-            # that on a cold object, which spuriously fails the download. Use a
-            # generous timeout with follow_redirects for public-bucket URLs.
-            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
-                resp = await client.get(file_path)
-                resp.raise_for_status()
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                    tmp.write(resp.content)
-                    temp_file_path = tmp.name
-            file_path = temp_file_path
-        except Exception as e:
-            raise FileNotFoundError(f"Failed to download remote resume from {file_path}: {e}")
-            
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Resume file not found at: {file_path}")
-        
-    print(f"Extracting text from PDF resume: {file_path}...")
-    raw_text = ""
     try:
-        raw_text = extract_pdf_text(file_path)
-    except Exception as e:
-        print(f"pdfplumber failed to extract text: {e}. Falling back to image rendering.")
-        raw_text = ""
-
-    from module3.utils.gemini import generate_content_with_retry
-
-    prompt = (
-        "You are an expert resume parsing system. Analyze the following candidate's resume "
-        "and structure it into the requested JSON schema. Make sure to ground all work experience, dates, "
-        "institution names, and degrees strictly in the provided content. Do not make up any certifications, "
-        "work experience, or education details. For the skills section, extract all skills/keywords "
-        "by preserving their original categories (e.g. 'Salesforce Clouds', 'DevOps & Deployment') "
-        "under `skills_categorized`, and also populate a flattened list of all unique skills under `skills`. "
-        "For experience descriptions, split any bullet points and populate them in the `bullets` list, "
-        "and combine/keep them in the `description` string."
-    )
-
-    # Decide if we need multimodal parsing
-    if len(raw_text.strip()) < 100:
-        print(f"Extracted text length is low ({len(raw_text)} chars). Rendering PDF pages as images for multimodal parsing...")
-        try:
-            images = render_pdf_to_images(file_path)
-            contents = [prompt] + images
+        if file_path.startswith("http://") or file_path.startswith("https://"):
+            print(f"Downloading remote resume: {file_path}")
+            import httpx
+            import tempfile
+            try:
+                # httpx defaults to a 5s timeout; Supabase storage can be slower than
+                # that on a cold object, which spuriously fails the download. Use a
+                # generous timeout with follow_redirects for public-bucket URLs.
+                async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+                    resp = await client.get(file_path)
+                    resp.raise_for_status()
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                        tmp.write(resp.content)
+                        temp_file_path = tmp.name
+                file_path = temp_file_path
+            except Exception as e:
+                raise FileNotFoundError(f"Failed to download remote resume from {file_path}: {e}")
+                
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Resume file not found at: {file_path}")
             
+        print(f"Extracting text from PDF resume: {file_path}...")
+        raw_text = ""
+        try:
+            raw_text = await asyncio.to_thread(extract_pdf_text, file_path)
+        except Exception as e:
+            print(f"pdfplumber failed to extract text: {e}. Falling back to image rendering.")
+            raw_text = ""
+
+        from module3.utils.gemini import generate_content_with_retry
+
+        prompt = (
+            "You are an expert resume parsing system. Analyze the following candidate's resume "
+            "and structure it into the requested JSON schema. Make sure to ground all work experience, dates, "
+            "institution names, and degrees strictly in the provided content. Do not make up any certifications, "
+            "work experience, or education details. For the skills section, extract all skills/keywords "
+            "by preserving their original categories (e.g. 'Salesforce Clouds', 'DevOps & Deployment') "
+            "under `skills_categorized`, and also populate a flattened list of all unique skills under `skills`. "
+            "For experience descriptions, split any bullet points and populate them in the `bullets` list, "
+            "and combine/keep them in the `description` string."
+        )
+
+        # Decide if we need multimodal parsing
+        if len(raw_text.strip()) < 100:
+            print(f"Extracted text length is low ({len(raw_text)} chars). Rendering PDF pages as images for multimodal parsing...")
+            try:
+                images = await asyncio.to_thread(render_pdf_to_images, file_path)
+                contents = [prompt] + images
+                
+                response = await generate_content_with_retry(
+                    contents=contents,
+                    response_schema=ResumeSection,
+                    temperature=0.1
+                )
+                
+                # Since text was missing/empty, let's set raw_text to a placeholder or the parsed summary
+                raw_text = f"[Image-Based PDF parsed multimodally]"
+            except Exception as img_err:
+                print("Failed to run image rendering or generate content:", img_err)
+                raise ValueError(f"Multimodal parsing failed: {img_err}")
+        else:
+            print("Using extracted text for parsing...")
+            full_prompt = f"{prompt}\n\n--- RAW RESUME TEXT ---\n{raw_text}\n--- END RAW TEXT ---"
             response = await generate_content_with_retry(
-                contents=contents,
+                contents=full_prompt,
                 response_schema=ResumeSection,
                 temperature=0.1
             )
-            
-            # Since text was missing/empty, let's set raw_text to a placeholder or the parsed summary
-            raw_text = f"[Image-Based PDF parsed multimodally]"
-        except Exception as img_err:
-            print("Failed to run image rendering or generate content:", img_err)
-            raise ValueError(f"Multimodal parsing failed: {img_err}")
-    else:
-        print("Using extracted text for parsing...")
-        full_prompt = f"{prompt}\n\n--- RAW RESUME TEXT ---\n{raw_text}\n--- END RAW TEXT ---"
-        response = await generate_content_with_retry(
-            contents=full_prompt,
-            response_schema=ResumeSection,
-            temperature=0.1
-        )
-    
-    # Parse the JSON response
-    try:
-        data = json.loads(response.text)
-        sections = ResumeSection(**data)
-    except Exception as e:
-        print("Failed to parse Gemini output as ResumeSection:", e)
-        print("Raw response:", response.text)
-        raise ValueError(f"Failed to structure resume data: {e}")
-
-    contact_fallbacks = _extract_contact_fallbacks(raw_text)
-    for field, value in contact_fallbacks.items():
-        if value and not getattr(sections, field, None):
-            setattr(sections, field, value)
         
-    # Calculate file hash for idempotency if a valid file path was provided
-    file_hash = None
-    if os.path.exists(file_path):
-        import hashlib
-        with open(file_path, "rb") as f:
-            file_hash = hashlib.sha256(f.read()).hexdigest()
-            
-    if temp_file_path and os.path.exists(temp_file_path):
+        # Parse the JSON response
         try:
-            os.remove(temp_file_path)
-        except OSError:
-            pass
+            data = json.loads(response.text)
+            sections = ResumeSection(**data)
+        except Exception as e:
+            print("Failed to parse Gemini output as ResumeSection:", e)
+            print("Raw response:", response.text)
+            raise ValueError(f"Failed to structure resume data: {e}")
+
+        contact_fallbacks = _extract_contact_fallbacks(raw_text)
+        for field, value in contact_fallbacks.items():
+            if value and not getattr(sections, field, None):
+                setattr(sections, field, value)
             
-    return ResumeData(
-        candidate_id=candidate_id,
-        resume_id=resume_id,
-        file_url=original_url,
-        file_hash=file_hash,
-        sections=sections,
-        raw_text=raw_text
-    )
+        # Calculate file hash for idempotency if a valid file path was provided
+        file_hash = None
+        if os.path.exists(file_path):
+            import hashlib
+            with open(file_path, "rb") as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+                
+        return ResumeData(
+            candidate_id=candidate_id,
+            resume_id=resume_id,
+            file_url=original_url,
+            file_hash=file_hash,
+            sections=sections,
+            raw_text=raw_text
+        )
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except OSError:
+                pass
