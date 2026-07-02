@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from xhtml2pdf import pisa
 
 # Define the path to the templates directory
@@ -39,7 +39,10 @@ def generate_resume_pdf(
     if projects is None:
         projects = []
         
-    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+    env = Environment(
+        loader=FileSystemLoader(TEMPLATE_DIR),
+        autoescape=select_autoescape(['html', 'xml'])
+    )
     template = env.get_template("resume_template.html")
     
     # Coerce/convert skills if it is a list of strings
@@ -80,7 +83,10 @@ def generate_cover_letter_pdf(
     letter_text: str
 ) -> None:
     """Generate a clean cover letter PDF using the HTML template."""
-    env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+    env = Environment(
+        loader=FileSystemLoader(TEMPLATE_DIR),
+        autoescape=select_autoescape(['html', 'xml'])
+    )
     template = env.get_template("cover_letter_template.html")
     
     paragraphs = [p.strip() for p in letter_text.split('\n') if p.strip()]

@@ -79,7 +79,7 @@ def _delta(before: float, after: float) -> str:
 
 async def run_test(resume_path: Path, job_id: str) -> None:
     # ── Load job ──────────────────────────────────────────────────────────────
-    with open(JOBS_FILE) as f:
+    with open(JOBS_FILE, encoding="utf-8") as f:
         jobs = json.load(f)
     job_dict = next((j for j in jobs if j["id"] == job_id), None)
     if not job_dict:

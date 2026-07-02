@@ -177,7 +177,6 @@ async def tailor_resume(
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
-            f"SYSTEM INSTRUCTION:\n{_FABRICATOR_SYSTEM}\n\n"
             f"**ATS Feedback:**\nCurrent Score: {current_ats_score}/100\nMissing Keywords: {', '.join(current_missing_keywords)}\n\n"
             f"**Candidate Resume:**\n```json\n{json.dumps(final_resume_json, indent=2)}\n```\n\n"
             f"**Job Details:**\n```json\n{json.dumps(job_data, indent=2)}\n```\n"
@@ -186,6 +185,7 @@ async def tailor_resume(
         try:
             response = await generate_content_with_retry(
                 contents=user_prompt,
+                system_instruction=_FABRICATOR_SYSTEM,
                 temperature=0.3,
                 response_mime_type="application/json"
             )
