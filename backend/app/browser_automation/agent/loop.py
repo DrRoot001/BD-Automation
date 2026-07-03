@@ -4737,9 +4737,27 @@ class AgentLoop:
         if not self.candidate_id:
             logger.warning("[verify] no candidate_id on AgentLoop — cannot fetch code")
             return False
+        # Scope the Gmail search to THIS ATS. Concurrent runs for the same
+        # candidate otherwise steal each other's codes (observed live: an Ashby
+        # run filling the Greenhouse code that belonged to a parallel Vercel run).
+        _ats_hints = (
+            ("ashbyhq", "ashby"), ("greenhouse", "greenhouse"), ("lever.co", "lever"),
+            ("myworkday", "workday"), ("icims", "icims"),
+            ("smartrecruiters", "smartrecruiters"), ("dice", "dice"),
+        )
+        sender_hint = ""
+        try:
+            _url = (page.url or "").lower()
+            for _frag, _hint in _ats_hints:
+                if _frag in _url:
+                    sender_hint = _hint
+                    break
+        except Exception:
+            pass
         try:
             code = await fetch_verification_code(
-                self.candidate_id, after_epoch=after_epoch, timeout_s=None
+                self.candidate_id, after_epoch=after_epoch, timeout_s=None,
+                sender_hint=sender_hint,
             )
         except Exception as exc:
             if "GMAIL_AUTH_FAILED" in str(exc):

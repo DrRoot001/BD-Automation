@@ -31,6 +31,18 @@ class NormalizedJob(BaseModel):
     @classmethod
     def normalize_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Sanitize URLs — the AI extractor sometimes emits sentinels like
+            # "(not found)" / "n/a" for the "leave blank" canonical_url field.
+            # These pollute COALESCE(canonical_url, source_url) in the UI, so
+            # coerce any non-http value to empty. canonical_url then falls back
+            # to source_url below.
+            def _clean_url(val: Any) -> str:
+                s = str(val or "").strip()
+                return s if s.lower().startswith("http") else ""
+
+            data["source_url"] = _clean_url(data.get("source_url"))
+            data["canonical_url"] = _clean_url(data.get("canonical_url")) or data["source_url"]
+
             # Normalize pay_period
             pay_period = str(data.get("pay_period") or "").lower().strip()
             if pay_period not in ["hourly", "yearly", "monthly", "daily"]:

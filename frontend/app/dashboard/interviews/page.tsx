@@ -19,24 +19,24 @@ export default function InterviewsPage() {
   })
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 max-w-7xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       {/* Header with Candidate Filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-bg-border pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight">Interviews</h1>
-          <p className="text-sm text-text-muted mt-1">Track and schedule upcoming candidate interviews.</p>
+          <h1 className="page-title">Interviews</h1>
+          <p className="page-subtitle">Track and schedule upcoming candidate interviews.</p>
         </div>
 
         <div className="flex items-center gap-3">
           <label htmlFor="candidate-select" className="text-xs text-text-muted font-medium whitespace-nowrap">
-            Candidate:
+            Filter Candidate:
           </label>
           <select
             id="candidate-select"
             value={selectedCandidateId}
             onChange={(e) => setSelectedCandidateId(e.target.value)}
             disabled={candidatesLoading}
-            className="bg-bg-secondary border border-bg-border text-text-primary rounded-lg text-sm px-4 py-2 focus:outline-none focus:border-accent transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px]"
+            className="input !w-auto min-w-[200px]"
           >
             <option value="">All Candidates</option>
             {candidates.map((cand) => (

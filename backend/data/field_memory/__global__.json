@@ -447,6 +447,14 @@
     "source": "llm:0.80",
     "value": "Available to start immediately"
   },
+  "do you have experience implementing access control models (like oauth)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have experience implementing access control models (like OAuth)*",
+    "last_seen": 1783046644,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
   "do you have hands-on experience building production user interfaces using modern": {
     "count": 2,
     "field_type": "text",
@@ -678,6 +686,14 @@
     "last_seen": 1782467933,
     "source": "agent_loop",
     "value": "N/A"
+  },
+  "immediate family member": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Immediate family member",
+    "last_seen": 1783076549,
+    "source": "agent_loop",
+    "value": "No relationship to current employees"
   },
   "org": {
     "count": 1,

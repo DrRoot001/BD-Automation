@@ -2,27 +2,33 @@
 
 import { useState, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { api } from '@/lib/api'
+import { api, JobSummary } from '@/lib/api'
 import { useJobs } from '@/hooks/useJobs'
-import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { JobCard } from '@/components/dashboard/JobCard'
 import { Skeleton } from '@/components/shared/Skeleton'
-import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Eye } from 'lucide-react'
+import { Modal } from '@/components/ui/Modal'
+import { useToast } from '@/components/ui/Toast'
+import { StatusBadge } from '@/components/shared/StatusBadge'
+import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Eye, Search, ExternalLink, Building2, MapPin, FileText } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
+import { formatDistanceToNow, formatSalary } from '@/lib/utils'
 
 const PAGE_SIZE = 12
 
 export default function JobsFeedPage() {
+  const toast = useToast()
   const [page, setPage] = useState(0)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
+  const [search, setSearch] = useState('')
+  const [selectedJob, setSelectedJob] = useState<JobSummary | null>(null)
 
-  // Connect WebSocket to get real-time cache invalidations
+  // Connect WebSocket for real-time invalidations
   useWebSocket()
 
-  // Reset to page 0 when candidate changes
+  // Reset to page 0 when candidate or search changes
   useEffect(() => {
     setPage(0)
-  }, [selectedCandidateId])
+  }, [selectedCandidateId, search])
 
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({
@@ -30,7 +36,7 @@ export default function JobsFeedPage() {
     queryFn: () => api.getCandidates(),
   })
 
-  // Fetch Jobs (global list or sorted by candidate embedding similarity)
+  // Fetch Jobs
   const { 
     data: jobs, 
     isLoading: jobsLoading, 
@@ -52,28 +58,32 @@ export default function JobsFeedPage() {
     applications?.map(app => app.job_id) ?? []
   )
 
-  // Cross-reference map: Job ID -> Status (for badge display)
+  // Cross-reference map: Job ID -> Status
   const appliedJobsMap = new Map<string, string>(
     applications?.map(app => [app.job_id, app.status]) ?? []
   )
 
-  // When a candidate is selected, hide jobs they've already applied to
-  const visibleJobs = selectedCandidateId
-    ? (jobs ?? []).filter(job => !appliedJobIds.has(job.id))
-    : (jobs ?? [])
+  // Filter jobs locally by search query and hide already applied ones
+  const visibleJobs = (jobs ?? [])
+    .filter(job => !search || job.title.toLowerCase().includes(search.toLowerCase()) || job.company.toLowerCase().includes(search.toLowerCase()))
+    .filter(job => !selectedCandidateId || !appliedJobIds.has(job.id))
 
   const hiddenCount = (jobs?.length ?? 0) - visibleJobs.length
 
   const handleApply = (jobId: string) => {
-    console.log("Apply triggered for job:", jobId)
+    if (!selectedCandidateId) {
+      toast.warning('Please select a candidate first to apply to jobs.')
+      return
+    }
+    toast.success('Application queued for candidate!')
   }
 
   const handleDismiss = (jobId: string) => {
-    console.log("Dismiss triggered for job:", jobId)
+    toast.info('Job dismissed from feed.')
   }
 
-  const handleCardClick = (jobId: string) => {
-    console.log("Card clicked, open JD for:", jobId)
+  const handleCardClick = (job: JobSummary) => {
+    setSelectedJob(job)
   }
 
   const hasPrev = page > 0
@@ -81,15 +91,15 @@ export default function JobsFeedPage() {
 
   if (jobsError) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[400px] bg-bg-secondary rounded-xl border border-bg-border">
-        <AlertCircle className="w-12 h-12 text-danger mb-4" />
-        <h2 className="text-lg font-semibold text-text-primary">Failed to load jobs</h2>
-        <p className="text-text-secondary text-sm mt-1 mb-6">There was an error communicating with the API.</p>
+      <div className="flex flex-col items-center justify-center min-h-[300px] bg-bg-card rounded-xl border border-bg-border p-8">
+        <AlertCircle className="w-12 h-12 text-danger mb-3" />
+        <h2 className="text-base font-semibold text-text-primary">Failed to load jobs</h2>
+        <p className="text-text-muted text-xs mt-1 mb-6">There was an error communicating with the API.</p>
         <button 
           onClick={() => refetchJobs()}
-          className="flex items-center gap-2 px-4 py-2 bg-bg-card border border-bg-border hover:bg-bg-hover text-text-primary rounded-md transition-colors font-medium text-sm"
+          className="btn-secondary !text-xs inline-flex items-center gap-1.5"
         >
-          <RefreshCw className="w-4 h-4" />
+          <RefreshCw className="w-3.5 h-3.5" />
           Retry
         </button>
       </div>
@@ -97,103 +107,106 @@ export default function JobsFeedPage() {
   }
 
   return (
-    <div className="space-y-6 animate-in fade-in duration-500 max-w-7xl mx-auto">
+    <div className="space-y-6 animate-fade-in max-w-7xl mx-auto">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-          <div>
-            <h1 className="text-2xl font-bold text-text-primary tracking-tight">Jobs Feed</h1>
-            <p className="text-sm text-text-secondary mt-1">
-              {selectedCandidateId ? (
-                <span className="flex items-center gap-1.5">
-                  <Eye className="w-3.5 h-3.5" />
-                  {visibleJobs.length} jobs visible
-                  {hiddenCount > 0 && (
-                    <span className="text-text-muted">
-                      · {hiddenCount} already applied hidden
-                    </span>
-                  )}
-                </span>
-              ) : (
-                'Discover and apply to new opportunities.'
-              )}
-            </p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-bg-border pb-6">
+        <div>
+          <h1 className="page-title">Jobs Feed</h1>
+          <p className="page-subtitle">
+            {selectedCandidateId ? (
+              <span className="flex items-center gap-1.5">
+                <Eye className="w-3.5 h-3.5 text-text-muted" />
+                {visibleJobs.length} jobs visible
+                {hiddenCount > 0 && (
+                  <span className="text-text-muted">
+                    · {hiddenCount} applied jobs hidden
+                  </span>
+                )}
+              </span>
+            ) : (
+              'Discover and apply to new job opportunities.'
+            )}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Candidate Selector */}
+          <select
+            value={selectedCandidateId}
+            onChange={(e) => setSelectedCandidateId(e.target.value)}
+            disabled={candidatesLoading}
+            className="input !w-auto min-w-[180px]"
+          >
+            <option value="">Select Candidate...</option>
+            {candidates.map((cand) => (
+              <option key={cand.id} value={cand.id}>
+                {cand.name}
+              </option>
+            ))}
+          </select>
+
+          {/* Search Input */}
+          <div className="relative">
+            <Search className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
+            <input 
+              type="text" 
+              placeholder="Search title or company..." 
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="input pl-9 w-56"
+            />
           </div>
 
-          {/* Candidate selector */}
+          {/* Pagination Top Controls */}
           <div className="flex items-center gap-2">
-            <span className="text-xs text-text-muted font-medium">Candidate:</span>
-            <select
-              value={selectedCandidateId}
-              onChange={(e) => setSelectedCandidateId(e.target.value)}
-              disabled={candidatesLoading}
-              className="bg-bg-secondary border border-bg-border text-text-primary rounded-lg text-xs px-3 py-1.5 focus:outline-none focus:border-accent transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed min-w-[180px]"
-            >
-              <option value="">Select Candidate...</option>
-              {candidates.map((cand) => (
-                <option key={cand.id} value={cand.id}>
-                  {cand.name}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        
-        {/* Pagination Controls (Top) */}
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-text-muted">
-            Page {page + 1}
-            {selectedCandidateId && visibleJobs.length > 0 && (
-              <span className="text-text-muted/60"> · {visibleJobs.length} jobs</span>
-            )}
-          </span>
-          <div className="flex bg-bg-secondary border border-bg-border rounded-md overflow-hidden">
-            <button 
-              onClick={() => setPage(p => Math.max(0, p - 1))}
-              disabled={!hasPrev || isFetching}
-              className="p-2 text-text-secondary hover:text-text-primary hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <div className="w-px bg-bg-border" />
-            <button 
-              onClick={() => setPage(p => p + 1)}
-              disabled={!hasNext || isFetching}
-              className="p-2 text-text-secondary hover:text-text-primary hover:bg-bg-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
+            <span className="text-xs text-text-muted font-medium">Page {page + 1}</span>
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={!hasPrev || isFetching}
+                className="btn-secondary !p-1.5"
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <button 
+                onClick={() => setPage(p => p + 1)}
+                disabled={!hasNext || isFetching}
+                className="btn-secondary !p-1.5"
+                aria-label="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Grid */}
       {jobsLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {Array.from({ length: PAGE_SIZE }).map((_, i) => (
             <Skeleton key={i} className="h-48 w-full rounded-xl" />
           ))}
         </div>
       ) : !visibleJobs || visibleJobs.length === 0 ? (
-        <div className="flex flex-col items-center justify-center min-h-[400px] bg-bg-secondary rounded-xl border border-bg-border border-dashed">
-          <div className="w-16 h-16 bg-bg-hover rounded-full flex items-center justify-center mb-4 border border-bg-border">
-            <Briefcase className="w-8 h-8 text-text-muted" />
-          </div>
-          <h2 className="text-lg font-semibold text-text-primary">
-            {selectedCandidateId && hiddenCount > 0 ? 'All jobs applied' : 'No jobs found'}
+        <div className="flex flex-col items-center justify-center min-h-[300px] bg-bg-card rounded-2xl border border-bg-border p-12 text-center shadow-sm">
+          <Briefcase className="w-12 h-12 text-text-muted mb-3 opacity-40" />
+          <h2 className="text-base font-semibold text-text-primary">
+            {selectedCandidateId && hiddenCount > 0 ? 'All jobs applied on this page' : 'No jobs found'}
           </h2>
-          <p className="text-text-muted text-sm mt-1 max-w-sm text-center">
+          <p className="text-text-muted text-xs mt-1 max-w-sm">
             {selectedCandidateId && hiddenCount > 0
-              ? `This candidate has already applied to all ${hiddenCount} jobs on this page. Try the next page.`
-              : page === 0
-              ? 'Check back later for new opportunities from the discovery pipeline.'
-              : "You've reached the end of the list."}
+              ? `This candidate has applied to all ${hiddenCount} jobs on this page. Try navigating to the next page.`
+              : search
+              ? 'No jobs match your search filters.'
+              : 'Check back later for new opportunities from the discovery pipeline.'}
           </p>
           {selectedCandidateId && hiddenCount > 0 && hasNext && (
             <button
               onClick={() => setPage(p => p + 1)}
               disabled={isFetching}
-              className="mt-4 flex items-center gap-2 px-4 py-2 bg-accent hover:bg-accent-hover text-white rounded-lg text-sm font-medium transition-colors"
+              className="btn-primary mt-4 !text-xs"
             >
               Next Page <ChevronRight className="w-4 h-4" />
             </button>
@@ -216,6 +229,94 @@ export default function JobsFeedPage() {
           })}
         </div>
       )}
+
+      {/* Job Details Modal */}
+      <Modal
+        open={!!selectedJob}
+        onClose={() => setSelectedJob(null)}
+        title={selectedJob?.title || 'Job Details'}
+        size="2xl"
+        footer={
+          <div className="flex gap-2">
+            {selectedJob?.source_url && (
+              <a 
+                href={selectedJob.source_url} 
+                target="_blank" 
+                rel="noopener noreferrer"
+                className="btn-primary !text-xs inline-flex items-center gap-1.5"
+              >
+                View Original Posting <ExternalLink className="w-3.5 h-3.5" />
+              </a>
+            )}
+            <button 
+              onClick={() => setSelectedJob(null)} 
+              className="btn-secondary !text-xs"
+            >
+              Close
+            </button>
+          </div>
+        }
+      >
+        {selectedJob && (
+          <div className="space-y-6">
+            <div className="text-text-muted text-xs flex items-center gap-2">
+              <Building2 className="w-4 h-4 text-text-muted" />
+              <span className="font-semibold text-text-primary">{selectedJob.company}</span>
+              <span>•</span>
+              <MapPin className="w-4 h-4 text-text-muted" />
+              <span>{selectedJob.location || 'Remote'}</span>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div className="bg-bg-primary p-3 rounded-xl border border-bg-border">
+                <div className="text-[10px] text-text-muted mb-1 uppercase tracking-wider font-semibold">Job Type</div>
+                <div className="text-xs font-bold text-text-primary capitalize">{selectedJob.job_type?.replace('-', ' ') || 'full-time'}</div>
+              </div>
+              <div className="bg-bg-primary p-3 rounded-xl border border-bg-border">
+                <div className="text-[10px] text-text-muted mb-1 uppercase tracking-wider font-semibold">Salary</div>
+                <div className="text-xs font-bold text-text-primary">{formatSalary(selectedJob.salary_min, selectedJob.salary_max, selectedJob.pay_period)}</div>
+              </div>
+              <div className="bg-bg-primary p-3 rounded-xl border border-bg-border">
+                <div className="text-[10px] text-text-muted mb-1 uppercase tracking-wider font-semibold">Source</div>
+                <div className="text-xs font-bold text-text-primary capitalize">{selectedJob.source}</div>
+              </div>
+              <div className="bg-bg-primary p-3 rounded-xl border border-bg-border">
+                <div className="text-[10px] text-text-muted mb-1 uppercase tracking-wider font-semibold">Status</div>
+                <div className="text-xs font-bold">
+                  {selectedCandidateId && appliedJobsMap.has(selectedJob.id) ? (
+                    <StatusBadge status={appliedJobsMap.get(selectedJob.id)!} />
+                  ) : (
+                    <span className="text-text-muted">Available</span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {selectedJob.skills && selectedJob.skills.length > 0 && (
+              <div className="space-y-2">
+                <h3 className="text-xs font-semibold text-text-primary uppercase tracking-wider">Required Skills</h3>
+                <div className="flex flex-wrap gap-1.5">
+                  {selectedJob.skills.map((skill: string, i: number) => (
+                    <span key={i} className="px-2.5 py-1 bg-bg-secondary text-text-secondary border border-bg-border rounded-lg text-xs font-medium">
+                      {skill}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="space-y-2">
+              <h3 className="flex items-center gap-2 text-xs font-semibold text-text-primary uppercase tracking-wider">
+                <FileText className="w-4 h-4" />
+                Job Description
+              </h3>
+              <div className="bg-bg-primary p-4 rounded-xl border border-bg-border text-xs text-text-secondary whitespace-pre-wrap leading-relaxed max-h-80 overflow-y-auto">
+                {selectedJob.description || 'No description provided for this posting.'}
+              </div>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

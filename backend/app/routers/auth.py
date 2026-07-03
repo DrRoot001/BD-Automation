@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from httpx import AsyncClient
 import httpx
 import asyncio
+import hashlib
 import json
 from app.database import get_db
 from app.config import get_settings
@@ -49,10 +50,16 @@ _TOKEN_CACHE_PREFIX = "auth:token:"
 _TOKEN_CACHE_TTL = 120  # seconds
 
 
+def _token_cache_key(token: str) -> str:
+    # Hash the FULL token. JWTs share a long identical base64 prefix, so a
+    # truncated-token key collides across users and serves the wrong identity.
+    return f"{_TOKEN_CACHE_PREFIX}{hashlib.sha256(token.encode()).hexdigest()}"
+
+
 async def _get_cached_payload(token: str) -> dict | None:
     """Return cached Supabase user payload, or None on miss/error."""
     try:
-        raw = await redis_client.get(f"{_TOKEN_CACHE_PREFIX}{token[:40]}")
+        raw = await redis_client.get(_token_cache_key(token))
         return json.loads(raw) if raw else None
     except Exception:
         return None
@@ -62,7 +69,7 @@ async def _cache_payload(token: str, payload: dict) -> None:
     """Store validated payload in Redis with a short TTL."""
     try:
         await redis_client.setex(
-            f"{_TOKEN_CACHE_PREFIX}{token[:40]}",
+            _token_cache_key(token),
             _TOKEN_CACHE_TTL,
             json.dumps(payload),
         )
@@ -73,7 +80,7 @@ async def _cache_payload(token: str, payload: dict) -> None:
 async def _evict_cached_token(token: str) -> None:
     """Remove a token from the cache (on 401 from Supabase)."""
     try:
-        await redis_client.delete(f"{_TOKEN_CACHE_PREFIX}{token[:40]}")
+        await redis_client.delete(_token_cache_key(token))
     except Exception:
         pass
 
