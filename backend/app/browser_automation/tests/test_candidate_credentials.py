@@ -44,8 +44,8 @@ def test_candidate_credentials_take_precedence_over_env(monkeypatch):
     monkeypatch.setenv("DICE_EMAIL", "env@dice.com")
     monkeypatch.setenv("DICE_PASSWORD", "env-pw")
     a = _DummyAdapter()
-    a.set_candidate_credentials({"login_email": "sabih@gmail.com", "password": "cand-pw", "gmail": "sabih@gmail.com"})
-    assert a._login_credential("login_email", "DICE_EMAIL") == "sabih@gmail.com"
+    a.set_candidate_credentials({"login_email": "candidate@gmail.com", "password": "cand-pw", "gmail": "candidate@gmail.com"})
+    assert a._login_credential("login_email", "DICE_EMAIL") == "candidate@gmail.com"
     assert a._login_credential("password", "DICE_PASSWORD") == "cand-pw"
 
 
