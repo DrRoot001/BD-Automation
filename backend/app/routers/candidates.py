@@ -202,6 +202,7 @@ async def list_candidate_applications(
             "candidate_id": str(a.candidate_id),
             "job_id": str(a.job_id),
             "status": a.status,
+            "failure_reason": a.failure_reason,
             "created_at": a.created_at.isoformat() if a.created_at else None,
         }
         for a in applications
@@ -226,24 +227,13 @@ async def trigger_apply(request: Request, candidate_id: str, request_body: Apply
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    from app.tasks.dynamic_apply import _run
-    import asyncio
-
-    # Run directly in background on the same event loop (bypassing Celery due to Upstash Redis limitations).
-    async def run_in_background():
-        _bg_log.info(f"[BG] Auto-apply task started: candidate={candidate_id} max_apps={request_body.max_apps}")
-        try:
-            bg_result = await _run(candidate_id, request_body.max_apps)
-            _bg_log.info(f"[BG] Auto-apply completed: {bg_result}")
-        except Exception as e:
-            import traceback
-            _bg_log.error(f"[BG] Auto-apply FAILED for candidate={candidate_id}: {e}")
-            _bg_log.error(traceback.format_exc())
+    from app.tasks.dynamic_apply import dynamic_apply
 
     try:
-        asyncio.create_task(run_in_background())
+        dynamic_apply.apply_async(args=[candidate_id, request_body.max_apps])
+        _bg_log.info(f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} max_apps={request_body.max_apps}")
     except Exception as e:
-        _bg_log.error(f"[Apply] Failed to schedule background task for candidate={candidate_id}: {e}")
+        _bg_log.error(f"[Apply] Failed to dispatch Celery task for candidate={candidate_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start apply pipeline: {e}")
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}

@@ -6,6 +6,7 @@ import { clsx } from 'clsx'
 import {
   LayoutDashboard, Users, FileText, Briefcase,
   ChevronLeft, ChevronRight, Menu, Search,
+  Upload, Radar, CalendarClock, UserCog,
 } from 'lucide-react'
 
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -17,21 +18,54 @@ type NavItem = {
   icon: React.ElementType
 }
 
-const ADMIN_NAV_ITEMS: NavItem[] = [
-  { id: 'admin-overview',   label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
-  { id: 'admin-discovery',  label: 'Job Discovery',    path: '/admin/discovery',    icon: Search },
-  { id: 'admin-users',      label: 'User Management',  path: '/admin/users',        icon: Users },
-  { id: 'admin-jobs',       label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
-  { id: 'admin-apps',       label: 'All Applications', path: '/applications',       icon: FileText },
-  { id: 'admin-candidates', label: 'Candidates',       path: '/candidates',         icon: Users },
+type NavSection = {
+  title?: string
+  items: NavItem[]
+}
+
+const ADMIN_NAV: NavSection[] = [
+  {
+    items: [
+      { id: 'admin-overview',   label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
+    ],
+  },
+  {
+    title: 'Management',
+    items: [
+      { id: 'admin-users',      label: 'User Management',  path: '/admin/users',        icon: UserCog },
+      { id: 'admin-jobs',       label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
+      { id: 'admin-candidates', label: 'Candidates',       path: '/candidates',         icon: Users },
+    ],
+  },
+  {
+    title: 'Automation',
+    items: [
+      { id: 'admin-discovery',  label: 'Job Discovery',    path: '/admin/discovery',    icon: Radar },
+      { id: 'admin-import',     label: 'Import Jobs',      path: '/admin/import',       icon: Upload },
+    ],
+  },
 ]
 
-const BD_USER_NAV_ITEMS: NavItem[] = [
-  { id: 'bd-dashboard',  label: 'Dashboard',       path: '/dashboard',              icon: LayoutDashboard },
-  { id: 'bd-jobs',       label: 'Jobs Feed',       path: '/dashboard/jobs',         icon: Briefcase },
-  { id: 'bd-apps',       label: 'My Applications', path: '/dashboard/applications', icon: FileText },
-  { id: 'bd-interviews', label: 'Interviews',      path: '/dashboard/interviews',   icon: Users },
-  { id: 'bd-candidates', label: 'Candidates',      path: '/candidates',             icon: Users },
+const BD_USER_NAV: NavSection[] = [
+  {
+    items: [
+      { id: 'bd-dashboard',    label: 'Dashboard',       path: '/dashboard',              icon: LayoutDashboard },
+    ],
+  },
+  {
+    title: 'Pipeline',
+    items: [
+      { id: 'bd-jobs',         label: 'Jobs Feed',       path: '/dashboard/jobs',         icon: Briefcase },
+      { id: 'bd-apps',         label: 'Applications',    path: '/dashboard/applications', icon: FileText },
+      { id: 'bd-interviews',   label: 'Interviews',      path: '/dashboard/interviews',   icon: CalendarClock },
+    ],
+  },
+  {
+    title: 'Profiles',
+    items: [
+      { id: 'bd-candidates',   label: 'Candidates',      path: '/candidates',             icon: Users },
+    ],
+  },
 ]
 
 interface SidebarProps {
@@ -41,15 +75,22 @@ interface SidebarProps {
 
 export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname()
-  const { data: user } = useCurrentUser()
+  const { data: user, isLoading } = useCurrentUser()
 
-  const navItems = user?.role === 'admin' ? ADMIN_NAV_ITEMS : BD_USER_NAV_ITEMS
+  const navSections = user?.role === 'admin' ? ADMIN_NAV : BD_USER_NAV
+
+  const isActive = (path: string) => {
+    // Exact match for root dashboard / admin pages
+    if (path === '/dashboard' || path === '/admin') return pathname === path
+    // Prefix match for sub-pages
+    return pathname.startsWith(path)
+  }
 
   return (
     <aside
       className={clsx(
         'bg-bg-secondary border-r border-bg-border flex flex-col h-screen sticky top-0 transition-all duration-200 shrink-0',
-        collapsed ? 'w-14' : 'w-56',
+        collapsed ? 'w-[60px]' : 'w-56',
       )}
     >
       {/* Logo Area */}
@@ -85,48 +126,75 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
       </div>
 
       {/* Navigation Links */}
-      <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
-        {navItems.map((mod) => {
-          const isActive = (mod.path === '/dashboard' || mod.path === '/admin')
-            ? pathname === mod.path
-            : pathname.startsWith(mod.path)
-          const Icon = mod.icon
-          return (
-            <Link
-              key={mod.id}
-              href={mod.path}
-              title={collapsed ? mod.label : undefined}
-              className={clsx(
-                'flex items-center gap-3 px-2.5 py-2 rounded-lg transition-colors duration-150',
-                collapsed ? 'justify-center' : '',
-                isActive
-                  ? 'bg-accent/10 text-accent font-medium'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover',
-              )}
-            >
-              <Icon className="w-4 h-4 shrink-0" />
-              {!collapsed && <span className="text-sm truncate">{mod.label}</span>}
-            </Link>
-          )
-        })}
+      <nav className="flex-1 overflow-y-auto py-3 px-2">
+        {isLoading && (
+          <div className="space-y-2 px-2.5 py-2" aria-hidden>
+            {[...Array(5)].map((_, i) => (
+              <div key={i} className="h-8 rounded-lg bg-bg-hover animate-pulse" />
+            ))}
+          </div>
+        )}
+        {!isLoading && navSections.map((section, sIdx) => (
+          <div key={sIdx} className={sIdx > 0 ? 'mt-4' : ''}>
+            {/* Section title */}
+            {section.title && !collapsed && (
+              <div className="px-2.5 mb-1.5">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-text-muted/70">
+                  {section.title}
+                </span>
+              </div>
+            )}
+            {section.title && collapsed && sIdx > 0 && (
+              <div className="mx-2 mb-2 border-t border-bg-border" />
+            )}
+
+            <div className="space-y-0.5">
+              {section.items.map((item) => {
+                const active = isActive(item.path)
+                const Icon = item.icon
+                return (
+                  <Link
+                    key={item.id}
+                    href={item.path}
+                    title={collapsed ? item.label : undefined}
+                    className={clsx(
+                      'flex items-center gap-3 px-2.5 py-2 rounded-lg transition-colors duration-150',
+                      collapsed ? 'justify-center' : '',
+                      active
+                        ? 'bg-accent/10 text-accent font-medium'
+                        : 'text-text-secondary hover:text-text-primary hover:bg-bg-hover',
+                    )}
+                    aria-current={active ? 'page' : undefined}
+                  >
+                    <Icon className="w-4 h-4 shrink-0" />
+                    {!collapsed && <span className="text-sm truncate">{item.label}</span>}
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        ))}
       </nav>
 
+      {/* Footer */}
       {!collapsed && (
-        <div className="p-4 border-t border-bg-border text-center">
-          <span className="text-[10px] text-text-muted">v1.0.0 (Beta)</span>
+        <div className="p-4 border-t border-bg-border">
+          <div className="text-[10px] text-text-muted text-center">
+            v1.0.0{user ? ` · ${user.role === 'admin' ? 'Admin' : 'BD User'}` : ''}
+          </div>
         </div>
       )}
     </aside>
   )
 }
 
-/* Mobile hamburger trigger — rendered inline inside ClientLayout on small screens */
+/* Mobile hamburger trigger */
 export function MobileMenuButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="fixed top-3 left-3 z-50 md:hidden w-9 h-9 rounded-lg bg-bg-card border border-bg-border shadow flex items-center justify-center text-text-secondary hover:text-text-primary"
-      aria-label="Open menu"
+      className="w-9 h-9 rounded-lg bg-bg-card border border-bg-border shadow flex items-center justify-center text-text-secondary hover:text-text-primary transition-colors"
+      aria-label="Open navigation menu"
     >
       <Menu className="w-5 h-5" />
     </button>

@@ -94,7 +94,7 @@ celery_app.conf.task_routes = {
     "task:prepare_application_package": {"queue": "queue:resume_generation"},
     "task:execute_application":         {"queue": "queue:application_execution"},
     "task:retry_failed_application":    {"queue": "queue:application_execution"},
-    "task:dynamic_apply":               {"queue": "queue:application_execution"},
+    "task:dynamic_apply":               {"queue": "queue:job_processing"},
     "task:scan_candidate_inbox":        {"queue": "queue:email_scan"},
     "task:scan_single_inbox":           {"queue": "queue:email_scan"},
     "task:scan_interviews":             {"queue": "queue:email_scan"},

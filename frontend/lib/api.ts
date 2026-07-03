@@ -76,6 +76,7 @@ export interface Candidate {
   tech_stack: string[]
   years_exp?: number
   linkedin_url?: string
+  title?: string
   google_connected?: boolean
   created_at: string
   updated_at: string
@@ -103,22 +104,36 @@ export interface DashboardKPIs {
 export interface ApplicationSummary {
   application_id: string
   job_id: string
+  candidate_id?: string
   job_title: string
   company: string
   platform: string
   status: string
   fit_score: number | null
   ats_score: number | null
+  ats_score_before?: number | null
+  ats_score_after?: number | null
+  resume_is_base?: boolean | null
   submitted_at: string | null
   created_at: string
   error_message?: string | null
   failure_reason?: string | null
   resume_url?: string | null
+  resume_id?: string | null
   cover_letter_url?: string | null
+  screenshot_url?: string | null
   job_url?: string | null
   candidate_name?: string
   bd_user_name?: string
   bd_user_email?: string
+}
+
+export interface ApplicationDetail extends ApplicationSummary {
+  job_description?: string
+  match_reason?: string
+  tailored_resume_url?: string
+  cover_letter_text?: string
+  logs?: Array<{ timestamp: string; message: string }>
 }
 
 export interface InterviewSummary {
@@ -179,6 +194,52 @@ export interface BDUser {
   full_name?: string
   created_at?: string
   is_active?: boolean
+}
+
+export interface RetryResponse {
+  message: string
+  status: string
+}
+
+export interface ApplyTriggerResponse {
+  message: string
+  status: string
+  task_id?: string
+}
+
+export interface GoogleCodeResponse {
+  message: string
+  connected: boolean
+}
+
+export interface MatchingDetail {
+  job_title: string
+  company: string
+  score: number
+  passed: boolean
+}
+
+export interface MatchingRunResponse {
+  jobs_scanned: number
+  pgvector_passed: number
+  llm_passed: number
+  enqueued_count: number
+  details: MatchingDetail[]
+}
+
+export interface JobDiscoveryResponse {
+  message: string
+  task_id?: string
+}
+
+export interface DiscoveryStatusResponse {
+  running: boolean
+  last_result?: {
+    status: 'completed' | 'failed'
+    total_discovered?: number
+    total_saved?: number
+    errors?: string[]
+  }
 }
 
 // ── API functions ──────────────────────────────────────────────────────────
@@ -279,13 +340,13 @@ export const api = {
   },
 
   getApplication: (id: string) =>
-    fetchJSON<any>(`/applications/${id}`),
+    fetchJSON<ApplicationDetail>(`/applications/${id}`),
 
   getApplicationHistory: (id: string) =>
     fetchJSON<ApplicationHistoryEntry[]>(`/applications/${id}/history`),
 
   retryApplication: (appId: string) =>
-    postJSON<any>(`/applications/${appId}/retry`, {}),
+    postJSON<RetryResponse>(`/applications/${appId}/retry`, {}),
 
   getJob: (id: string) =>
     fetchJSON<JobSummary>(`/jobs/${id}`),
@@ -296,21 +357,24 @@ export const api = {
   getCandidate: (id: string) =>
     fetchJSON<Candidate>(`/candidates/${id}`),
 
+  updateCandidate: (id: string, data: Record<string, unknown>) =>
+    putJSON<Candidate>(`/candidates/${id}`, data),
+
   triggerApply: (candidateId: string, maxApps: number) =>
-    postJSON<any>(`/candidates/${candidateId}/apply`, { max_apps: maxApps }),
+    postJSON<ApplyTriggerResponse>(`/candidates/${candidateId}/apply`, { max_apps: maxApps }),
 
   getGoogleAuthUrl: (candidateId: string) =>
     fetchJSON<{ auth_url: string; is_mock: boolean }>(`/candidates/${candidateId}/google/auth-url`),
 
   exchangeGoogleCode: (candidateId: string, code: string) =>
-    postJSON<any>(`/candidates/${candidateId}/google/callback`, { code }),
+    postJSON<GoogleCodeResponse>(`/candidates/${candidateId}/google/callback`, { code }),
 
   runMatching: (candidateId: string) =>
-    postJSON<any>(`/candidates/${candidateId}/run-matching`, {}),
+    postJSON<MatchingRunResponse>(`/candidates/${candidateId}/run-matching`, {}),
 
   triggerJobDiscovery: () =>
-    postJSON<any>('/jobs/discover', {}),
+    postJSON<JobDiscoveryResponse>('/jobs/discover', {}),
 
   getDiscoveryStatus: () =>
-    fetchJSON<any>('/jobs/discover/status'),
+    fetchJSON<DiscoveryStatusResponse>('/jobs/discover/status'),
 }

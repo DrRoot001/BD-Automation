@@ -66,6 +66,14 @@ _CODE_CUE_RE = re.compile(
 _CODE_MIXED_RE = re.compile(r"\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)([A-Za-z0-9]{5,10})\b")
 _CODE_DIGITS_RE = re.compile(r"\b(\d{6,8})\b")
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
+# Explicit-instruction format used by Greenhouse/Vercel/Anthropic:
+#   "…paste this code into the security code field on your application: ORfBCZBT"
+# The code ALWAYS follows the colon. This is the only extractor that catches an
+# ALL-LETTER code (e.g. "ORfBCZBT"): a digit-less code is invisible to the mixed
+# regex, and the generic cue regex grabs the intervening noise word ("field")
+# instead of the token after the colon. Bounded to a single line so "code" can't
+# bridge to an unrelated colon.
+_CODE_COLON_RE = re.compile(r"\bcode\b[^:\n]{0,80}:\s*\*?\s*([A-Za-z0-9]{5,12})\b", re.I)
 
 # Common English words 5-10 chars that show up RIGHT AFTER cue phrases like
 # "enter the code field below:" — the cue regex would otherwise capture them
@@ -149,31 +157,37 @@ def _pick_code(text: str) -> Optional[str]:
     """
     if not text:
         return None
-    # 1. Mixed alphanumeric token — return the FIRST one that isn't a year.
+
+    # REJECT all-letter tokens that look like English words — these are almost
+    # always noise from phrases like "enter the code field below" (the literal
+    # bug observed against a Greenhouse/Reddit run where the word "field" was
+    # typed into the OTP boxes). Real all-letter codes ("XZQPLMN") aren't in the
+    # blocklist.
+    def _looks_like_code(tok: str) -> bool:
+        if _YEAR_RE.match(tok):
+            return False
+        if tok.isalpha() and tok.lower() in _ENGLISH_NOISE:
+            return False
+        return True
+
+    # 1. Explicit "code … : TOKEN" instruction — the strongest signal, and the
+    #    ONLY path that catches all-letter codes (e.g. Greenhouse "ORfBCZBT").
+    for m in _CODE_COLON_RE.finditer(text):
+        tok = m.group(1)
+        if _looks_like_code(tok):
+            return tok
+    # 2. Mixed alphanumeric token — return the FIRST one that isn't a year.
     for m in _CODE_MIXED_RE.finditer(text):
         tok = m.group(1)
         if not _YEAR_RE.match(tok):
             return tok
-    # 2. Cue-anchored. Require a colon/space-delimited token after the cue;
+    # 3. Cue-anchored. Require a colon/space-delimited token after the cue;
     #    prefer the LAST hit (the code usually follows the final phrase).
-    #    REJECT all-letter tokens that look like English words — these are
-    #    almost always noise from phrases like "enter the code field below"
-    #    (the literal bug observed against a Greenhouse/Reddit run where the
-    #    word "field" was typed into the OTP boxes).
-    def _looks_like_code(tok: str) -> bool:
-        if _YEAR_RE.match(tok):
-            return False
-        # All-letter token AND in the noise blocklist → reject. Real all-letter
-        # codes are rare; the few we've seen are like "XZQPLMN" (random caps)
-        # which won't be in the blocklist.
-        if tok.isalpha() and tok.lower() in _ENGLISH_NOISE:
-            return False
-        return True
     cue_hits = [m.group(1) for m in _CODE_CUE_RE.finditer(text)
                 if _looks_like_code(m.group(1))]
     if cue_hits:
         return cue_hits[-1]
-    # 3. Pure-digit fallback (6–8 digits, excluding years).
+    # 4. Pure-digit fallback (6–8 digits, excluding years).
     for m in _CODE_DIGITS_RE.finditer(text):
         if not _YEAR_RE.match(m.group(1)):
             return m.group(1)
@@ -496,9 +510,15 @@ def _gmail_search_code_sync(
     refresh_token: str,
     after_epoch: int,
     max_results: int = 8,
+    sender_hint: str = "",
 ) -> Optional[str]:
     """Blocking Gmail call — list recent inbox messages and return the first
     one whose content looks like an ATS verification code.
+
+    `sender_hint` (e.g. "greenhouse", "ashby") restricts matches to messages
+    whose From/Subject contains it. Without this, two concurrent browser runs
+    for the same candidate steal each other's codes — observed live: an Ashby
+    run filled the Greenhouse code belonging to a parallel Vercel run.
 
     Wrapped by `_fetch_code_async` so the AgentLoop can await it.
     """
@@ -509,7 +529,11 @@ def _gmail_search_code_sync(
     # `after:` accepts a unix timestamp in seconds. We pad by 60s to catch
     # mail-server clock skew.
     after_q = max(0, after_epoch - 60)
-    q = f"in:inbox is:unread newer_than:1h after:{after_q}"
+    # NOTE: intentionally NOT filtering `is:unread`. The candidate (or a prior
+    # poll) may open the verification email, which drops it from an is:unread
+    # search and causes a false "code not found". The after:{submit-60s} +
+    # newer_than:1h window already scopes results to THIS submission.
+    q = f"in:inbox newer_than:1h after:{after_q}"
     try:
         listing = service.users().messages().list(
             userId="me", q=q, maxResults=max_results,
@@ -531,13 +555,17 @@ def _gmail_search_code_sync(
             logger.debug(f"[verify] gmail get {mid} failed: {exc}")
             continue
         headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
+        if sender_hint:
+            blob = ((headers.get("From") or "") + " " + (headers.get("Subject") or "")).lower()
+            if sender_hint.lower() not in blob:
+                continue
         if not _is_likely_verification(headers, msg.get("snippet") or ""):
             continue
         code = _extract_code_from_message(msg)
         if code:
             logger.info(
                 f"[verify] Gmail code {code!r} from sender={headers.get('From')!r} "
-                f"subject={headers.get('Subject')!r}"
+                f"subject={headers.get('Subject')!r} (hint={sender_hint or 'none'})"
             )
             return code
     return None
@@ -548,6 +576,7 @@ async def _fetch_code_async(
     after_epoch: int,
     timeout_s: float = 90.0,
     poll_interval_s: float = 6.0,
+    sender_hint: str = "",
 ) -> Optional[str]:
     """Poll Gmail until a code arrives or `timeout_s` elapses."""
     started = time.monotonic()
@@ -556,7 +585,7 @@ async def _fetch_code_async(
         attempts += 1
         loop = asyncio.get_event_loop()
         code = await loop.run_in_executor(
-            None, _gmail_search_code_sync, refresh_token, after_epoch
+            None, _gmail_search_code_sync, refresh_token, after_epoch, 8, sender_hint
         )
         if code:
             return code
@@ -586,8 +615,12 @@ async def fetch_verification_code(
     candidate_id: str,
     after_epoch: int,
     timeout_s: Optional[float] = None,
+    sender_hint: str = "",
 ) -> Optional[str]:
     """Get the latest ATS verification code for this candidate.
+
+    `sender_hint` scopes the search to one ATS (e.g. "greenhouse", "ashby") so
+    concurrent runs for the same candidate don't steal each other's codes.
 
     Returns None when:
       - candidate_id missing
@@ -618,7 +651,9 @@ async def fetch_verification_code(
         )
         return None
     try:
-        return await _fetch_code_async(refresh_token, after_epoch, timeout_s=timeout_s)
+        return await _fetch_code_async(
+            refresh_token, after_epoch, timeout_s=timeout_s, sender_hint=sender_hint
+        )
     except Exception as exc:
         if "GMAIL_AUTH_FAILED" in str(exc):
             raise

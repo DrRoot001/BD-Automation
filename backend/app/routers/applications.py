@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, update
+from sqlalchemy import select, update, delete
 from uuid import UUID
 from datetime import datetime
 from typing import List, Optional, Dict
@@ -75,6 +75,7 @@ async def create_application(
 @router.get("", response_model=List[ApplicationResponse])
 async def list_applications(
     candidate_id: Optional[UUID] = None,
+    job_id: Optional[UUID] = None,
     status: Optional[ApplicationStatus] = None,
     limit: int = 100,
     offset: int = 0,
@@ -97,6 +98,8 @@ async def list_applications(
 
     if candidate_id:
         query = query.where(Application.candidate_id == candidate_id)
+    if job_id:
+        query = query.where(Application.job_id == job_id)
     if status:
         query = query.where(Application.status == status.value)
 
@@ -228,7 +231,7 @@ async def prepare_package(request: PreparePackageRequest):
     from module3.orchestrator import prepare_package_for_live_application
     # Derive the API base URL from the server's own base address so that
     # prepare_package_for_live_application can make internal API calls correctly.
-    api_base_url = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api").rstrip("/")
+    api_base_url = os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8002/api").rstrip("/")
     if api_base_url.endswith("/api"):
         api_base_url = api_base_url[: -len("/api")]
 
@@ -367,3 +370,34 @@ async def admin_fail_stuck_applications(
     from app.services.state_machine import fail_applications_in_window_async
     count = await fail_applications_in_window_async(db, hours=hours)
     return {"failed_count": count, "hours": hours}
+
+
+@router.delete("/admin/reset-candidate/{candidate_id}")
+async def admin_reset_candidate_applications(
+    candidate_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Delete all applications (and their history) for a candidate so the
+    pipeline can re-process them from scratch. Intended for dev/testing only."""
+    from app.models.application_history import ApplicationHistory
+
+    # Fetch application IDs for this candidate first
+    id_rows = (await db.execute(
+        select(Application.id).where(Application.candidate_id == candidate_id)
+    )).scalars().all()
+
+    if not id_rows:
+        return {"deleted": 0, "candidate_id": str(candidate_id)}
+
+    # Delete history rows first (FK constraint)
+    await db.execute(
+        delete(ApplicationHistory).where(ApplicationHistory.application_id.in_(id_rows))
+    )
+    # Delete the applications
+    await db.execute(
+        delete(Application).where(Application.candidate_id == candidate_id)
+    )
+    await db.commit()
+
+    return {"deleted": len(id_rows), "candidate_id": str(candidate_id)}
