@@ -151,6 +151,55 @@ class AICaptchaSolver:
             logger.warning(f"[AICaptcha] checkbox attempt failed: {exc}")
             return False
 
+    async def attempt_hcaptcha_checkbox_pass(self, page: Page) -> Optional[str]:
+        """Click the hCaptcha checkbox and, if it passes WITHOUT escalating to a
+        visible grid, return the `h-captcha-response` token.
+
+        AI-vision GRID solving for hCaptcha is intentionally NOT implemented in
+        this class — hCaptcha's grid differs from reCAPTCHA's and the project's
+        real hCaptcha solver is `hcaptcha-challenger` (AgentV) in agent/loop.py
+        (used for Lever, whose hCaptcha is invisible anyway). This method only
+        covers the common "checkbox passes silently" case; it returns None when
+        a challenge opens so the caller can fall back to AgentV rather than
+        silently no-op'ing on reCAPTCHA-only selectors (the prior behavior)."""
+        try:
+            frame_el = await page.query_selector(_HCAPTCHA_ANCHOR)
+            if not frame_el:
+                return None
+            anchor = await frame_el.content_frame()
+            if not anchor:
+                return None
+            checkbox = anchor.locator("#checkbox")
+            if await checkbox.count() == 0:
+                return None
+            box = await frame_el.bounding_box()
+            if box:
+                try:
+                    await page.mouse.move(box["x"] + 15, box["y"] + 15, steps=10)
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+            await checkbox.click(timeout=8000)
+            for _ in range(20):  # up to ~4s
+                await asyncio.sleep(0.2)
+                token = await page.evaluate(
+                    "() => { const t = document.querySelector("
+                    "'textarea[name=\"h-captcha-response\"], #h-captcha-response'); "
+                    "return t && t.value ? t.value : ''; }"
+                )
+                if token:
+                    logger.info("[AICaptcha] hCaptcha passed via checkbox — token captured")
+                    return token
+            logger.info(
+                "[AICaptcha] hCaptcha checkbox did not yield a token (challenge "
+                "likely opened) — AI-vision grid solving is not supported for "
+                "hCaptcha; caller should fall back to hcaptcha-challenger (AgentV)."
+            )
+            return None
+        except Exception as exc:
+            logger.warning(f"[AICaptcha] hCaptcha checkbox attempt failed: {exc}")
+            return None
+
     # ──────────────────────────────────────────────────────────────────────
     # Step 2 — capture the challenge into something the LLM can read
     # ──────────────────────────────────────────────────────────────────────
@@ -322,8 +371,11 @@ class AICaptchaSolver:
         """Try to solve the captcha entirely in-process using Claude vision.
 
         Strategy by type:
-          recaptcha_v2 / hcaptcha — try checkbox pass first; if that opens
-            a grid challenge, ask Claude to identify matching tiles and click.
+          recaptcha_v2 — try checkbox pass first; if that opens a grid
+            challenge, ask Claude to identify matching tiles and click.
+          hcaptcha — checkbox-pass only (see attempt_hcaptcha_checkbox_pass);
+            AI-vision grid solving is NOT supported here — caller should fall
+            back to hcaptcha-challenger (AgentV) when this returns failure.
           image — capture the static captcha image and ask Claude to OCR it.
             Caller is responsible for typing the returned text into the
             answer field (we return token=<solved_text>).
@@ -332,8 +384,22 @@ class AICaptchaSolver:
         for attempt in range(1, max_attempts + 1):
             logger.info(f"[AICaptcha] attempt {attempt}/{max_attempts} type={captcha_type}")
 
-            # Phase 1: try the silent checkbox pass for v2-style captchas
-            if captcha_type in ("recaptcha_v2", "hcaptcha"):
+            # hCaptcha: checkbox pass only. Do NOT run the reCAPTCHA grid
+            # capture below (its selectors are reCAPTCHA-only and silently
+            # no-op on hCaptcha — the old bug this replaces).
+            if captcha_type == "hcaptcha":
+                hc_token = await self.attempt_hcaptcha_checkbox_pass(page)
+                if hc_token:
+                    return CaptchaSolution(
+                        captcha_type="hcaptcha", success=True, token=hc_token,
+                        solve_time_seconds=time.monotonic() - start, cost_usd=0,
+                    )
+                # No token → fail fast (caller falls back to AgentV). Retrying
+                # the checkbox rarely helps once a challenge has opened.
+                break
+
+            # Phase 1: try the silent checkbox pass for reCAPTCHA v2
+            if captcha_type == "recaptcha_v2":
                 passed = await self.attempt_checkbox_pass(page)
                 if passed:
                     return CaptchaSolution(

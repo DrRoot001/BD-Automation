@@ -42,6 +42,16 @@ _ATS_HOSTS: tuple[tuple[str, str, str], ...] = (
     ("ashbyhq.com",               "",              "ashby"),
     ("myworkdayjobs.com",         "",              "workday"),
     ("workday.com",               "",              "workday"),
+    # ATSes without a dedicated adapter yet — route to "generic" so the
+    # AgentLoop drives the form. Hosts that also serve marketing/company
+    # content get a required-path filter (apply.workable.com/<co>/j/<id>,
+    # jobs.smartrecruiters.com/<Co>/<id>); pure-ATS hosts
+    # (ats.rippling.com, <co>.pinpointhq.com) match on host alone.
+    ("apply.workable.com",        "/j/",           "generic"),
+    ("workable.com",              "/j/",           "generic"),
+    ("ats.rippling.com",          "",              "generic"),
+    ("jobs.smartrecruiters.com",  "",              "generic"),
+    ("pinpointhq.com",            "",              "generic"),
     ("linkedin.com",              "/jobs/view/",   "linkedin"),
 )
 

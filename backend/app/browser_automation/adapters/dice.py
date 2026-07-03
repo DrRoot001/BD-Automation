@@ -307,6 +307,14 @@ class DiceAdapter(BasePlatformAdapter):
                 logged_in = await self._wait_logged_in(page, timeout_s=20.0)
 
         if not logged_in:
+            # Clear the persisted session: if a stale/corrupt blob contributed
+            # to the failed login, leaving it in place would wedge every future
+            # run. Next attempt then starts from a clean fresh-login.
+            try:
+                from .session_utils import invalidate_session_file
+                invalidate_session_file("dice")
+            except Exception:
+                pass
             raise RuntimeError(
                 "BLOCKED: Dice login did not complete (still on a login/challenge "
                 f"page: url={page.url!r}). May require MFA, email code, or a captcha "

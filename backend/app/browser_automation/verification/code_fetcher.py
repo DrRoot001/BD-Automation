@@ -572,10 +572,20 @@ async def _fetch_code_async(
 # Public entry point — call from the AgentLoop
 # ──────────────────────────────────────────────────────────────────────────
 
+def _default_code_timeout() -> float:
+    """OTP polling budget in seconds. `VERIFY_CODE_TIMEOUT_S` env overrides the
+    90s default — some ATSes take 120s+ to deliver the email, and a too-tight
+    timeout aborts the apply on a false negative."""
+    try:
+        return float(os.getenv("VERIFY_CODE_TIMEOUT_S", "90"))
+    except (TypeError, ValueError):
+        return 90.0
+
+
 async def fetch_verification_code(
     candidate_id: str,
     after_epoch: int,
-    timeout_s: float = 90.0,
+    timeout_s: Optional[float] = None,
 ) -> Optional[str]:
     """Get the latest ATS verification code for this candidate.
 
@@ -588,6 +598,8 @@ async def fetch_verification_code(
     """
     if not candidate_id:
         return None
+    if timeout_s is None:
+        timeout_s = _default_code_timeout()
     try:
         refresh_token = await _load_refresh_token(candidate_id)
     except RuntimeError as exc:
@@ -612,6 +624,174 @@ async def fetch_verification_code(
             raise
         logger.warning(f"[verify] fetch_verification_code failed: {exc}")
         return None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Magic-LINK fetch (passwordless login, e.g. Built In)
+#
+# Some portals authenticate via a one-time login LINK emailed to the candidate
+# (no OTP code). This fetches the newest such link from Gmail. Reuses the same
+# OAuth plumbing as the code fetcher (_make_creds / _load_refresh_token).
+# ──────────────────────────────────────────────────────────────────────────
+
+_HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
+_URL_RE = re.compile(r'https?://[^\s"\'<>)]+', re.I)
+
+
+def _extract_links(msg: dict) -> List[str]:
+    """Return every http(s) URL found in the message (href attrs first, then
+    bare URLs in the visible text), de-duplicated, order-preserving."""
+    bodies = _collect_bodies(msg.get("payload", {}))
+    links: List[str] = []
+    for b in bodies:
+        # href="..." in HTML parts (before we strip tags).
+        for m in _HREF_RE.finditer(b):
+            links.append(m.group(1))
+        # bare URLs anywhere.
+        for m in _URL_RE.finditer(b):
+            links.append(m.group(0))
+    # De-dupe, keep order.
+    return list(dict.fromkeys(links))
+
+
+def _pick_login_link(links: List[str], host_hint: str, path_hints: Tuple[str, ...]) -> Optional[str]:
+    """Choose the best login/magic link from a message's links.
+
+    Priority:
+      1. A link whose host contains `host_hint` AND whose path/query matches a
+         login-ish `path_hint` (login/verify/magic/token/auth/confirm/signin).
+      2. Any link whose host contains `host_hint`.
+      3. A click-tracking wrapper (sendgrid/mailgun/…) whose target= / url=
+         query param decodes to a `host_hint` URL.
+    Returns None if nothing plausible is found.
+    """
+    from urllib.parse import urlparse, parse_qs, unquote
+    host_hint = (host_hint or "").lower()
+    hosted = []
+    for u in links:
+        try:
+            p = urlparse(u)
+        except Exception:
+            continue
+        host = (p.hostname or "").lower()
+        blob = (p.path + "?" + (p.query or "")).lower()
+        if host_hint and host_hint in host:
+            hosted.append(u)
+            if any(h in blob for h in path_hints):
+                return u  # priority 1
+    if hosted:
+        return hosted[0]  # priority 2
+    # priority 3: tracking-wrapper links that embed the real URL in a query arg.
+    for u in links:
+        try:
+            qs = parse_qs(urlparse(u).query)
+        except Exception:
+            continue
+        for key in ("url", "target", "u", "redirect", "link"):
+            for val in qs.get(key, []):
+                dec = unquote(val)
+                if host_hint and host_hint in dec.lower() and dec.lower().startswith("http"):
+                    return dec
+    return None
+
+
+def _gmail_search_link_sync(
+    refresh_token: str,
+    after_epoch: int,
+    sender_hint: str,
+    host_hint: str,
+    path_hints: Tuple[str, ...],
+    max_results: int = 8,
+) -> Optional[str]:
+    """Blocking Gmail call — find the newest recent message from `sender_hint`
+    and return its best login link."""
+    from googleapiclient.discovery import build
+    creds = _make_creds(refresh_token)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    after_q = max(0, after_epoch - 60)
+    # Scope to the sender when we have one — magic-link mail is transactional.
+    q = f"newer_than:1h after:{after_q}"
+    if sender_hint:
+        q = f"from:{sender_hint} {q}"
+    try:
+        listing = service.users().messages().list(
+            userId="me", q=q, maxResults=max_results,
+        ).execute()
+    except Exception as exc:
+        err_msg = str(exc).lower()
+        if "invalid_grant" in err_msg or "unauthorized" in err_msg or "invalid client" in err_msg:
+            logger.error(f"[verify] Gmail token invalid or expired: {exc}")
+            raise RuntimeError(f"GMAIL_AUTH_FAILED: {exc}")
+        logger.warning(f"[verify] gmail link-list failed: {exc}")
+        return None
+    ids = [m["id"] for m in (listing.get("messages") or [])]
+    for mid in ids:
+        try:
+            msg = service.users().messages().get(
+                userId="me", id=mid, format="full",
+            ).execute()
+        except Exception as exc:
+            logger.debug(f"[verify] gmail get {mid} failed: {exc}")
+            continue
+        headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
+        link = _pick_login_link(_extract_links(msg), host_hint, path_hints)
+        if link:
+            logger.info(
+                f"[verify] Gmail magic-link found from sender={headers.get('From')!r} "
+                f"subject={headers.get('Subject')!r} → {link[:80]}…"
+            )
+            return link
+    return None
+
+
+async def fetch_magic_link(
+    candidate_id: str,
+    after_epoch: int,
+    sender_hint: str = "",
+    host_hint: str = "",
+    path_hints: Tuple[str, ...] = ("login", "signin", "sign-in", "verify", "magic",
+                                    "token", "auth", "confirm", "activate"),
+    timeout_s: float = 120.0,
+    poll_interval_s: float = 6.0,
+) -> Optional[str]:
+    """Poll Gmail for a passwordless one-time login LINK and return the URL.
+
+    Mirrors fetch_verification_code but extracts a URL instead of an OTP.
+      - sender_hint: e.g. "builtin.com" (narrows the Gmail search).
+      - host_hint:   e.g. "builtin.com" (the host the real link should point at).
+    Returns None on any failure (no Gmail token, timeout, etc.) so the caller
+    can degrade gracefully.
+    """
+    if not candidate_id:
+        return None
+    try:
+        refresh_token = await _load_refresh_token(candidate_id)
+    except RuntimeError as exc:
+        logger.warning(f"[verify] transient token-load failure ({exc}) — retry next poll")
+        return None
+    if not refresh_token:
+        logger.info(f"[verify] candidate {candidate_id[:8]} has no google_refresh_token; skipping magic-link fetch")
+        return None
+    started = time.monotonic()
+    attempts = 0
+    while time.monotonic() - started < timeout_s:
+        attempts += 1
+        loop = asyncio.get_event_loop()
+        try:
+            link = await loop.run_in_executor(
+                None, _gmail_search_link_sync, refresh_token, after_epoch,
+                sender_hint, host_hint, path_hints,
+            )
+        except Exception as exc:
+            if "GMAIL_AUTH_FAILED" in str(exc):
+                raise
+            logger.warning(f"[verify] fetch_magic_link failed: {exc}")
+            return None
+        if link:
+            return link
+        await asyncio.sleep(poll_interval_s)
+    logger.warning(f"[verify] Gmail magic-link polling timed out after {timeout_s:.0f}s ({attempts} attempt(s))")
+    return None
 
 
 async def _load_refresh_token(candidate_id: str) -> Optional[str]:
