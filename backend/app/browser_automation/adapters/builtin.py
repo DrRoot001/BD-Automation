@@ -152,7 +152,7 @@ class BuiltInAdapter(BasePlatformAdapter):
                 await ln.fill("Haider")
             em = page.locator("input#user-email, input[name='email']").first
             if await em.count() > 0 and await em.is_visible():
-                await em.fill(candidate_email or "sabih0364@gmail.com")
+                await em.fill(candidate_email or os.getenv("BUILTIN_CANDIDATE_EMAIL", "candidate@example.com"))
         except Exception as exc:
             logger.warning(f"[BuiltIn] mini-form fill error (non-fatal): {exc}")
 
