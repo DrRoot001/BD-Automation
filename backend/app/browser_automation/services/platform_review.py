@@ -47,6 +47,13 @@ _SKIP_PATTERNS = [
     "iCIMS requires an account",
     "Dice requires an account",
     "DICE_EMAIL",
+    # Candidate-level or self-inflicted outcomes — the ATS behaved correctly:
+    # "already applied" duplicate rejections come from OUR retry of a job that
+    # actually submitted, and a missing Gmail connection is a candidate-setup
+    # gap. Neither says anything about the platform's health.
+    "SPAM_FLAGGED",
+    "already applied",
+    "GMAIL_NOT_CONNECTED",
 ]
 
 # How many platform-relevant failures within the rolling window trigger a flag.

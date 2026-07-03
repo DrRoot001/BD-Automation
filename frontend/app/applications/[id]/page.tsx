@@ -7,7 +7,7 @@ import { api, type ApplicationHistoryEntry } from '@/lib/api'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
 import { resolveFileUrl } from '@/components/utils'
-import { ExternalLink, AlertCircle, ArrowLeft } from 'lucide-react'
+import { ExternalLink, AlertCircle, ArrowLeft, FileText } from 'lucide-react'
 
 export default function ApplicationDetailPage() {
   const { id } = useParams()
@@ -169,24 +169,55 @@ export default function ApplicationDetailPage() {
             </div>
           )}
 
-          {application.resume_url && (
+          {(application.resume_url || application.cover_letter_url) && (
             <div className="card p-6 bg-bg-card border border-bg-border rounded-xl">
               <h2 className="text-sm font-semibold text-text-primary border-b border-bg-border pb-3 mb-4">
                 Application Documents
               </h2>
-              <div className="flex items-center justify-between p-4 bg-bg-primary rounded-xl border border-bg-border">
-                <div>
-                  <div className="text-sm font-semibold text-text-primary">Tailored Resume</div>
-                  <div className="text-xs text-text-muted mt-0.5">Optimized for this specific job posting</div>
-                </div>
-                <a
-                  href={resolveFileUrl(application.resume_url) ?? application.resume_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-primary !py-1.5 !px-3 !text-xs"
-                >
-                  View Resume ↗
-                </a>
+              <div className="flex flex-col gap-3">
+                {application.resume_url && (
+                  <div className="flex items-center justify-between p-4 bg-bg-primary rounded-xl border border-bg-border">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-lg">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-text-primary">Tailored Resume</div>
+                        <div className="text-xs text-text-muted mt-0.5">Optimized for this specific job posting</div>
+                      </div>
+                    </div>
+                    <a
+                      href={resolveFileUrl(application.resume_url) ?? application.resume_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-primary !py-1.5 !px-3.5 !text-xs inline-flex items-center gap-1.5"
+                    >
+                      View Resume ↗
+                    </a>
+                  </div>
+                )}
+
+                {application.cover_letter_url && (
+                  <div className="flex items-center justify-between p-4 bg-bg-primary rounded-xl border border-bg-border">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-purple-500/10 text-purple-400 rounded-lg">
+                        <FileText className="w-5 h-5" />
+                      </div>
+                      <div>
+                        <div className="text-sm font-semibold text-text-primary">Tailored Cover Letter</div>
+                        <div className="text-xs text-text-muted mt-0.5">Custom letter generated for this job</div>
+                      </div>
+                    </div>
+                    <a
+                      href={resolveFileUrl(application.cover_letter_url) ?? application.cover_letter_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="btn-secondary !py-1.5 !px-3.5 !text-xs inline-flex items-center gap-1.5"
+                    >
+                      View Cover Letter ↗
+                    </a>
+                  </div>
+                )}
               </div>
             </div>
           )}

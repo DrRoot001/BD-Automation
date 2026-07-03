@@ -5,8 +5,8 @@ import { usePathname } from 'next/navigation'
 import { clsx } from 'clsx'
 import {
   LayoutDashboard, Users, FileText, Briefcase,
-  ChevronLeft, ChevronRight, Menu, Search,
-  Upload, Radar, CalendarClock, UserCog,
+  ChevronLeft, ChevronRight, Menu,
+  Radar, CalendarClock, UserCog,
 } from 'lucide-react'
 
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -26,7 +26,8 @@ type NavSection = {
 const ADMIN_NAV: NavSection[] = [
   {
     items: [
-      { id: 'admin-overview',   label: 'Overview',         path: '/admin',              icon: LayoutDashboard },
+      { id: 'admin-overview',   label: 'Admin Overview',   path: '/admin',              icon: LayoutDashboard },
+      { id: 'admin-dashboard',  label: 'BD Dashboard',     path: '/dashboard',          icon: LayoutDashboard },
     ],
   },
   {
@@ -35,13 +36,14 @@ const ADMIN_NAV: NavSection[] = [
       { id: 'admin-users',      label: 'User Management',  path: '/admin/users',        icon: UserCog },
       { id: 'admin-jobs',       label: 'Job Management',   path: '/admin/jobs',         icon: Briefcase },
       { id: 'admin-candidates', label: 'Candidates',       path: '/candidates',         icon: Users },
+      { id: 'admin-apps',       label: 'Applications',     path: '/dashboard/applications', icon: FileText },
+      { id: 'admin-interviews', label: 'Interviews',       path: '/dashboard/interviews',   icon: CalendarClock },
     ],
   },
   {
-    title: 'Automation',
+    title: 'Automation & Tools',
     items: [
       { id: 'admin-discovery',  label: 'Job Discovery',    path: '/admin/discovery',    icon: Radar },
-      { id: 'admin-import',     label: 'Import Jobs',      path: '/admin/import',       icon: Upload },
     ],
   },
 ]
@@ -77,7 +79,8 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname()
   const { data: user, isLoading } = useCurrentUser()
 
-  const navSections = user?.role === 'admin' ? ADMIN_NAV : BD_USER_NAV
+  const isAdmin = user?.role === 'admin' || pathname.startsWith('/admin')
+  const navSections = isAdmin ? ADMIN_NAV : BD_USER_NAV
 
   const isActive = (path: string) => {
     // Exact match for root dashboard / admin pages

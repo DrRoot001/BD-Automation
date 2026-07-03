@@ -99,7 +99,50 @@ def test_invalidate_session_file(monkeypatch, tmp_path):
     assert session_utils.invalidate_session_file("linkedin") is False
 
 
+# ── OTP token decryption test ────────────────────────────────────────────────
+
+import pytest
+
+@pytest.mark.asyncio
+async def test_load_refresh_token_decryption(monkeypatch):
+    from backend.app.browser_automation.verification import code_fetcher
+    from app.services.crypto import encrypt_token
+
+    raw_token = "1//04_test_sample_refresh_token_xyz"
+    encrypted_token = encrypt_token(raw_token)
+
+    class FakeCandidate:
+        def __init__(self, token):
+            self.google_refresh_token = token
+
+    class FakeScalarResult:
+        def __init__(self, obj):
+            self._obj = obj
+        def scalar_one_or_none(self):
+            return self._obj
+
+    class FakeSession:
+        def __init__(self, candidate):
+            self.candidate = candidate
+        async def __aenter__(self):
+            return self
+        async def __aexit__(self, exc_type, exc, tb):
+            pass
+        async def execute(self, query):
+            return FakeScalarResult(self.candidate)
+
+    fake_cand = FakeCandidate(encrypted_token)
+    def fake_task_session():
+        return FakeSession(fake_cand)
+
+    monkeypatch.setattr("app.database.task_session", fake_task_session)
+
+    loaded = await code_fetcher._load_refresh_token("dummy-cand-id")
+    assert loaded == raw_token
+
+
 if __name__ == "__main__":
     import subprocess
 
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))
+

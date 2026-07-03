@@ -5,6 +5,14 @@
       {
         "timestamp": "2026-06-27T01:11:36.913603",
         "error": "ApplicationPackage.resume_url is empty \u2014 cannot proceed"
+      },
+      {
+        "timestamp": "2026-07-03T14:14:55.636486",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-03T14:22:14.269406",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]
   },
@@ -42,6 +50,14 @@
       },
       {
         "timestamp": "2026-07-03T02:53:21.946437",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
+      },
+      {
+        "timestamp": "2026-07-03T14:56:03.920041",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
+      },
+      {
+        "timestamp": "2026-07-03T14:56:16.190997",
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
       }
     ]
@@ -97,20 +113,8 @@
     "needs_review": false,
     "failures": [
       {
-        "timestamp": "2026-06-30T21:41:22.505746",
-        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code)"
-      },
-      {
-        "timestamp": "2026-06-30T21:45:05.676034",
-        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code)"
-      },
-      {
-        "timestamp": "2026-07-03T02:46:30.171606",
-        "error": "AgentLoop aborted: SPAM_FLAGGED: server rejected the submission (detected 'already applied' on the post-submit page). Do not retry \u2014 retrying would resubmit into the same rejection or escalate an anti-bot flag."
-      },
-      {
-        "timestamp": "2026-07-03T11:04:01.003046",
-        "error": "AgentLoop aborted: SPAM_FLAGGED: server rejected the submission (detected 'already applied' on the post-submit page). Do not retry \u2014 retrying would resubmit into the same rejection or escalate an anti-bot flag."
+        "timestamp": "2026-07-03T14:54:59.880521",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
       }
     ],
     "spam_backoff": {
@@ -151,10 +155,6 @@
       {
         "timestamp": "2026-07-01T09:06:02.244077",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
-      },
-      {
-        "timestamp": "2026-07-01T09:12:30.647540",
-        "error": "AgentLoop aborted: SPAM_FLAGGED: server rejected the submission (detected 'flagged as possible spam' on the post-submit page). Do not retry \u2014 retrying would resubmit into the same rejection or escalate an anti-bot flag."
       }
     ]
   },

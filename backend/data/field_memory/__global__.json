@@ -23,6 +23,14 @@
     "source": "agent_loop",
     "value": " "
   },
+  "addresssvgs not supported by this browser": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*AddressSVGs not supported by this browser.",
+    "last_seen": 1783088078,
+    "source": "rules",
+    "value": "US"
+  },
   "ai policy for application": {
     "count": 1,
     "field_type": "select",
@@ -575,6 +583,14 @@
     "source": "llm:0.40",
     "value": "No"
   },
+  "headline (optional)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Headline (Optional)",
+    "last_seen": 1783088482,
+    "source": "llm:0.70",
+    "value": "Senior AI Automation Engineer"
+  },
   "how did you first hear about cockroach labs": {
     "count": 1,
     "field_type": "select",
@@ -646,6 +662,14 @@
     "last_seen": 1782932363,
     "source": "agent_loop",
     "value": "Daily - I use AI for multiple use cases"
+  },
+  "how would you describe your english fluency": {
+    "count": 4,
+    "field_type": "radio",
+    "label": "*How would you describe your English Fluency?",
+    "last_seen": 1783089086,
+    "source": "screening",
+    "value": "Fluent"
   },
   "i confirm and agree": {
     "count": 1,
@@ -759,6 +783,14 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "postcode": {
+    "count": 1,
+    "field_type": "text",
+    "label": "postcode",
+    "last_seen": 1783087952,
+    "source": "agent_loop",
+    "value": "94105"
+  },
   "preferred pronouns": {
     "count": 1,
     "field_type": "text",
@@ -863,6 +895,30 @@
     "source": "agent_loop",
     "value": "3"
   },
+  "summary (optional)": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Summary (Optional)",
+    "last_seen": 1783088082,
+    "source": "screening",
+    "value": "Senior Data Engineer with 5 years of experience in designing, building, and optimizing ETL pipelines and data warehouses using AWS and Snowflake. Proven track record in re-architecting data solutions and leading AI automation initiatives."
+  },
+  "svgs not supported by this browser.svgs not supported by this browser.svgs not supported by this browser.no": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.No",
+    "last_seen": 1783088086,
+    "source": "screening",
+    "value": "Yes"
+  },
+  "svgs not supported by this browser.svgs not supported by this browser.svgs not supported by this browser.yes": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.Yes",
+    "last_seen": 1783088085,
+    "source": "screening",
+    "value": "Yes"
+  },
   "this role is a hands-on backend software engineering position requiring producti": {
     "count": 2,
     "field_type": "text",
@@ -935,6 +991,14 @@
     "source": "llm:0.70",
     "value": "Software Engineer"
   },
+  "what is your desired salary range for this role, including base and any variable": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What is your desired salary range for this role, including base and any variable",
+    "last_seen": 1783089965,
+    "source": "agent_loop",
+    "value": "$160,000"
+  },
   "what is your expected compensation": {
     "count": 6,
     "field_type": "text",
@@ -990,6 +1054,14 @@
     "last_seen": 1782895922,
     "source": "agent_loop",
     "value": "I am a highly proficient Full Stack Engineer with 2+ years of experience in developing robust internal tooling and scalable applications, aligning well with the 'Pro-Create' aspect of this role. My expertise in backend systems, API integrations, and CI/CD pipelines, as demonstrated by leading development for platforms like Finmile and optimizing database performance, would allow me to contribute significantly to Suno's engineering team. I am eager to apply my skills in a dynamic environment focused on innovative software solutions."
+  },
+  "why did you decide to apply to this role at clickup": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Why did you decide to apply to this role at ClickUp?",
+    "last_seen": 1783089995,
+    "source": "agent_loop",
+    "value": "I am excited by ClickUp's focus on leading architecture and initiatives for data platforms, especially those involving AI workloads. My experience as a Senior AI Automation Engineer, where I've designed and scaled AI-driven products and enterprise automation platforms, aligns perfectly with these goals. I am eager to contribute to ensuring scalability and reliability while mentoring engineers to elevate technical standards."
   },
   "why scale ai": {
     "count": 1,

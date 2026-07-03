@@ -27,7 +27,7 @@ SAMPLE_ITEM = {
 
 
 def main() -> None:
-    mapped = map_item_to_job_create(SAMPLE_ITEM, "https://example.com/jobs")
+    mapped = map_item_to_job_create(SAMPLE_ITEM, "https://example.com/jobs", "ML")
     print("Mapped job output:")
     print(json.dumps(mapped, indent=2))
 

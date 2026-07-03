@@ -20,9 +20,9 @@ import httpx
 from dotenv import load_dotenv
 
 try:
-    from app.module2.links import get_links
+    from app.module2.links import get_links_with_categories
 except ImportError:
-    from module2.links import get_links
+    from module2.links import get_links_with_categories
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / "backend" / ".env")
@@ -44,7 +44,9 @@ ALLOWED_WORK_TYPES = {
     "fully remote", "remote", "remote in united states",
 }
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
+API_BASE_URL = (os.environ.get("M1_API_BASE_URL") or os.environ.get("API_BASE_URL") or os.environ.get("API_URL") or "http://localhost:8002").rstrip("/").replace("/api", "")
+if ":8000" in API_BASE_URL:
+    API_BASE_URL = API_BASE_URL.replace(":8000", ":8002")
 SCRAPE_TIMEOUT_SECONDS = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "300"))
 
 
@@ -89,7 +91,7 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
-def map_item_to_job_create(item: dict[str, Any], link: str) -> Optional[dict[str, Any]]:
+def map_item_to_job_create(item: dict[str, Any], link: str, category: str) -> Optional[dict[str, Any]]:
     """Translate a raw scraped item into the JobCreate shape, or None to skip it."""
     title = (item.get("title") or "").strip()
     company = (item.get("company") or "").strip()
@@ -132,6 +134,7 @@ def map_item_to_job_create(item: dict[str, Any], link: str) -> Optional[dict[str
         "pay_period": (item.get("pay_period") or "").strip() or None,
         "job_type": job_type,
         "posted_at": (item.get("posted_at") or "").strip() or None,
+        "job_category": category,
     }
 
 
@@ -158,8 +161,8 @@ def run_all() -> dict[str, Any]:
         stats["errors"].append("Scraper node_modules folder is missing. Please run 'npm install' inside module2/scraper.")
         return stats
 
-    for link in get_links():
-        print(f"[run_scrape] scraping {link}")
+    for category, link in get_links_with_categories():
+        print(f"[run_scrape] scraping {link} (category={category})")
         raw_items, err = run_node_scraper(link)
         if err:
             stats["errors"].append(f"{link}: {err}")
@@ -170,7 +173,7 @@ def run_all() -> dict[str, Any]:
 
         mapped = []
         for item in raw_items:
-            job = map_item_to_job_create(item, link)
+            job = map_item_to_job_create(item, link, category)
             if job:
                 mapped.append(job)
         stats["kept"] += len(mapped)

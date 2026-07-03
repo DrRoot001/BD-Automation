@@ -74,10 +74,14 @@ fi
 # ── PYTHONPATH — expose all modules to the backend and celery workers ─────────
 
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
+export M1_API_BASE_URL="http://localhost:$BACKEND_PORT/api"
+export API_BASE_URL="http://localhost:$BACKEND_PORT"
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 
 info "Project root : $ROOT"
 info "Python       : $($PYTHON --version 2>&1)"
 info "Node         : $(node --version)"
+info "API Base URL : $M1_API_BASE_URL"
 info "PYTHONPATH   : $PYTHONPATH"
 info "Logs         : $LOG_DIR"
 echo ""
@@ -86,7 +90,7 @@ echo ""
 # Without this, restarting dev.sh accumulates workers that all compete for the
 # same queues, making tasks unpredictably disappear into old workers' logs.
 
-_kill_old_celery() {
+_kill_old_processes() {
   local old_pids
   old_pids=$(pgrep -f "celery.*app.celery_app" 2>/dev/null || true)
   if [ -n "$old_pids" ]; then
@@ -95,8 +99,18 @@ _kill_old_celery() {
     sleep 1
     echo "$old_pids" | xargs kill -9 2>/dev/null || true
   fi
+
+  # Free ports 3000 (frontend) and 8002 (backend) if previously occupied
+  for p in "$FRONTEND_PORT" "$BACKEND_PORT"; do
+    local port_pid
+    port_pid=$(lsof -ti :"$p" 2>/dev/null || true)
+    if [ -n "$port_pid" ]; then
+      info "Freeing port $p (killing PID: $(echo $port_pid | tr '\n' ' '))"
+      echo "$port_pid" | xargs kill -9 2>/dev/null || true
+    fi
+  done
 }
-_kill_old_celery
+_kill_old_processes
 
 # ── PID tracking ─────────────────────────────────────────────────────────────
 
