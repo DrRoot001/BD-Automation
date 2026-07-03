@@ -46,6 +46,15 @@ async def upload_file(page: Page, selector: str, file_url: str) -> bool:
             response = await client.get(file_url)
             response.raise_for_status()
             filename = file_url.split("/")[-1] or "upload.pdf"
+            
+            # Strip version suffixes like _v38, -v38, _version38, etc. at the end of the base name
+            import re
+            base, ext = os.path.splitext(filename)
+            cleaned_base = re.sub(r'[_-]v(?:ersion)?_?\d+$', '', base, flags=re.IGNORECASE)
+            cleaned_base = re.sub(r'v\d+$', '', cleaned_base, flags=re.IGNORECASE)
+            cleaned_base = cleaned_base.rstrip('_-')
+            filename = cleaned_base + ext
+
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_file_path = os.path.join(temp_dir, filename)
                 with open(temp_file_path, "wb") as f:

@@ -299,6 +299,16 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
             filename = os.path.basename(unquote(parsed.path))
         if not filename:
             filename = f"downloaded{suffix}"
+
+        # Strip version suffixes like _v38, -v38, _version38, etc. at the end of the base name
+        # e.g., resume_v38.pdf -> resume.pdf, cover_letter_v2.pdf -> cover_letter.pdf
+        import re
+        base, ext = os.path.splitext(filename)
+        cleaned_base = re.sub(r'[_-]v(?:ersion)?_?\d+$', '', base, flags=re.IGNORECASE)
+        cleaned_base = re.sub(r'v\d+$', '', cleaned_base, flags=re.IGNORECASE)
+        cleaned_base = cleaned_base.rstrip('_-')
+        filename = cleaned_base + ext
+
         if not filename.lower().endswith(suffix.lower()):
             filename += suffix
 

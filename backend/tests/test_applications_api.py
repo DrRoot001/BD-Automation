@@ -180,13 +180,13 @@ def test_recover_stuck_applications(mock_task_session, mock_publish):
     
     assert stuck_app.status == "FAILED"
     assert stuck_app.failure_reason == "INFRA_ERROR"
-    assert stuck_app.error_message == "automation timeout — worker died or never picked up task"
+    assert stuck_app.error_message.startswith("watchdog: stuck in QUEUED")
     
     assert recent_app.status == "QUEUED"
     
     assert stuck_started.status == "FAILED"
     assert stuck_started.failure_reason == "INFRA_ERROR"
-    assert stuck_started.error_message == "automation timeout — worker died or never picked up task"
+    assert stuck_started.error_message.startswith("watchdog: stuck in APPLICATION_STARTED")
     
     assert recent_started.status == "APPLICATION_STARTED"
     
