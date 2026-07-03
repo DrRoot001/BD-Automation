@@ -18,6 +18,7 @@ class CandidateCreate(BaseModel):
     password: Optional[str] = None
 
 class CandidateUpdate(BaseModel):
+    user_id: Optional[UUID] = None
     name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None

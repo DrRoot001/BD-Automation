@@ -6,7 +6,7 @@ import { api } from '@/lib/api'
 import { KPICard } from '@/components/dashboard/KPICard'
 import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
 import { PipelineKanban } from '@/components/dashboard/PipelineKanban'
-import { Send, Target, Award, Briefcase } from 'lucide-react'
+import { Send, Target, Award, CheckCircle2 } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 
 export default function DashboardPage() {
@@ -28,26 +28,26 @@ export default function DashboardPage() {
   })
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-500">
+    <div className="space-y-8 animate-fade-in max-w-7xl mx-auto">
       {/* Header with Candidate Filter */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-bg-border pb-6">
         <div>
-          <h1 className="text-2xl font-bold text-text-primary tracking-tight">Overview</h1>
-          <p className="text-sm text-text-muted mt-1">Your automated job search progress.</p>
+          <h1 className="page-title">Overview</h1>
+          <p className="page-subtitle">Track job search progress and automated pipeline metrics.</p>
         </div>
 
         <div className="flex items-center gap-3">
           <label htmlFor="candidate-select" className="text-xs text-text-muted font-medium whitespace-nowrap">
-            Candidate:
+            Filter Candidate:
           </label>
           <select
             id="candidate-select"
             value={selectedCandidateId}
             onChange={(e) => setSelectedCandidateId(e.target.value)}
             disabled={candidatesLoading}
-            className="bg-bg-secondary border border-bg-border text-text-primary rounded-lg text-sm px-4 py-2 focus:outline-none focus:border-accent transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed min-w-[200px]"
+            className="input !w-auto min-w-[220px]"
           >
-            <option value="">All Candidates</option>
+            <option value="">All Managed Candidates</option>
             {candidates.map((cand) => (
               <option key={cand.id} value={cand.id}>
                 {cand.name}
@@ -60,14 +60,14 @@ export default function DashboardPage() {
       {/* Summary Cards */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <KPICard 
-          label="Jobs Found Today" 
+          label="Applied Today" 
           value={kpis?.applied_today ?? 0} 
-          icon={<Briefcase className="w-4 h-4" />} 
+          icon={<CheckCircle2 className="w-4 h-4" />} 
           accent="info"  
           loading={kpisLoading} 
         />
         <KPICard 
-          label="Applications In Progress" 
+          label="Queued in Pipeline" 
           value={kpis?.pending_in_queue ?? 0} 
           icon={<Send className="w-4 h-4" />} 
           accent="warning" 
@@ -91,14 +91,17 @@ export default function DashboardPage() {
 
       {/* Main content grid */}
       <div className="grid grid-cols-1 xl:grid-cols-4 gap-6">
-        <div className="xl:col-span-3 space-y-6">
+        <div className="xl:col-span-3 space-y-6 min-w-0">
           <div className="card p-6">
-            <h2 className="text-lg font-semibold text-text-primary mb-4">Application Pipeline</h2>
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-base font-semibold text-text-primary">Application Pipeline</h2>
+              <span className="text-xs text-text-muted">Real-time status tracking</span>
+            </div>
             <PipelineKanban candidateId={selectedCandidateId || undefined} />
           </div>
         </div>
         
-        <div className="xl:col-span-1">
+        <div className="xl:col-span-1 min-w-0">
           <ActivityFeed candidateId={selectedCandidateId || undefined} />
         </div>
       </div>

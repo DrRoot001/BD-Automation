@@ -82,6 +82,22 @@ info "PYTHONPATH   : $PYTHONPATH"
 info "Logs         : $LOG_DIR"
 echo ""
 
+# ── Kill any orphaned Celery workers from previous dev.sh sessions ────────────
+# Without this, restarting dev.sh accumulates workers that all compete for the
+# same queues, making tasks unpredictably disappear into old workers' logs.
+
+_kill_old_celery() {
+  local old_pids
+  old_pids=$(pgrep -f "celery.*app.celery_app" 2>/dev/null || true)
+  if [ -n "$old_pids" ]; then
+    info "Killing orphaned Celery processes: $(echo $old_pids | tr '\n' ' ')"
+    echo "$old_pids" | xargs kill 2>/dev/null || true
+    sleep 1
+    echo "$old_pids" | xargs kill -9 2>/dev/null || true
+  fi
+}
+_kill_old_celery
+
 # ── PID tracking ─────────────────────────────────────────────────────────────
 
 declare -a PIDS=()
@@ -97,6 +113,8 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     kill -9 "$pid" 2>/dev/null || true
   done
+  # Also kill any Celery workers that may have forked children not in $PIDS
+  pkill -9 -f "celery.*app.celery_app" 2>/dev/null || true
   log "All services stopped."
   exit 0
 }
@@ -162,7 +180,7 @@ log "Starting Celery worker (modules 2-5) ..."
   "$PYTHON" -m celery \
     -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=2 \
+    --concurrency=6 \
     -n "worker@%h" \
     -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan
 ) > "$LOG_DIR/celery-worker.log" 2>&1 &
@@ -188,10 +206,23 @@ sleep 1
 
 log "Starting Next.js frontend on :$FRONTEND_PORT ..."
 export API_URL="http://localhost:$BACKEND_PORT"
+# FRONTEND_PROD=1 ./dev.sh — serve the production build (faster page loads,
+# no dev-compile pauses; run `npm run build` in frontend/ first).
+if [ "${FRONTEND_PROD:-0}" = "1" ]; then
+  if [ ! -d "$ROOT/frontend/.next" ]; then
+    err "FRONTEND_PROD=1 but frontend/.next not found — run 'npm run build' in frontend/ first."
+    exit 1
+  fi
+  (
+    cd "$ROOT/frontend"
+    npm run start -- --port "$FRONTEND_PORT"
+  ) > "$LOG_DIR/frontend.log" 2>&1 &
+else
 (
   cd "$ROOT/frontend"
   npm run dev -- --port "$FRONTEND_PORT"
 ) > "$LOG_DIR/frontend.log" 2>&1 &
+fi
 PIDS+=($!)
 stream_log "FRONT " "$C_FRONT" "$LOG_DIR/frontend.log"
 

@@ -2,7 +2,7 @@
 
 import { useQuery } from '@tanstack/react-query'
 import { api, type ActivityEvent } from '@/lib/api'
-import { formatDistanceToNow } from '../utils'
+import { formatDistanceToNow } from '@/lib/utils'
 import { clsx } from 'clsx'
 import { RefreshCcw, Send, XCircle, Mail, Target, Search, FileText, Inbox } from 'lucide-react'
 import { ReactNode } from 'react'
@@ -22,7 +22,7 @@ function getEventConfig(eventType: string): { icon: ReactNode; color: string; la
 function EventItem({ event }: { event: ActivityEvent }) {
   const cfg = getEventConfig(event.event_type)
   return (
-    <div className="flex items-start gap-3 px-4 py-3 table-row-hover">
+    <div className="flex items-start gap-3 px-4 py-3 hover:bg-bg-hover transition-colors">
       <div className={clsx('mt-0.5 shrink-0', cfg.color)}>{cfg.icon}</div>
       <div className="flex-1 min-w-0">
         <div className={clsx('text-xs font-medium', cfg.color)}>{cfg.label}</div>
@@ -46,20 +46,20 @@ export function ActivityFeed({ candidateId }: { candidateId?: string }) {
 
   return (
     <div className="card flex flex-col max-h-[480px]">
-      <div className="card-header shrink-0">
+      <div className="px-5 py-4 border-b border-bg-border flex items-center justify-between shrink-0">
         <div className="flex items-center gap-2">
-          <h2 className="card-title">Activity</h2>
+          <h2 className="font-semibold text-text-primary text-sm">Recent Activity</h2>
           {!isLoading && events.length > 0 && (
-            <span className="text-xs text-text-muted">{events.length}</span>
+            <span className="text-xs text-text-muted bg-bg-secondary px-2 py-0.5 rounded-full font-medium">{events.length}</span>
           )}
         </div>
         <span className="flex items-center gap-1.5 text-xs text-text-muted">
-          <span className="live-dot" />
-          Real-time
+          <span className="w-2 h-2 rounded-full bg-success animate-pulse" />
+          Live Feed
         </span>
       </div>
 
-      <div className="overflow-y-auto flex-1 divide-y divide-bg-border/40" style={{ scrollbarWidth: 'none' }}>
+      <div className="overflow-y-auto flex-1 divide-y divide-bg-border/40">
         {isLoading ? (
           <div className="p-4 space-y-3">
             {Array.from({ length: 6 }).map((_, i) => (
@@ -76,8 +76,8 @@ export function ActivityFeed({ candidateId }: { candidateId?: string }) {
           <div className="p-8 text-center text-danger text-sm">Failed to load activity</div>
         ) : events.length === 0 ? (
           <div className="p-8 text-center">
-            <Inbox className="w-8 h-8 text-text-muted mx-auto mb-2" />
-            <div className="text-sm text-text-muted">No activity yet</div>
+            <Inbox className="w-8 h-8 text-text-muted mx-auto mb-2 opacity-50" />
+            <div className="text-sm text-text-muted">No activity events yet</div>
           </div>
         ) : (
           events.map((ev, i) => <EventItem key={i} event={ev} />)

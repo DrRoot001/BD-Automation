@@ -39,6 +39,10 @@
       {
         "timestamp": "2026-06-30T22:02:46.170937",
         "error": "Page.evaluate: Connection closed while reading from the driver"
+      },
+      {
+        "timestamp": "2026-07-03T02:53:21.946437",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
       }
     ]
   },
@@ -99,8 +103,20 @@
       {
         "timestamp": "2026-06-30T21:45:05.676034",
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=GMAIL_NOT_CONNECTED: candidate has not authorized Gmail, cannot fetch verification code)"
+      },
+      {
+        "timestamp": "2026-07-03T02:46:30.171606",
+        "error": "AgentLoop aborted: SPAM_FLAGGED: server rejected the submission (detected 'already applied' on the post-submit page). Do not retry \u2014 retrying would resubmit into the same rejection or escalate an anti-bot flag."
+      },
+      {
+        "timestamp": "2026-07-03T11:04:01.003046",
+        "error": "AgentLoop aborted: SPAM_FLAGGED: server rejected the submission (detected 'already applied' on the post-submit page). Do not retry \u2014 retrying would resubmit into the same rejection or escalate an anti-bot flag."
       }
-    ]
+    ],
+    "spam_backoff": {
+      "count": 1,
+      "until": "2026-07-03T11:09:01.012122"
+    }
   },
   "https://job-boards.greenhouse.io/vercel/jobs/5704320004": {
     "needs_review": false,

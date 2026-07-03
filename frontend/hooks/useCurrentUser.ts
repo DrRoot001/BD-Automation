@@ -1,5 +1,4 @@
 import { useQuery } from '@tanstack/react-query'
-import { api } from '@/lib/api'
 
 import { getCurrentUserAction } from '@/app/actions/auth'
 
@@ -15,10 +14,11 @@ export function useCurrentUser() {
   return useQuery<CurrentUser | null>({
     queryKey: ['currentUser'],
     queryFn: async () => {
-      // Fetch user using server action to read httpOnly cookie
-      return await getCurrentUserAction();
+      return await getCurrentUserAction()
     },
-    staleTime: 0, // always re-fetch on mount so a new session never shows a previous user's identity
-    retry: false
+    staleTime: 5 * 60_000,  // Identity/role rarely changes mid-session — avoid a server-action round-trip per navigation
+    gcTime: 5 * 60_000,     // Keep cached for 5 minutes after all subscribers unmount
+    refetchOnWindowFocus: true,
+    retry: 1,               // Retry once on transient failures
   })
 }

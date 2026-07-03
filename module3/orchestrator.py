@@ -109,8 +109,9 @@ async def orchestrate_application_package(
     if not api_base_url:
         api_base_url = os.getenv("API_URL", "http://127.0.0.1:8000")
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
-    
-    async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
+
+    transport = httpx.AsyncHTTPTransport(retries=3)
+    async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0, transport=transport) as client:
         # 1. Fetch Candidate details
         print("[ORCHESTRATOR] Fetching candidate details...")
         resp = await client.get(f"/api/candidates/{candidate_id}")
@@ -453,8 +454,9 @@ async def prepare_package_for_live_application(
     if not api_base_url:
         api_base_url = os.getenv("API_URL", "http://127.0.0.1:8000")
     print(f"\n[ORCHESTRATOR] Synchronous package preparation for Candidate: {candidate_id} | Job: {job_id}")
-    
-    async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0) as client:
+
+    transport = httpx.AsyncHTTPTransport(retries=3)
+    async with httpx.AsyncClient(base_url=api_base_url, timeout=120.0, transport=transport) as client:
         # 1. Fetch Candidate details
         print("[ORCHESTRATOR] Fetching candidate details...")
         resp = await client.get(f"/api/candidates/{candidate_id}")
@@ -546,13 +548,11 @@ async def prepare_package_for_live_application(
 
         # 4. Locate or Create Application record
         app_id = None
-        resp = await client.get("/api/applications")
+        resp = await client.get("/api/applications", params={"candidate_id": candidate_id, "job_id": job_id})
         if resp.status_code == 200:
             apps = resp.json()
-            for app in apps:
-                if app["candidate_id"] == candidate_id and app["job_id"] == job_id:
-                    app_id = app["id"]
-                    break
+            if apps:
+                app_id = apps[0]["id"]
         
         if not app_id:
             print("[ORCHESTRATOR] Application record not found. Creating in 'QUEUED' status...")
