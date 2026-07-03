@@ -363,7 +363,7 @@ export function TopBar() {
                 {isLoading ? '' : displayName}
               </span>
               <span className="text-xs text-text-muted capitalize">
-                {isLoading ? '' : isAdmin ? 'Administrator' : 'BD User'}
+                {isLoading || !user ? '' : isAdmin ? 'Administrator' : 'BD User'}
               </span>
             </div>
             <div className="relative w-9 h-9 rounded-full bg-bg-secondary flex items-center justify-center text-text-secondary border border-bg-border group-hover:border-accent/50 transition-colors">
@@ -381,7 +381,7 @@ export function TopBar() {
                   {displayName}
                 </p>
                 <p className="text-xs text-text-muted capitalize mt-0.5">
-                  {isAdmin ? 'Administrator' : 'BD User'}
+                  {!user ? '' : isAdmin ? 'Administrator' : 'BD User'}
                 </p>
               </div>
               <div className="px-3 py-2">
