@@ -717,7 +717,15 @@ async def _read_field_value(page: Page, field: FormField) -> str:
         }""")
         return rendered or ""
 
-    if ftype in ("text", "email", "phone", "url", "textarea", "date", "select"):
+    if ftype == "select" and not is_custom:
+        selected_text = await locator.evaluate("""el => {
+            if (!el || el.selectedIndex < 0) return el.value || '';
+            const opt = el.options[el.selectedIndex];
+            return (opt ? opt.text || opt.label || opt.value : el.value) || '';
+        }""")
+        return selected_text or ""
+
+    if ftype in ("text", "email", "phone", "url", "textarea", "date"):
         return (await locator.input_value()) or ""
 
     if ftype == "checkbox":
@@ -731,7 +739,18 @@ async def _read_field_value(page: Page, field: FormField) -> str:
         checked = page.locator(f"input[type=radio][name='{name}']:checked").first
         if await checked.count() == 0:
             return ""
-        return (await checked.get_attribute("value")) or "Yes"
+        val_and_label = await checked.evaluate("""el => {
+            let labelText = '';
+            if (el.id) {
+                const lbl = document.querySelector('label[for="' + el.id + '"]');
+                if (lbl) labelText = lbl.textContent.trim();
+            }
+            if (!labelText && el.parentElement) {
+                labelText = el.parentElement.textContent.trim();
+            }
+            return { value: el.value || '', label: labelText || '' };
+        }""")
+        return val_and_label.get("label") or val_and_label.get("value") or "Yes"
 
     return ""
 

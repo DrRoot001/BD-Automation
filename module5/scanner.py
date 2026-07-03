@@ -117,7 +117,7 @@ async def scan_candidate_inbox(candidate_id: str, db_session) -> int:
             if new_status:
                 try:
                     import httpx as _httpx
-                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
                     async with _httpx.AsyncClient(timeout=10.0) as client:
                         await client.patch(
                             f"{api_base}/applications/{app_id}/status",

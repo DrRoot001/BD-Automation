@@ -44,9 +44,12 @@ ALLOWED_WORK_TYPES = {
     "fully remote", "remote", "remote in united states",
 }
 
-API_BASE_URL = (os.environ.get("M1_API_BASE_URL") or os.environ.get("API_BASE_URL") or os.environ.get("API_URL") or "http://localhost:8002").rstrip("/").replace("/api", "")
-if ":8000" in API_BASE_URL:
-    API_BASE_URL = API_BASE_URL.replace(":8000", ":8002")
+def get_api_base_url() -> str:
+    url = (os.environ.get("M1_API_BASE_URL") or os.environ.get("API_BASE_URL") or os.environ.get("API_URL") or "http://localhost:8002").rstrip("/").replace("/api", "")
+    if ":8000" in url:
+        url = url.replace(":8000", ":8002")
+    return url
+
 SCRAPE_TIMEOUT_SECONDS = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "300"))
 
 
@@ -143,7 +146,8 @@ def post_jobs(jobs: list[dict[str, Any]]) -> int:
     if not jobs:
         return 0
     try:
-        resp = httpx.post(f"{API_BASE_URL}/api/jobs", json=jobs, timeout=30)
+        api_base = get_api_base_url()
+        resp = httpx.post(f"{api_base}/api/jobs", json=jobs, timeout=30)
         resp.raise_for_status()
         created = resp.json()
         return len(created)

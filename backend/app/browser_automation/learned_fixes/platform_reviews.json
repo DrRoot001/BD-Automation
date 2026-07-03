@@ -13,6 +13,10 @@
       {
         "timestamp": "2026-07-03T14:22:14.269406",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-03T15:58:05.796082",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]
   },
@@ -114,6 +118,10 @@
     "failures": [
       {
         "timestamp": "2026-07-03T14:54:59.880521",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
+      },
+      {
+        "timestamp": "2026-07-03T16:05:53.858618",
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
       }
     ],

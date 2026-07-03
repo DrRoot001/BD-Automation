@@ -147,7 +147,7 @@ async def publish_status_changed(
 
 
 async def hydrate_and_execute(package_dict: dict, retry_count: int) -> ApplicationResult:
-    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
     app_id = package_dict["application_id"]
     cand_id = package_dict.get("candidate_id")
 
@@ -587,7 +587,7 @@ def verify_submission(application_id: str):
     Calls the Module 1 API to retrieve the current status of an application
     and returns the JSON response for logging / downstream processing.
     """
-    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
     with httpx.Client() as client:
         resp = client.get(f"{api_base}/applications/{application_id}")
         return resp.json()
