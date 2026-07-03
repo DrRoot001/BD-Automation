@@ -134,13 +134,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  // 6d. BD-user-only routes: block admins
-  if (BD_USER_ONLY_PREFIXES.some(prefix => pathname.startsWith(prefix)) && role === 'admin') {
-    url.pathname = '/admin'
-    return NextResponse.redirect(url)
-  }
-
-  // 6e. Shared routes (/candidates, /applications) — accessible to both roles
+  // 6d. Shared routes (/dashboard, /candidates, /applications) — accessible to both roles
   return nextResponseWithHeaders
 }
 

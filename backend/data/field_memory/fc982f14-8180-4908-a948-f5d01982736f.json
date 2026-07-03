@@ -7,6 +7,14 @@
     "source": "agent_loop",
     "value": "4"
   },
+  "addresssvgs not supported by this browser": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*AddressSVGs not supported by this browser.",
+    "last_seen": 1783088078,
+    "source": "rules",
+    "value": "US"
+  },
   "are you currently bound by any agreements with a current or former employer that": {
     "count": 4,
     "field_type": "text",
@@ -63,6 +71,14 @@
     "source": "agent_loop",
     "value": "Asian (Not Hispanic or Latino)"
   },
+  "city": {
+    "count": 1,
+    "field_type": "text",
+    "label": "city",
+    "last_seen": 1783088079,
+    "source": "rules",
+    "value": "US"
+  },
   "country": {
     "count": 1,
     "field_type": "select",
@@ -111,6 +127,14 @@
     "source": "agent_loop",
     "value": "M. Ammar"
   },
+  "firstname": {
+    "count": 1,
+    "field_type": "text",
+    "label": "firstname",
+    "last_seen": 1783087902,
+    "source": "agent_loop",
+    "value": "M. Ammar"
+  },
   "gender": {
     "count": 2,
     "field_type": "text",
@@ -126,6 +150,22 @@
     "last_seen": 1782761914,
     "source": "agent_loop",
     "value": "No"
+  },
+  "headline (optional)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Headline (Optional)",
+    "last_seen": 1783088482,
+    "source": "llm:0.70",
+    "value": "Senior AI Automation Engineer"
+  },
+  "how would you describe your english fluency": {
+    "count": 4,
+    "field_type": "radio",
+    "label": "*How would you describe your English Fluency?",
+    "last_seen": 1783089086,
+    "source": "screening",
+    "value": "Fluent"
   },
   "if yes, please provide further explanation below": {
     "count": 1,
@@ -151,6 +191,30 @@
     "source": "agent_loop",
     "value": "Hanif"
   },
+  "lastname": {
+    "count": 1,
+    "field_type": "text",
+    "label": "lastname",
+    "last_seen": 1783087911,
+    "source": "agent_loop",
+    "value": "Hanif"
+  },
+  "linkedin": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*Linkedin",
+    "last_seen": 1783088495,
+    "source": "llm:0.90",
+    "value": "linkedin.com/in/ammar-hanif"
+  },
+  "linkedin or professional website": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn or Professional Website:",
+    "last_seen": 1783087901,
+    "source": "agent_loop",
+    "value": "N/A"
+  },
   "linkedin profile": {
     "count": 1,
     "field_type": "text",
@@ -158,6 +222,14 @@
     "last_seen": 1782735125,
     "source": "screening",
     "value": "Not provided"
+  },
+  "location": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Location",
+    "last_seen": 1783089945,
+    "source": "agent_loop",
+    "value": "United States"
   },
   "location (city)": {
     "count": 4,
@@ -191,13 +263,45 @@
     "source": "profile_direct",
     "value": "+15855844775"
   },
-  "please identify your race": {
+  "phone+1united states+1united kingdom+44canada+1germany+49australia+61afghanistan+93albania+355algeria+213american samoa+1andorra+376angola+244anguilla+1antigua & barbuda+1argentina+54armenia+374aruba+297ascension island+247australia+61austria+43azerbaijan+994bahamas+1bahrain+973bangladesh+880barbados+1belarus+375belgium+32belize+501benin+229bermuda+1bhutan+975bolivia+591bosnia & herzegovina+387botswana+267brazil+55british indian ocean territory+246british virgin islands+1brunei+673bulgaria+359burkina faso+226burundi+257cambodia+855cameroon+237canada+1cape verde+238caribbean netherlands+599cayman islands+1central african republic+236chad+235chile+56china+86christmas island+61cocos (keeling) islands+61colombia+57comoros+269congo - brazzaville+242congo - kinshasa+243cook islands+682costa rica+506côte d’ivoire+225croatia+385cuba+53curaçao+599cyprus+357czech republic+420denmark+45djibouti+253dominica+1dominican republic+1ecuador+593egypt+20el salvador+503equatorial guinea+240eritrea+291estonia+372eswatini+268ethiopia+251falkland islands+500faroe islands+298fiji+679finland+358france+33french guiana+594french polynesia+689gabon+241gambia+220georgia+995germany+49ghana+233gibraltar+350greece+30greenland+299grenada+1guadeloupe+590guam+1guatemala+502guernsey+44guinea+224guinea-bissau+245guyana+592haiti+509honduras+504hong kong+852hungary+36iceland+354india+91indonesia+62iran+98iraq+964ireland+353isle of man+44israel+972italy+39jamaica+1japan+81jersey+44jordan+962kazakhstan+7kenya+254kiribati+686kosovo+383kuwait+965kyrgyzstan+996laos+856latvia+371lebanon+961lesotho+266liberia+231libya+218liechtenstein+423lithuania+370luxembourg+352macau+853madagascar+261malawi+265malaysia+60maldives+960mali+223malta+356marshall islands+692martinique+596mauritania+222mauritius+230mayotte+262mexico+52micronesia+691moldova+373monaco+377mongolia+976montenegro+382montserrat+1morocco+212mozambique+258myanmar (burma)+95namibia+264nauru+674nepal+977netherlands+31new caledonia+687new zealand+64nicaragua+505niger+227nigeria+234niue+683norfolk island+672north korea+850north macedonia+389northern mariana islands+1norway+47oman+968pakistan+92palau+680palestine+970panama+507papua new guinea+675paraguay+595peru+51philippines+63poland+48portugal+351puerto rico+1qatar+974réunion+262romania+40russia+7rwanda+250samoa+685san marino+378são tomé & príncipe+239saudi arabia+966senegal+221serbia+381seychelles+248sierra leone+232singapore+65sint maarten+1slovakia+421slovenia+386solomon islands+677somalia+252south africa+27south korea+82south sudan+211spain+34sri lanka+94st barthélemy+590st helena+290st kitts & nevis+1st lucia+1st martin+590st pierre & miquelon+508st vincent & grenadines+1sudan+249suriname+597svalbard & jan mayen+47sweden+46switzerland+41syria+963taiwan+886tajikistan+992tanzania+255thailand+66timor-leste+670togo+228tokelau+690tonga+676trinidad & tobago+1tunisia+216turkey+90turkmenistan+993turks & caicos islands+1tuvalu+688uganda+256ukraine+380united arab emirates+971united kingdom+44united states+1uruguay+598us virgin islands+1uzbekistan+998vanuatu+678vatican city+39venezuela+58vietnam+84wallis & futuna+681western sahara+212yemen+967zambia+260zimbabwe+263åland islands+358": {
     "count": 1,
-    "field_type": "select",
+    "field_type": "phone",
+    "label": "*Phone+1United States+1United Kingdom+44Canada+1Germany+49Australia+61Afghanistan+93Albania+355Algeria+213American Samoa+1Andorra+376Angola+244Anguilla+1Antigua & Barbuda+1Argentina+54Armenia+374Aruba+297Ascension Island+247Australia+61Austria+43Azerbaijan+994Bahamas+1Bahrain+973Bangladesh+880Barbados+1Belarus+375Belgium+32Belize+501Benin+229Bermuda+1Bhutan+975Bolivia+591Bosnia & Herzegovina+387Botswana+267Brazil+55British Indian Ocean Territory+246British Virgin Islands+1Brunei+673Bulgaria+359Burkina Faso+226Burundi+257Cambodia+855Cameroon+237Canada+1Cape Verde+238Caribbean Netherlands+599Cayman Islands+1Central African Republic+236Chad+235Chile+56China+86Christmas Island+61Cocos (Keeling) Islands+61Colombia+57Comoros+269Congo - Brazzaville+242Congo - Kinshasa+243Cook Islands+682Costa Rica+506Côte d’Ivoire+225Croatia+385Cuba+53Curaçao+599Cyprus+357Czech Republic+420Denmark+45Djibouti+253Dominica+1Dominican Republic+1Ecuador+593Egypt+20El Salvador+503Equatorial Guinea+240Eritrea+291Estonia+372Eswatini+268Ethiopia+251Falkland Islands+500Faroe Islands+298Fiji+679Finland+358France+33French Guiana+594French Polynesia+689Gabon+241Gambia+220Georgia+995Germany+49Ghana+233Gibraltar+350Greece+30Greenland+299Grenada+1Guadeloupe+590Guam+1Guatemala+502Guernsey+44Guinea+224Guinea-Bissau+245Guyana+592Haiti+509Honduras+504Hong Kong+852Hungary+36Iceland+354India+91Indonesia+62Iran+98Iraq+964Ireland+353Isle of Man+44Israel+972Italy+39Jamaica+1Japan+81Jersey+44Jordan+962Kazakhstan+7Kenya+254Kiribati+686Kosovo+383Kuwait+965Kyrgyzstan+996Laos+856Latvia+371Lebanon+961Lesotho+266Liberia+231Libya+218Liechtenstein+423Lithuania+370Luxembourg+352Macau+853Madagascar+261Malawi+265Malaysia+60Maldives+960Mali+223Malta+356Marshall Islands+692Martinique+596Mauritania+222Mauritius+230Mayotte+262Mexico+52Micronesia+691Moldova+373Monaco+377Mongolia+976Montenegro+382Montserrat+1Morocco+212Mozambique+258Myanmar (Burma)+95Namibia+264Nauru+674Nepal+977Netherlands+31New Caledonia+687New Zealand+64Nicaragua+505Niger+227Nigeria+234Niue+683Norfolk Island+672North Korea+850North Macedonia+389Northern Mariana Islands+1Norway+47Oman+968Pakistan+92Palau+680Palestine+970Panama+507Papua New Guinea+675Paraguay+595Peru+51Philippines+63Poland+48Portugal+351Puerto Rico+1Qatar+974Réunion+262Romania+40Russia+7Rwanda+250Samoa+685San Marino+378São Tomé & Príncipe+239Saudi Arabia+966Senegal+221Serbia+381Seychelles+248Sierra Leone+232Singapore+65Sint Maarten+1Slovakia+421Slovenia+386Solomon Islands+677Somalia+252South Africa+27South Korea+82South Sudan+211Spain+34Sri Lanka+94St Barthélemy+590St Helena+290St Kitts & Nevis+1St Lucia+1St Martin+590St Pierre & Miquelon+508St Vincent & Grenadines+1Sudan+249Suriname+597Svalbard & Jan Mayen+47Sweden+46Switzerland+41Syria+963Taiwan+886Tajikistan+992Tanzania+255Thailand+66Timor-Leste+670Togo+228Tokelau+690Tonga+676Trinidad & Tobago+1Tunisia+216Turkey+90Turkmenistan+993Turks & Caicos Islands+1Tuvalu+688Uganda+256Ukraine+380United Arab Emirates+971United Kingdom+44United States+1Uruguay+598US Virgin Islands+1Uzbekistan+998Vanuatu+678Vatican City+39Venezuela+58Vietnam+84Wallis & Futuna+681Western Sahara+212Yemen+967Zambia+260Zimbabwe+263Åland Islands+358",
+    "last_seen": 1783089057,
+    "source": "profile_direct",
+    "value": "M. Ammar Hanif"
+  },
+  "phone+92united states+1united kingdom+44canada+1germany+49australia+61afghanistan+93albania+355algeria+213american samoa+1andorra+376angola+244anguilla+1antigua & barbuda+1argentina+54armenia+374aruba+297ascension island+247australia+61austria+43azerbaijan+994bahamas+1bahrain+973bangladesh+880barbados+1belarus+375belgium+32belize+501benin+229bermuda+1bhutan+975bolivia+591bosnia & herzegovina+387botswana+267brazil+55british indian ocean territory+246british virgin islands+1brunei+673bulgaria+359burkina faso+226burundi+257cambodia+855cameroon+237canada+1cape verde+238caribbean netherlands+599cayman islands+1central african republic+236chad+235chile+56china+86christmas island+61cocos (keeling) islands+61colombia+57comoros+269congo - brazzaville+242congo - kinshasa+243cook islands+682costa rica+506côte d’ivoire+225croatia+385cuba+53curaçao+599cyprus+357czech republic+420denmark+45djibouti+253dominica+1dominican republic+1ecuador+593egypt+20el salvador+503equatorial guinea+240eritrea+291estonia+372eswatini+268ethiopia+251falkland islands+500faroe islands+298fiji+679finland+358france+33french guiana+594french polynesia+689gabon+241gambia+220georgia+995germany+49ghana+233gibraltar+350greece+30greenland+299grenada+1guadeloupe+590guam+1guatemala+502guernsey+44guinea+224guinea-bissau+245guyana+592haiti+509honduras+504hong kong+852hungary+36iceland+354india+91indonesia+62iran+98iraq+964ireland+353isle of man+44israel+972italy+39jamaica+1japan+81jersey+44jordan+962kazakhstan+7kenya+254kiribati+686kosovo+383kuwait+965kyrgyzstan+996laos+856latvia+371lebanon+961lesotho+266liberia+231libya+218liechtenstein+423lithuania+370luxembourg+352macau+853madagascar+261malawi+265malaysia+60maldives+960mali+223malta+356marshall islands+692martinique+596mauritania+222mauritius+230mayotte+262mexico+52micronesia+691moldova+373monaco+377mongolia+976montenegro+382montserrat+1morocco+212mozambique+258myanmar (burma)+95namibia+264nauru+674nepal+977netherlands+31new caledonia+687new zealand+64nicaragua+505niger+227nigeria+234niue+683norfolk island+672north korea+850north macedonia+389northern mariana islands+1norway+47oman+968pakistan+92palau+680palestine+970panama+507papua new guinea+675paraguay+595peru+51philippines+63poland+48portugal+351puerto rico+1qatar+974réunion+262romania+40russia+7rwanda+250samoa+685san marino+378são tomé & príncipe+239saudi arabia+966senegal+221serbia+381seychelles+248sierra leone+232singapore+65sint maarten+1slovakia+421slovenia+386solomon islands+677somalia+252south africa+27south korea+82south sudan+211spain+34sri lanka+94st barthélemy+590st helena+290st kitts & nevis+1st lucia+1st martin+590st pierre & miquelon+508st vincent & grenadines+1sudan+249suriname+597svalbard & jan mayen+47sweden+46switzerland+41syria+963taiwan+886tajikistan+992tanzania+255thailand+66timor-leste+670togo+228tokelau+690tonga+676trinidad & tobago+1tunisia+216turkey+90turkmenistan+993turks & caicos islands+1tuvalu+688uganda+256ukraine+380united arab emirates+971united kingdom+44united states+1uruguay+598us virgin islands+1uzbekistan+998vanuatu+678vatican city+39venezuela+58vietnam+84wallis & futuna+681western sahara+212yemen+967zambia+260zimbabwe+263åland islands+358": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "*Phone+92United States+1United Kingdom+44Canada+1Germany+49Australia+61Afghanistan+93Albania+355Algeria+213American Samoa+1Andorra+376Angola+244Anguilla+1Antigua & Barbuda+1Argentina+54Armenia+374Aruba+297Ascension Island+247Australia+61Austria+43Azerbaijan+994Bahamas+1Bahrain+973Bangladesh+880Barbados+1Belarus+375Belgium+32Belize+501Benin+229Bermuda+1Bhutan+975Bolivia+591Bosnia & Herzegovina+387Botswana+267Brazil+55British Indian Ocean Territory+246British Virgin Islands+1Brunei+673Bulgaria+359Burkina Faso+226Burundi+257Cambodia+855Cameroon+237Canada+1Cape Verde+238Caribbean Netherlands+599Cayman Islands+1Central African Republic+236Chad+235Chile+56China+86Christmas Island+61Cocos (Keeling) Islands+61Colombia+57Comoros+269Congo - Brazzaville+242Congo - Kinshasa+243Cook Islands+682Costa Rica+506Côte d’Ivoire+225Croatia+385Cuba+53Curaçao+599Cyprus+357Czech Republic+420Denmark+45Djibouti+253Dominica+1Dominican Republic+1Ecuador+593Egypt+20El Salvador+503Equatorial Guinea+240Eritrea+291Estonia+372Eswatini+268Ethiopia+251Falkland Islands+500Faroe Islands+298Fiji+679Finland+358France+33French Guiana+594French Polynesia+689Gabon+241Gambia+220Georgia+995Germany+49Ghana+233Gibraltar+350Greece+30Greenland+299Grenada+1Guadeloupe+590Guam+1Guatemala+502Guernsey+44Guinea+224Guinea-Bissau+245Guyana+592Haiti+509Honduras+504Hong Kong+852Hungary+36Iceland+354India+91Indonesia+62Iran+98Iraq+964Ireland+353Isle of Man+44Israel+972Italy+39Jamaica+1Japan+81Jersey+44Jordan+962Kazakhstan+7Kenya+254Kiribati+686Kosovo+383Kuwait+965Kyrgyzstan+996Laos+856Latvia+371Lebanon+961Lesotho+266Liberia+231Libya+218Liechtenstein+423Lithuania+370Luxembourg+352Macau+853Madagascar+261Malawi+265Malaysia+60Maldives+960Mali+223Malta+356Marshall Islands+692Martinique+596Mauritania+222Mauritius+230Mayotte+262Mexico+52Micronesia+691Moldova+373Monaco+377Mongolia+976Montenegro+382Montserrat+1Morocco+212Mozambique+258Myanmar (Burma)+95Namibia+264Nauru+674Nepal+977Netherlands+31New Caledonia+687New Zealand+64Nicaragua+505Niger+227Nigeria+234Niue+683Norfolk Island+672North Korea+850North Macedonia+389Northern Mariana Islands+1Norway+47Oman+968Pakistan+92Palau+680Palestine+970Panama+507Papua New Guinea+675Paraguay+595Peru+51Philippines+63Poland+48Portugal+351Puerto Rico+1Qatar+974Réunion+262Romania+40Russia+7Rwanda+250Samoa+685San Marino+378São Tomé & Príncipe+239Saudi Arabia+966Senegal+221Serbia+381Seychelles+248Sierra Leone+232Singapore+65Sint Maarten+1Slovakia+421Slovenia+386Solomon Islands+677Somalia+252South Africa+27South Korea+82South Sudan+211Spain+34Sri Lanka+94St Barthélemy+590St Helena+290St Kitts & Nevis+1St Lucia+1St Martin+590St Pierre & Miquelon+508St Vincent & Grenadines+1Sudan+249Suriname+597Svalbard & Jan Mayen+47Sweden+46Switzerland+41Syria+963Taiwan+886Tajikistan+992Tanzania+255Thailand+66Timor-Leste+670Togo+228Tokelau+690Tonga+676Trinidad & Tobago+1Tunisia+216Turkey+90Turkmenistan+993Turks & Caicos Islands+1Tuvalu+688Uganda+256Ukraine+380United Arab Emirates+971United Kingdom+44United States+1Uruguay+598US Virgin Islands+1Uzbekistan+998Vanuatu+678Vatican City+39Venezuela+58Vietnam+84Wallis & Futuna+681Western Sahara+212Yemen+967Zambia+260Zimbabwe+263Åland Islands+358",
+    "last_seen": 1783088077,
+    "source": "rules",
+    "value": "M. Ammar Hanif"
+  },
+  "please identify your race": {
+    "count": 5,
+    "field_type": "text",
     "label": "Please identify your race",
-    "last_seen": 1782735176,
+    "last_seen": 1783091396,
+    "source": "agent_loop",
+    "value": "Asian"
+  },
+  "please specify your current visa or work authorization status (e.g., u.s. citizen, h-1b, f-1 opt, green card holder, l-2 ead, etc.)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*Please specify your current visa or work authorization status (e.g., U.S. Citizen, H-1B, F-1 OPT, Green Card Holder, L-2 EAD, etc.):",
+    "last_seen": 1783088083,
     "source": "screening",
-    "value": "Prefer not to disclose"
+    "value": "Visa"
+  },
+  "postcode": {
+    "count": 1,
+    "field_type": "text",
+    "label": "postcode",
+    "last_seen": 1783087952,
+    "source": "agent_loop",
+    "value": "94105"
   },
   "preferred first name": {
     "count": 1,
@@ -207,6 +311,14 @@
     "source": "profile_direct",
     "value": "M."
   },
+  "preferred name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*Preferred Name",
+    "last_seen": 1783088081,
+    "source": "rules",
+    "value": "M. Ammar Hanif"
+  },
   "preferred pronouns": {
     "count": 1,
     "field_type": "text",
@@ -214,6 +326,14 @@
     "last_seen": 1782744940,
     "source": "screening",
     "value": "Not provided in candidate details."
+  },
+  "race": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Race",
+    "last_seen": 1783090019,
+    "source": "agent_loop",
+    "value": "Asian (Not Hispanic or Latino)"
   },
   "security input 1": {
     "count": 1,
@@ -287,6 +407,30 @@
     "source": "agent_loop",
     "value": "3"
   },
+  "summary (optional)": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Summary (Optional)",
+    "last_seen": 1783088082,
+    "source": "screening",
+    "value": "Senior Data Engineer with 5 years of experience in designing, building, and optimizing ETL pipelines and data warehouses using AWS and Snowflake. Proven track record in re-architecting data solutions and leading AI automation initiatives."
+  },
+  "svgs not supported by this browser.svgs not supported by this browser.svgs not supported by this browser.no": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.No",
+    "last_seen": 1783088086,
+    "source": "screening",
+    "value": "Yes"
+  },
+  "svgs not supported by this browser.svgs not supported by this browser.svgs not supported by this browser.yes": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.Yes",
+    "last_seen": 1783088085,
+    "source": "screening",
+    "value": "Yes"
+  },
   "website": {
     "count": 1,
     "field_type": "text",
@@ -294,6 +438,22 @@
     "last_seen": 1782735126,
     "source": "screening",
     "value": "Not provided"
+  },
+  "what is your desired salary range for this role, including base and any variable": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What is your desired salary range for this role, including base and any variable",
+    "last_seen": 1783089965,
+    "source": "agent_loop",
+    "value": "$160,000"
+  },
+  "why did you decide to apply to this role at clickup": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Why did you decide to apply to this role at ClickUp?",
+    "last_seen": 1783089995,
+    "source": "agent_loop",
+    "value": "I am excited by ClickUp's focus on leading architecture and initiatives for data platforms, especially those involving AI workloads. My experience as a Senior AI Automation Engineer, where I've designed and scaled AI-driven products and enterprise automation platforms, aligns perfectly with these goals. I am eager to contribute to ensuring scalability and reliability while mentoring engineers to elevate technical standards."
   },
   "why scale ai": {
     "count": 1,

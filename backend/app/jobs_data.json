@@ -13776,5 +13776,93 @@
     "embedding": null,
     "id": "0e34b83e-3696-449b-b961-88edad7d218e",
     "created_at": "2026-07-01T01:40:39.792658+00:00"
+  },
+  {
+    "title": "Advisor Software Engineer (AI/ML)",
+    "company": "Fannie Mae",
+    "location": "Remote",
+    "source": "www.dice.com",
+    "source_url": "https://www.dice.com/job-detail/40b88bc5-348d-4e74-a240-93c0b4e64729",
+    "canonical_url": "(not found)",
+    "description": "As a valued contributor to our team, you will design, produce, test, or implement software, technology, or processes across multiple projects, programs, or products. Your expertise will help fuel purpose-driven innovation that expands access to homeownership and affordable rental housing across the country.",
+    "skills": [
+      "Software Engineer",
+      "AI",
+      "ML"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": "(not found)",
+    "job_type": "Full Time",
+    "posted_at": "2024-05-14T19:00:00+00:00",
+    "embedding": null,
+    "id": "c06beecc-441d-43bb-ad3a-f4b02ad060c7",
+    "created_at": "2026-07-03T15:39:21.716754+00:00"
+  },
+  {
+    "title": "Senior Frontend Engineer - Engineering Productivity Systems",
+    "company": "Avride",
+    "location": "Remote",
+    "source": "www.dice.com",
+    "source_url": "https://www.dice.com/job-detail/893799a8-9c6c-4b69-8bb3-8b84e39b0bbb",
+    "canonical_url": "(not found)",
+    "description": "Our team is responsible for building internal systems for the whole engineering team, aiming to help engineers navigate across all produced data, investigate problems, and create ad hoc analytics. These services are used daily by various teams, including QA, autonomy, ML, safety analysts, and data scientists.",
+    "skills": [
+      "Frontend Engineer",
+      "Engineering Productivity Systems",
+      "Analytics"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": "(not found)",
+    "job_type": "Full Time",
+    "posted_at": "2024-05-14T19:00:00+00:00",
+    "embedding": null,
+    "id": "56c5704c-e596-4cfe-a772-a3b71b14919f",
+    "created_at": "2026-07-03T15:39:21.716754+00:00"
+  },
+  {
+    "title": "AI Engineer (Enterprise AI / LLM) - Remote",
+    "company": "Krostech Solutions, LLC",
+    "location": "Remote",
+    "source": "www.dice.com",
+    "source_url": "https://www.dice.com/job-detail/43c30117-ed52-40ae-b6f9-9a64f44373c5",
+    "canonical_url": "(not found)",
+    "description": "Partners with enterprise customers to understand AI use cases and technical requirements, designing, building, and deploying proof-of-concepts and production AI solutions. This role also involves implementing and optimizing LLM inference and deployment architectures using Python and modern AI frameworks.",
+    "skills": [
+      "AI Engineer",
+      "LLM",
+      "Python",
+      "AI Frameworks"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": "(not found)",
+    "job_type": "Full Time",
+    "posted_at": "2024-05-14T19:00:00+00:00",
+    "embedding": null,
+    "id": "d48a5274-75a3-4fe6-a500-4f7ee7d7bb30",
+    "created_at": "2026-07-03T15:39:21.716754+00:00"
+  },
+  {
+    "title": "Staff Research Scientist - Reinforcement Learning",
+    "company": "Centific Global Solutions, Inc.",
+    "location": "Remote in United States",
+    "source": "www.talent.com",
+    "source_url": "https://www.talent.com/view?id=623256985687436023",
+    "canonical_url": null,
+    "description": "Join Centific, a frontier AI data foundry that curates diverse, high-quality data. Empower enterprises with safe, scalable, and responsible AI. Conduct research in reinforcement learning to advance AI capabilities.",
+    "skills": [
+      "Reinforcement Learning",
+      "AI"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": "Full Time",
+    "posted_at": "2024-07-02T19:00:00+00:00",
+    "embedding": null,
+    "id": "28940355-1034-49ea-95c3-2242112e7cfb",
+    "created_at": "2026-07-03T15:41:49.138693+00:00"
   }
 ]

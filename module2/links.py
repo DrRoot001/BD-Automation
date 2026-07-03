@@ -124,8 +124,9 @@ OTHER_LINKS: dict[str, list[str]] = {
 }
 
 
-def get_links() -> list[str]:
-    """Return the flat list of URLs for today's schedule.
+def get_links_with_categories() -> list[tuple[str, str]]:
+    """Return (category, url) pairs for today's schedule, preserving which
+    list each URL came from.
 
     Monday  → MON_LINKS (all categories combined)
     Tue–Sun → OTHER_LINKS (all categories combined)
@@ -136,8 +137,18 @@ def get_links() -> list[str]:
     day_name: Literal["Monday", "Other"] = "Monday" if today == 0 else "Other"
     print(f"[links] Using {day_name} schedule ({datetime.date.today().strftime('%A')})")
 
-    # Flatten all category lists into one list, preserving insertion order.
-    return [url for urls in schedule.values() for url in urls]
+    # Preserve (category, url) pairing, insertion order.
+    return [(category, url) for category, urls in schedule.items() for url in urls]
+
+
+def get_links() -> list[str]:
+    """Return the flat list of URLs for today's schedule (category dropped).
+
+    Kept for backwards-compatibility with any code that only needs the URLs.
+    Prefer get_links_with_categories() when you need to know which list a
+    URL came from (e.g. to tag job_category on scraped results).
+    """
+    return [url for _category, url in get_links_with_categories()]
 
 
 # ---------------------------------------------------------------------------

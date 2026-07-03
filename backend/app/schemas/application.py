@@ -71,6 +71,7 @@ class ApplicationResponse(BaseModel):
     candidate_id: UUID
     job_id: UUID
     resume_id: Optional[UUID] = None
+    resume_url: Optional[str] = None
     cover_letter_url: Optional[str] = None
     status: ApplicationStatus
     fit_score: Optional[float] = None

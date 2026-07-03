@@ -28,7 +28,7 @@ ALLOWED_FIELDS = {
 }
 
 
-async def _run_discovery(api_base: str = "http://localhost:8000/api") -> dict:
+async def _run_discovery(api_base: str = "http://localhost:8002/api") -> dict:
     """Run all module2 scrapers and POST results to the jobs API."""
     import httpx
     from module2.adapters import get_adapter
@@ -161,7 +161,10 @@ def _run_discovery_thread():
     import os
     _discovery_state["running"] = True
     try:
-        api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+        base = os.getenv("M1_API_BASE_URL") or os.getenv("API_URL") or "http://localhost:8002"
+        if ":8000" in base:
+            base = base.replace(":8000", ":8002")
+        api_base = base.rstrip("/").rstrip("/api") + "/api"
         result = asyncio.run(_run_discovery(api_base))
         _discovery_state["last_result"] = result
         logger.info(f"[Discovery] Completed: {result}")
