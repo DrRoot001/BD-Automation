@@ -146,10 +146,10 @@ class BuiltInAdapter(BasePlatformAdapter):
         try:
             fn = page.locator("input#first-name, input[name='first-name']").first
             if await fn.count() > 0 and await fn.is_visible():
-                await fn.fill("Sabih")
+                await fn.fill(os.getenv("BUILTIN_FIRST_NAME", "Candidate"))
             ln = page.locator("input#last-name, input[name='last-name']").first
             if await ln.count() > 0 and await ln.is_visible():
-                await ln.fill("Haider")
+                await ln.fill(os.getenv("BUILTIN_LAST_NAME", "Applicant"))
             em = page.locator("input#user-email, input[name='email']").first
             if await em.count() > 0 and await em.is_visible():
                 await em.fill(candidate_email or os.getenv("BUILTIN_CANDIDATE_EMAIL", "candidate@example.com"))
