@@ -59,7 +59,10 @@ async def create_candidate(
         await db.refresh(db_candidate)
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
+        err_msg = str(e)
+        if "candidates_email_key" in err_msg or "UniqueViolationError" in err_msg:
+            raise HTTPException(status_code=400, detail="A candidate with this email address already exists.")
+        raise HTTPException(status_code=400, detail=f"Database error: {err_msg}")
     return db_candidate
 
 @router.get("/{candidate_id}", response_model=CandidateResponse)
@@ -86,6 +89,22 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
         raise HTTPException(status_code=404, detail="Candidate not found")
         
     update_data = candidate_update.model_dump(exclude_unset=True)
+
+    if "email" in update_data and update_data["email"]:
+        new_email = update_data["email"].strip()
+        update_data["email"] = new_email
+        email_check = await db.execute(
+            select(Candidate).where(
+                Candidate.email == new_email,
+                Candidate.id != candidate_uuid
+            )
+        )
+        if email_check.scalars().first():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A candidate with email '{new_email}' already exists."
+            )
+
     for key, value in update_data.items():
         setattr(db_candidate, key, value)
         
@@ -94,7 +113,10 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
         await db.refresh(db_candidate)
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
+        err_msg = str(e)
+        if "candidates_email_key" in err_msg or "UniqueViolationError" in err_msg:
+            raise HTTPException(status_code=400, detail="A candidate with this email address already exists.")
+        raise HTTPException(status_code=400, detail=f"Database error: {err_msg}")
     return db_candidate
 
 @router.post("/{candidate_id}/resumes", response_model=ResumeResponse, status_code=201)
