@@ -380,7 +380,10 @@ async def fill_code(page, frame, shape: CodeInputShape, code: str) -> bool:
     sel = shape.selectors[0]
     try:
         loc = ctx.locator(sel).first
-        await loc.click(timeout=2000)
+        try:
+            await loc.click(timeout=1000)
+        except Exception:
+            pass
         committed = await loc.evaluate(
             """(el, v) => {
                 try {
@@ -529,11 +532,11 @@ def _gmail_search_code_sync(
     # `after:` accepts a unix timestamp in seconds. We pad by 60s to catch
     # mail-server clock skew.
     after_q = max(0, after_epoch - 60)
-    # NOTE: intentionally NOT filtering `is:unread`. The candidate (or a prior
-    # poll) may open the verification email, which drops it from an is:unread
-    # search and causes a false "code not found". The after:{submit-60s} +
-    # newer_than:1h window already scopes results to THIS submission.
-    q = f"in:inbox newer_than:1h after:{after_q}"
+    # NOTE: intentionally NOT filtering `in:inbox` or `is:unread`. ATS verification
+    # emails often land in Updates, Promotions, or Spam tabs, or may be read by a
+    # candidate's mail client. The after:{submit-60s} + newer_than:1h window scopes
+    # results to THIS submission.
+    q = f"newer_than:1h after:{after_q}"
     try:
         listing = service.users().messages().list(
             userId="me", q=q, maxResults=max_results,
@@ -546,26 +549,42 @@ def _gmail_search_code_sync(
         logger.warning(f"[verify] gmail list failed: {exc}")
         return None
     ids = [m["id"] for m in (listing.get("messages") or [])]
+    
+    # Pass 1: If sender_hint provided, prefer messages matching sender_hint
+    candidate_messages = []
     for mid in ids:
         try:
             msg = service.users().messages().get(
                 userId="me", id=mid, format="full",
             ).execute()
+            candidate_messages.append(msg)
         except Exception as exc:
             logger.debug(f"[verify] gmail get {mid} failed: {exc}")
             continue
-        headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
-        if sender_hint:
+
+    if sender_hint:
+        for msg in candidate_messages:
+            headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
             blob = ((headers.get("From") or "") + " " + (headers.get("Subject") or "")).lower()
-            if sender_hint.lower() not in blob:
-                continue
+            if sender_hint.lower() in blob and _is_likely_verification(headers, msg.get("snippet") or ""):
+                code = _extract_code_from_message(msg)
+                if code:
+                    logger.info(
+                        f"[verify] Gmail code {code!r} from sender={headers.get('From')!r} "
+                        f"subject={headers.get('Subject')!r} (hint={sender_hint!r})"
+                    )
+                    return code
+
+    # Pass 2: Fallback — evaluate all candidate messages without sender_hint restriction
+    for msg in candidate_messages:
+        headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
         if not _is_likely_verification(headers, msg.get("snippet") or ""):
             continue
         code = _extract_code_from_message(msg)
         if code:
             logger.info(
                 f"[verify] Gmail code {code!r} from sender={headers.get('From')!r} "
-                f"subject={headers.get('Subject')!r} (hint={sender_hint or 'none'})"
+                f"subject={headers.get('Subject')!r} (fallback match)"
             )
             return code
     return None
@@ -835,6 +854,7 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
         from sqlalchemy import select
         from app.database import task_session
         from app.models.candidate import Candidate
+        from app.services.crypto import decrypt_token
     except Exception as exc:
         logger.warning(f"[verify] cannot import DB session: {exc}")
         return None
@@ -849,9 +869,10 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
             row = (
                 await s.execute(select(Candidate).where(Candidate.id == candidate_id))
             ).scalar_one_or_none()
-            if not row:
+            if not row or not row.google_refresh_token:
                 return None
-            return row.google_refresh_token or None
+            decrypted = decrypt_token(row.google_refresh_token)
+            return decrypted or None
     except Exception as exc:
         # IMPORTANT: a query failure (closed event loop, transient DB drop, pool
         # exhaustion) is NOT the same as "no token". Raise a distinct sentinel

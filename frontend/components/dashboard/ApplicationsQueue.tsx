@@ -290,18 +290,21 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                           {app.ats_score_after.toFixed(0)}%
                         </span>
                       </span>
-                    ) : app.fit_score != null ? (
-                      <span
-                        className={clsx(
-                          'text-xs font-medium tabular-nums',
-                          app.fit_score >= 80 ? 'text-success'
-                          : app.fit_score >= 60 ? 'text-warning'
-                          : 'text-text-muted',
-                        )}
-                      >
-                        {app.fit_score.toFixed(0)}%
-                      </span>
-                    ) : (
+                    ) : (app.fit_score != null || app.ats_score != null) ? (() => {
+                      const displayScore = app.fit_score ?? app.ats_score!
+                      return (
+                        <span
+                          className={clsx(
+                            'text-xs font-medium tabular-nums',
+                            displayScore >= 80 ? 'text-success'
+                            : displayScore >= 60 ? 'text-warning'
+                            : 'text-text-muted',
+                          )}
+                        >
+                          {displayScore.toFixed(0)}%
+                        </span>
+                      )
+                    })() : (
                       <span className="text-text-muted text-xs">—</span>
                     )}
                   </td>

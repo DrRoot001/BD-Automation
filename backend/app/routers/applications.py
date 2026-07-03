@@ -105,7 +105,27 @@ async def list_applications(
 
     query = query.order_by(Application.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
-    return result.scalars().all()
+    apps = result.scalars().all()
+
+    # Resolve resume_url for each application
+    from app.models.resume import Resume
+    for app in apps:
+        if app.resume_id:
+            res = await db.get(Resume, app.resume_id)
+            if res and res.file_url:
+                setattr(app, "resume_url", res.file_url)
+        if not getattr(app, "resume_url", None):
+            res_stmt = (
+                select(Resume)
+                .where(Resume.candidate_id == app.candidate_id)
+                .order_by(Resume.is_base.asc(), Resume.version.desc())
+                .limit(1)
+            )
+            res = (await db.execute(res_stmt)).scalars().first()
+            if res and res.file_url:
+                setattr(app, "resume_url", res.file_url)
+
+    return apps
 
 @router.get("/{application_id}", response_model=ApplicationResponse)
 async def get_application(
@@ -118,6 +138,24 @@ async def get_application(
     app = result.scalar_one_or_none()
     if not app:
         raise HTTPException(404, "Application not found")
+
+    # Resolve resume_url if resume_id is set or from candidate's latest resume
+    from app.models.resume import Resume
+    if app.resume_id:
+        res = await db.get(Resume, app.resume_id)
+        if res and res.file_url:
+            setattr(app, "resume_url", res.file_url)
+    if not getattr(app, "resume_url", None):
+        res_stmt = (
+            select(Resume)
+            .where(Resume.candidate_id == app.candidate_id)
+            .order_by(Resume.is_base.asc(), Resume.version.desc())
+            .limit(1)
+        )
+        res = (await db.execute(res_stmt)).scalars().first()
+        if res and res.file_url:
+            setattr(app, "resume_url", res.file_url)
+
     return app
 
 @router.get("/{application_id}/history", response_model=List[ApplicationHistoryResponse])
