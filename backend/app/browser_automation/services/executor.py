@@ -359,6 +359,11 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
             filename = f"downloaded{suffix}"
         if not filename.lower().endswith(suffix.lower()):
             filename += suffix
+        # Avoid collisions when different URLs share the same basename (common for signed URLs).
+        import hashlib
+        digest = hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
+        root, ext = os.path.splitext(filename)
+        filename = f"{root}-{digest}{ext}"
 
         # Use a project-local, stable cache dir instead of the OS temp
         # dir. Windows aggressively cleans %TEMP% (Storage Sense, tempfile
