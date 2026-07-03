@@ -559,6 +559,22 @@ class ApplicationExecutor:
             # with a specific LOGIN_REQUIRED status so the operator sees "this
             # job needs creds" rather than "browser opened and closed". Saves
             # ~30s per job and keeps the screenshot log meaningful.
+            # Load the candidate's own portal login credentials (Gmail-based
+            # login email + password) from their DB profile ONCE here, so the
+            # account-wall pre-flight below can accept EITHER per-candidate
+            # credentials OR global env-var credentials, and so we can inject
+            # them into the adapter before it navigates/logs in. Never placed on
+            # candidate_profile — keeps the password out of LLM prompts and logs.
+            _cand_creds = {"login_email": "", "password": "", "gmail": ""}
+            try:
+                from ..adapters.session_utils import load_candidate_credentials
+                _cand_creds = await load_candidate_credentials(package.candidate_id)
+            except Exception as _cc_exc:
+                logger.debug(f"[M4] candidate-credential load skipped: {_cc_exc}")
+            _has_cand_login = bool(
+                _cand_creds.get("login_email") and _cand_creds.get("password")
+            )
+
             _walled_creds = {
                 "workday":      ("WORKDAY_USERNAME",    "WORKDAY_PASSWORD"),
                 "icims":        ("ICIMS_USERNAME",      "ICIMS_PASSWORD"),
@@ -570,14 +586,23 @@ class ApplicationExecutor:
             _creds = _walled_creds.get(_plat_key)
             if _creds:
                 u_env, p_env = _creds
-                if not (os.getenv(u_env, "").strip() and os.getenv(p_env, "").strip()):
+                _has_env = bool(
+                    os.getenv(u_env, "").strip() and os.getenv(p_env, "").strip()
+                )
+                if not (_has_env or _has_cand_login):
                     logger.warning(
                         f"[M4] Pre-flight skip: {_plat_key} requires {u_env}/{p_env} "
-                        "in .env — no scraping bypass exists for account-walled ATSes."
+                        "in .env OR a gmail+password on the candidate profile — "
+                        "no scraping bypass exists for account-walled ATSes."
                     )
                     raise Exception(
-                        f"LOGIN_REQUIRED: {_plat_key} requires an account; "
-                        f"set {u_env} and {p_env} in .env to enable."
+                        f"LOGIN_REQUIRED: {_plat_key} requires an account; set "
+                        f"{u_env}/{p_env} in .env or add gmail+password to the candidate."
+                    )
+                if _has_cand_login and not _has_env:
+                    logger.info(
+                        f"[M4] {_plat_key}: authenticating with candidate-profile "
+                        "credentials (no env override set)."
                     )
 
             # ── STEP 1: Rate limit ──
@@ -619,6 +644,19 @@ class ApplicationExecutor:
             # it simply ignore the attribute.
             try:
                 adapter.candidate_profile = package.candidate_profile
+                # Surface the candidate's Gmail (an email address — not a secret)
+                # so adapters whose flow reads it back from that mailbox can use
+                # it (e.g. Talent's email/OTP gate). The password is NOT added
+                # here — it travels only via set_candidate_credentials below.
+                if _cand_creds.get("gmail") and isinstance(package.candidate_profile, dict):
+                    package.candidate_profile.setdefault("gmail", _cand_creds["gmail"])
+            except Exception:
+                pass
+            # Inject login credentials via the secure channel (NOT candidate_profile)
+            # so login-gated adapters authenticate as this candidate; the password
+            # never touches LLM prompts or logs.
+            try:
+                adapter.set_candidate_credentials(_cand_creds)
             except Exception:
                 pass
             await adapter.navigate_to_application(page, package.job_url)

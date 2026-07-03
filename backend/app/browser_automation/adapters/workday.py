@@ -296,8 +296,8 @@ class WorkdayAdapter(BasePlatformAdapter):
         if not visible_signin:
             return
 
-        username = os.getenv("WORKDAY_USERNAME", "").strip()
-        password = os.getenv("WORKDAY_PASSWORD", "").strip()
+        username = self._login_credential("login_email", "WORKDAY_USERNAME")
+        password = self._login_credential("password", "WORKDAY_PASSWORD")
         if not username or not password:
             # Sentinel-string the Celery task already recognises as a
             # no-retry terminal failure. LOGIN_REQUIRED is a policy outcome,
@@ -307,8 +307,8 @@ class WorkdayAdapter(BasePlatformAdapter):
             # "BOT_DETECTED" (which would suggest our automation got caught,
             # which is misleading — we never got the chance to be caught).
             raise RuntimeError(
-                "LOGIN_REQUIRED: Workday requires an account; set WORKDAY_USERNAME and "
-                "WORKDAY_PASSWORD in .env (one set of credentials per candidate)"
+                "LOGIN_REQUIRED: Workday requires an account; set WORKDAY_USERNAME/"
+                "WORKDAY_PASSWORD in .env or add gmail+password to the candidate profile"
             )
 
         logger.info("[Workday] signing in with stored credentials")

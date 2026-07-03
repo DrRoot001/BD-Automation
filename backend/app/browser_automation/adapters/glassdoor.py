@@ -251,12 +251,13 @@ class GlassdoorAdapter(BasePlatformAdapter):
         await self._perform_login(page)
 
     async def _perform_login(self, page: Page) -> None:
-        email = os.getenv("GLASSDOOR_EMAIL", "").strip()
-        password = os.getenv("GLASSDOOR_PASSWORD", "").strip()
+        email = self._login_credential("login_email", "GLASSDOOR_EMAIL")
+        password = self._login_credential("password", "GLASSDOOR_PASSWORD")
         if not email or not password:
             raise RuntimeError(
-                "BLOCKED: GLASSDOOR_EMAIL / GLASSDOOR_PASSWORD not configured — "
-                "cannot log in to Glassdoor (Easy Apply requires an account)."
+                "BLOCKED: no Glassdoor credentials — set GLASSDOOR_EMAIL / "
+                "GLASSDOOR_PASSWORD or add gmail+password to the candidate profile "
+                "(Easy Apply requires an account)."
             )
 
         logger.info(f"[Glassdoor] Logging in as {email!r}")

@@ -250,13 +250,14 @@ class ZipRecruiterAdapter(BasePlatformAdapter):
         await self._perform_login(page)
 
     async def _perform_login(self, page: Page) -> None:
-        email = os.getenv("ZIPRECRUITER_EMAIL", "").strip()
-        password = os.getenv("ZIPRECRUITER_PASSWORD", "").strip()
+        email = self._login_credential("login_email", "ZIPRECRUITER_EMAIL")
+        password = self._login_credential("password", "ZIPRECRUITER_PASSWORD")
         if not email or not password:
             raise RuntimeError(
-                "BLOCKED: ZIPRECRUITER_EMAIL / ZIPRECRUITER_PASSWORD not "
-                "configured — cannot log in to ZipRecruiter. The account must "
-                "be created MANUALLY by the operator (US phone verification)."
+                "BLOCKED: no ZipRecruiter credentials — set ZIPRECRUITER_EMAIL / "
+                "ZIPRECRUITER_PASSWORD or add gmail+password to the candidate "
+                "profile. The account must be created MANUALLY by the operator "
+                "(US phone verification)."
             )
 
         logger.info(f"[ZipRecruiter] Logging in as {email!r}")
