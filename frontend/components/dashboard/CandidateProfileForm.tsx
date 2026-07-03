@@ -270,14 +270,20 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(candidatePayload),
         })
-        if (!res.ok) throw new Error((await res.text()) || 'Failed to update candidate profile.')
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null)
+          throw new Error(errData?.detail || 'Failed to update candidate profile.')
+        }
       } else {
         const res = await fetch('/api/candidates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(candidatePayload),
         })
-        if (!res.ok) throw new Error((await res.text()) || 'Failed to create candidate profile.')
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null)
+          throw new Error(errData?.detail || 'Failed to create candidate profile.')
+        }
         const data = await res.json()
         candidateId = data.id
       }
@@ -291,7 +297,8 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
           body: fd,
         })
         if (!uploadRes.ok) {
-          throw new Error(`Profile saved, but resume upload failed: ${await uploadRes.text()}`)
+          const errData = await uploadRes.json().catch(() => null)
+          throw new Error(`Profile saved, but resume upload failed: ${errData?.detail || 'Upload error'}`)
         }
       }
 
