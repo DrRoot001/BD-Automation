@@ -309,7 +309,12 @@ class TalentAdapter(BasePlatformAdapter):
         'Continue' (NOT 'Continue with Google'), which emails the OTP. No-op if
         the email field isn't visible (e.g. an existing session already moved us
         to the contact form) or no candidate email is available."""
-        email = ((self.candidate_profile or {}).get("email") or "").strip()
+        # Prefer the candidate's Gmail: Talent emails the OTP to whatever address
+        # we enter, and we read that code back from the candidate's Gmail via
+        # their google_refresh_token. Entering a non-Gmail address would send the
+        # OTP somewhere we cannot read. Fall back to the primary email if no Gmail.
+        prof = self.candidate_profile or {}
+        email = ((prof.get("gmail") or prof.get("email")) or "").strip()
         if not email:
             logger.info("[Talent] No candidate email on adapter — leaving email gate to AgentLoop")
             return

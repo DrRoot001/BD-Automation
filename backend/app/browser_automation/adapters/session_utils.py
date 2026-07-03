@@ -49,3 +49,54 @@ def invalidate_session_file(platform: str) -> bool:
     except Exception as exc:
         logger.debug(f"[{platform}] session-file invalidation skipped: {exc}")
     return False
+
+
+async def load_candidate_credentials(candidate_id) -> dict:
+    """Load a candidate's portal login credentials from their DB profile.
+
+    Returns ``{"login_email": str, "password": str, "gmail": str}`` — empty
+    strings when a field is absent, the candidate is unknown, or the DB lookup
+    fails (never raises; callers degrade to env-var credentials).
+
+    `login_email` is the candidate's Gmail address when present (portal accounts
+    for our candidates are provisioned against their Gmail), falling back to the
+    primary account email. The password is the candidate's stored portal
+    password.
+
+    SECURITY: the returned values — the password especially — are handed ONLY to
+    an adapter's login method via ``set_candidate_credentials``. They are never
+    written into ``candidate_profile`` (which is serialized into LLM prompts and
+    logs) or logged directly. Mirrors code_fetcher._load_refresh_token's
+    Celery-safe NullPool session usage.
+    """
+    out = {"login_email": "", "password": "", "gmail": ""}
+    if not candidate_id:
+        return out
+    try:
+        import uuid
+
+        from sqlalchemy import select
+        from app.database import task_session
+        from app.models.candidate import Candidate
+
+        cid = candidate_id
+        if isinstance(cid, str):
+            try:
+                cid = uuid.UUID(cid)
+            except ValueError:
+                pass
+        async with task_session() as s:
+            row = (
+                await s.execute(select(Candidate).where(Candidate.id == cid))
+            ).scalar_one_or_none()
+        if not row:
+            return out
+        gmail = (getattr(row, "gmail", "") or "").strip()
+        email = (getattr(row, "email", "") or "").strip()
+        password = (getattr(row, "password", "") or "").strip()
+        out["gmail"] = gmail
+        out["login_email"] = gmail or email
+        out["password"] = password
+    except Exception as exc:
+        logger.warning(f"[credentials] could not load candidate credentials: {exc}")
+    return out

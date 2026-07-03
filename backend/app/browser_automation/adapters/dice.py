@@ -255,12 +255,13 @@ class DiceAdapter(BasePlatformAdapter):
         return await self._email_field_visible(page)
 
     async def _perform_login(self, page: Page) -> None:
-        email = os.getenv("DICE_EMAIL", "").strip()
-        password = os.getenv("DICE_PASSWORD", "").strip()
+        email = self._login_credential("login_email", "DICE_EMAIL")
+        password = self._login_credential("password", "DICE_PASSWORD")
         if not email or not password:
             raise RuntimeError(
-                "BLOCKED: DICE_EMAIL / DICE_PASSWORD not configured — cannot log in "
-                "to Dice (Easy Apply requires an authenticated seeker account)."
+                "BLOCKED: no Dice credentials — set DICE_EMAIL / DICE_PASSWORD or add "
+                "gmail+password to the candidate profile (Easy Apply requires an "
+                "authenticated seeker account)."
             )
 
         if "/login" not in page.url.lower():

@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 from abc import ABC, abstractmethod
 from playwright.async_api import Page
@@ -7,6 +8,34 @@ from typing import Optional, Tuple
 class BasePlatformAdapter(ABC):
     platform_name: str
     container_selector: Optional[str] = None
+
+    def set_candidate_credentials(self, credentials: Optional[dict]) -> None:
+        """Inject the candidate's portal login credentials (from their DB
+        profile) so login-gated adapters authenticate AS that candidate.
+
+        Deliberately a separate channel from ``candidate_profile`` — the
+        password must never reach LLM prompts or logs. Adapters that don't log
+        in simply never read it. Shape: ``{"login_email","password","gmail"}``.
+        """
+        self._candidate_credentials = dict(credentials or {})
+
+    def _login_credential(self, field: str, *env_fallback_keys: str) -> str:
+        """Resolve a login credential, preferring the injected per-candidate
+        value and falling back to environment variables (first non-empty).
+
+        `field` is one of ``"login_email"`` / ``"password"`` / ``"gmail"``.
+        Per-candidate credentials win so multi-candidate runs each log in as
+        themselves; env vars remain the fallback for shared/test accounts.
+        """
+        creds = getattr(self, "_candidate_credentials", None) or {}
+        val = (creds.get(field) or "").strip()
+        if val:
+            return val
+        for key in env_fallback_keys:
+            v = os.getenv(key, "").strip()
+            if v:
+                return v
+        return ""
 
     @abstractmethod
     async def navigate_to_application(self, page: Page, job_url: str) -> None:
