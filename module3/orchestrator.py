@@ -107,7 +107,7 @@ async def orchestrate_application_package(
     the precomputed scores are used, avoiding a redundant second Gemini call.
     """
     if not api_base_url:
-        api_base_url = os.getenv("API_URL", "http://127.0.0.1:8000")
+        api_base_url = os.getenv("API_URL") or os.getenv("M1_API_BASE_URL") or "http://127.0.0.1:8002"
     print(f"\n[ORCHESTRATOR] Starting application package preparation for Candidate: {candidate_id} | Job: {job_id}")
 
     transport = httpx.AsyncHTTPTransport(retries=3)
@@ -452,7 +452,7 @@ async def prepare_package_for_live_application(
     Runs synchronously and only executes required pipeline steps.
     """
     if not api_base_url:
-        api_base_url = os.getenv("API_URL", "http://127.0.0.1:8000")
+        api_base_url = os.getenv("API_URL") or os.getenv("M1_API_BASE_URL") or "http://127.0.0.1:8002"
     print(f"\n[ORCHESTRATOR] Synchronous package preparation for Candidate: {candidate_id} | Job: {job_id}")
 
     transport = httpx.AsyncHTTPTransport(retries=3)

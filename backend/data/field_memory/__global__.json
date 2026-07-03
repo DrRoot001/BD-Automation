@@ -664,10 +664,10 @@
     "value": "Daily - I use AI for multiple use cases"
   },
   "how would you describe your english fluency": {
-    "count": 4,
+    "count": 6,
     "field_type": "radio",
     "label": "*How would you describe your English Fluency?",
-    "last_seen": 1783089086,
+    "last_seen": 1783094550,
     "source": "screening",
     "value": "Fluent"
   },
@@ -992,10 +992,10 @@
     "value": "Software Engineer"
   },
   "what is your desired salary range for this role, including base and any variable": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
     "label": "What is your desired salary range for this role, including base and any variable",
-    "last_seen": 1783089965,
+    "last_seen": 1783094215,
     "source": "agent_loop",
     "value": "$160,000"
   },
@@ -1056,12 +1056,12 @@
     "value": "I am a highly proficient Full Stack Engineer with 2+ years of experience in developing robust internal tooling and scalable applications, aligning well with the 'Pro-Create' aspect of this role. My expertise in backend systems, API integrations, and CI/CD pipelines, as demonstrated by leading development for platforms like Finmile and optimizing database performance, would allow me to contribute significantly to Suno's engineering team. I am eager to apply my skills in a dynamic environment focused on innovative software solutions."
   },
   "why did you decide to apply to this role at clickup": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
     "label": "Why did you decide to apply to this role at ClickUp?",
-    "last_seen": 1783089995,
+    "last_seen": 1783094244,
     "source": "agent_loop",
-    "value": "I am excited by ClickUp's focus on leading architecture and initiatives for data platforms, especially those involving AI workloads. My experience as a Senior AI Automation Engineer, where I've designed and scaled AI-driven products and enterprise automation platforms, aligns perfectly with these goals. I am eager to contribute to ensuring scalability and reliability while mentoring engineers to elevate technical standards."
+    "value": "I am excited by ClickUp's focus on leading architecture and initiatives for data platforms, especially those involving AI workloads. My experience as a Senior AI Automation Engineer, with a strong background in Data Engineering, AI integration, and cloud-native solutions, aligns perfectly with the need for scalable and reliable data systems. I am eager to contribute to a team that values technical excellence and innovation."
   },
   "why scale ai": {
     "count": 1,

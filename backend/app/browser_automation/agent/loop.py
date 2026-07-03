@@ -2409,6 +2409,28 @@ async def _execute_action(
                     # the blur event — without it the value reverts to empty on
                     # the next re-render, so FORM STATUS keeps showing the field
                     # empty and the AI re-fills it forever (the free-text loop).
+                    # Location / city autocomplete handling (Workable, Ashby, Greenhouse, Google Places):
+                    # If typing opened an autocomplete list, press ArrowDown + Enter to commit the option.
+                    _is_loc_field = any(k in (sel + " " + (action.field_label or "")).lower() for k in ("city", "location", "address", "state"))
+                    try:
+                        await asyncio.sleep(0.3)
+                        has_auto = await page.evaluate(
+                            """(el) => {
+                                const lid = el.getAttribute('aria-controls') || el.getAttribute('aria-owns');
+                                if (lid && document.getElementById(lid)) return true;
+                                const auto = document.querySelector('.pac-container, [role="listbox"], .workable-autocomplete, [class*="autocomplete"]');
+                                return !!(auto && auto.children && auto.children.length > 0);
+                            }""",
+                            loc,
+                        )
+                        if has_auto or _is_loc_field:
+                            await page.keyboard.press("ArrowDown")
+                            await asyncio.sleep(0.15)
+                            await page.keyboard.press("Enter")
+                            await asyncio.sleep(0.3)
+                    except Exception:
+                        pass
+
                     try:
                         await loc.evaluate(
                             "el => { el.dispatchEvent(new Event('change', {bubbles:true})); el.blur && el.blur(); }"
@@ -7254,15 +7276,19 @@ class AgentLoop:
                         #     to commit it properly to the SPA state.
                         if action.kind == "fill_field" and action.selector and action.value:
                             try:
-                                target_val = str(action.value)
+                                target_val = str(action.value).strip()
                                 loc = (frame or page).locator(action.selector).first
                                 if await loc.count() > 0:
-                                    current_val = await loc.evaluate("el => el.value || ''")
-                                    if current_val.strip() == target_val.strip():
+                                    current_val = await loc.evaluate("el => el.value || el.innerText || el.getAttribute('value') || ''")
+                                    current_clean = current_val.strip()
+                                    target_clean = target_val.lower()
+                                    cur_clean_lc = current_clean.lower()
+                                    is_match = cur_clean_lc == target_clean or (bool(target_clean) and target_clean in cur_clean_lc)
+                                    if is_match:
                                         # Value is already there — LLM is just confused
                                         logger.warning(
                                             f"[AgentLoop] step={step} REPETITION GUARD: "
-                                            f"{action.selector!r} already has correct value "
+                                            f"{action.selector!r} already has value "
                                             f"'{current_val[:40]}' — skipping redundant fill."
                                         )
                                         actions.append(action)
@@ -7276,6 +7302,12 @@ class AgentLoop:
                                         )
                                         await loc.click(timeout=3000)
                                         await loc.fill(target_val, timeout=3000)
+                                        try:
+                                            await page.keyboard.press("ArrowDown")
+                                            await asyncio.sleep(0.15)
+                                            await page.keyboard.press("Enter")
+                                        except Exception:
+                                            pass
                                         await page.keyboard.press("Tab")
                                         await asyncio.sleep(0.5)
                                         same_action_run = []  # reset — don't abort

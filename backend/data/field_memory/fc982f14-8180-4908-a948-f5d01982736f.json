@@ -160,10 +160,10 @@
     "value": "Senior AI Automation Engineer"
   },
   "how would you describe your english fluency": {
-    "count": 4,
+    "count": 6,
     "field_type": "radio",
     "label": "*How would you describe your English Fluency?",
-    "last_seen": 1783089086,
+    "last_seen": 1783094550,
     "source": "screening",
     "value": "Fluent"
   },
@@ -224,10 +224,10 @@
     "value": "Not provided"
   },
   "location": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
     "label": "Location",
-    "last_seen": 1783089945,
+    "last_seen": 1783094203,
     "source": "agent_loop",
     "value": "United States"
   },
@@ -440,20 +440,20 @@
     "value": "Not provided"
   },
   "what is your desired salary range for this role, including base and any variable": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
     "label": "What is your desired salary range for this role, including base and any variable",
-    "last_seen": 1783089965,
+    "last_seen": 1783094215,
     "source": "agent_loop",
     "value": "$160,000"
   },
   "why did you decide to apply to this role at clickup": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
     "label": "Why did you decide to apply to this role at ClickUp?",
-    "last_seen": 1783089995,
+    "last_seen": 1783094244,
     "source": "agent_loop",
-    "value": "I am excited by ClickUp's focus on leading architecture and initiatives for data platforms, especially those involving AI workloads. My experience as a Senior AI Automation Engineer, where I've designed and scaled AI-driven products and enterprise automation platforms, aligns perfectly with these goals. I am eager to contribute to ensuring scalability and reliability while mentoring engineers to elevate technical standards."
+    "value": "I am excited by ClickUp's focus on leading architecture and initiatives for data platforms, especially those involving AI workloads. My experience as a Senior AI Automation Engineer, with a strong background in Data Engineering, AI integration, and cloud-native solutions, aligns perfectly with the need for scalable and reliable data systems. I am eager to contribute to a team that values technical excellence and innovation."
   },
   "why scale ai": {
     "count": 1,
