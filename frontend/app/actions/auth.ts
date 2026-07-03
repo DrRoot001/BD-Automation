@@ -82,16 +82,19 @@ export async function getCurrentUserAction(): Promise<{
   const cookieStore = await cookies()
   const token = cookieStore.get('auth_token')?.value
   if (!token) return null
+  const controller = new AbortController()
+  // 3s proved too tight: /auth/me legitimately takes >3s while the backend
+  // is busy with an auto-apply run (remote Supabase + Redis round-trips),
+  // and a null here demotes an admin to the BD-user nav for 5 minutes.
+  const timeout = setTimeout(() => controller.abort(), 10000)
   try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 3000)
     const res = await fetch(`${API_BASE}/auth/me`, {
       headers: { Authorization: `Bearer ${token}` },
       cache: 'no-store',
       signal: controller.signal,
     })
-    clearTimeout(timeout)
-    if (!res.ok) return null
+    if (res.status === 401 || res.status === 403) return null // token truly invalid — logged out
+    if (!res.ok) throw new Error(`auth/me ${res.status}`)
     const data = await res.json()
     return {
       id: data.id,
@@ -100,7 +103,7 @@ export async function getCurrentUserAction(): Promise<{
       full_name: data.full_name,
       role: data.role,
     }
-  } catch {
-    return null
+  } finally {
+    clearTimeout(timeout)
   }
 }

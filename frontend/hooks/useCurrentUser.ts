@@ -19,6 +19,11 @@ export function useCurrentUser() {
     staleTime: 5 * 60_000,  // Identity/role rarely changes mid-session — avoid a server-action round-trip per navigation
     gcTime: 5 * 60_000,     // Keep cached for 5 minutes after all subscribers unmount
     refetchOnWindowFocus: true,
-    retry: 1,               // Retry once on transient failures
+    // The action now THROWS on backend hiccups (timeout/5xx) instead of
+    // returning null, so a failed refetch keeps the last-known identity
+    // (React Query retains previous data on error) rather than demoting an
+    // admin to the BD-user nav. null is reserved for "actually logged out".
+    retry: 2,
+    retryDelay: 1500,
   })
 }
