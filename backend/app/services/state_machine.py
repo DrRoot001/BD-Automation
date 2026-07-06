@@ -104,43 +104,83 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             
     if not stuck_ids_and_statuses:
         return
-        
+
     stuck_ids = [row[0] for row in stuck_ids_and_statuses]
-    
+
+    # A FORM_COMPLETED transition tagged submit_confirmed/submit_fired means the
+    # submit click already went to the ATS — the pipeline died between the click
+    # and the SUBMITTED persist (evidence upload, resume-id lookup, etc.).
+    # Failing those rows records a real submission as FAILED, and a later retry
+    # would double-submit. Promote them to SUBMITTED instead.
+    fc_ids = [row[0] for row in stuck_ids_and_statuses if row[1] == "FORM_COMPLETED"]
+    submit_fired_ids = set()
+    if fc_ids:
+        fc_hist_stmt = select(ApplicationHistory).where(
+            ApplicationHistory.application_id.in_(fc_ids),
+            ApplicationHistory.to_status == "FORM_COMPLETED",
+        )
+        for h in (await session.execute(fc_hist_stmt)).scalars().all():
+            meta = h.meta_data or {}
+            if meta.get("submit_confirmed") or meta.get("submit_fired"):
+                submit_fired_ids.add(h.application_id)
+
     # Fetch the actual Application objects to update
     apps_stmt = select(Application).where(Application.id.in_(stuck_ids))
     apps_to_update = (await session.execute(apps_stmt)).scalars().all()
-    
+
     # Map them for easy access
     app_map = {app.id: app for app in apps_to_update}
-    
+
     stuck_count = 0
     for app_id, status, last_updated in stuck_ids_and_statuses:
         app = app_map.get(app_id)
         if not app:
             continue
-            
+
         old_status = app.status
-        logger.warning(f"[Watchdog] Killing stuck application {app.id} (status={old_status}, last_updated={last_updated})")
-        app.status = "FAILED"
-        app.failure_reason = "INFRA_ERROR"
-        app.error_message = f"watchdog: stuck in {old_status} since {last_updated} — worker crashed or pipeline timed out"
-        
-        history = ApplicationHistory(
-            application_id=app.id,
-            from_status=old_status,
-            to_status="FAILED",
-            meta_data={"info": f"Marked FAILED by watchdog due to automation timeout (stuck in {old_status} since {last_updated})"}
-        )
+
+        if app_id in submit_fired_ids:
+            logger.warning(
+                f"[Watchdog] Promoting stuck application {app.id} to SUBMITTED "
+                f"(submit already fired; pipeline died before persisting, last_updated={last_updated})"
+            )
+            app.status = "SUBMITTED"
+            app.failure_reason = None
+            app.error_message = None
+            if getattr(app, "submitted_at", None) is None:
+                app.submitted_at = last_updated
+            new_status = "SUBMITTED"
+            history = ApplicationHistory(
+                application_id=app.id,
+                from_status=old_status,
+                to_status="SUBMITTED",
+                meta_data={"info": (
+                    "Recovered by watchdog: submit had already fired but the "
+                    f"pipeline died before persisting (stuck in {old_status} "
+                    f"since {last_updated}); evidence capture was interrupted"
+                )}
+            )
+        else:
+            logger.warning(f"[Watchdog] Killing stuck application {app.id} (status={old_status}, last_updated={last_updated})")
+            app.status = "FAILED"
+            app.failure_reason = "INFRA_ERROR"
+            app.error_message = f"watchdog: stuck in {old_status} since {last_updated} — worker crashed or pipeline timed out"
+            new_status = "FAILED"
+            history = ApplicationHistory(
+                application_id=app.id,
+                from_status=old_status,
+                to_status="FAILED",
+                meta_data={"info": f"Marked FAILED by watchdog due to automation timeout (stuck in {old_status} since {last_updated})"}
+            )
         session.add(history)
         stuck_count += 1
-        
+
         try:
             from app.tasks.browser_automation import publish_status_changed
             await publish_status_changed(
                 application_id=str(app.id),
                 from_status=old_status,
-                to_status="FAILED"
+                to_status=new_status
             )
         except Exception as ev_err:
             logger.error(f"[Watchdog] failed to publish status changed event for {app.id}: {ev_err}")

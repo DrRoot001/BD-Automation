@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useQueryClient } from '@tanstack/react-query'
+import { StatusBadge } from '../shared/StatusBadge'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -22,37 +23,25 @@ const COMPLETED_STATUSES = [
   'ASSESSMENT'
 ]
 
+// Statuses where automation is actively working the application —
+// showing a red "Apply Manually" link here reads as failure mid-run.
+const IN_FLIGHT_STATUSES = [
+  'QUEUED',
+  'RESUME_UPDATED',
+  'COVER_LETTER_CREATED',
+  'APPLICATION_STARTED',
+  'FORM_COMPLETED',
+]
+
 function isCompleted(status: string) {
   return COMPLETED_STATUSES.includes(status?.toUpperCase())
 }
 
-const PAGE_SIZE = 15
-
-function StatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase()
-  const map: Record<string, string> = {
-    queued:         'badge-queued',
-    found:          'badge-found',
-    analyzed:       'badge-found',
-    matched:        'badge-found',
-    submitted:      'badge-submitted',
-    confirmed:      'badge-confirmed',
-    interview_r1:   'badge-interview_r1',
-    interview_r2:   'badge-interview_r2',
-    interview_r3:   'badge-interview_r1',
-    interview_r4:   'badge-interview_r1',
-    failed:         'badge-failed',
-    blocked:        'badge-blocked',
-    rejected:       'badge-rejected',
-    offer:          'badge-offer',
-    assessment:     'badge-interview_r1',
-  }
-  return (
-    <span className={clsx('badge', map[s] ?? 'badge-found')}>
-      {status.replace(/_/g, ' ')}
-    </span>
-  )
+function isInFlight(status: string) {
+  return IN_FLIGHT_STATUSES.includes(status?.toUpperCase())
 }
+
+const PAGE_SIZE = 15
 
 function TableSkeleton() {
   return (
@@ -240,7 +229,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
 
                   {/* JD link */}
                   <td className="px-3 py-3 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
-                    {!isCompleted(app.status) && app.job_url ? (
+                    {!isCompleted(app.status) && !isInFlight(app.status) && app.job_url ? (
                       <a
                         href={app.job_url}
                         target="_blank"

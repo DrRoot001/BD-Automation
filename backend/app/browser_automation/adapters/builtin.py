@@ -19,14 +19,25 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from .base import BasePlatformAdapter
+from .session_utils import session_file_path
 
 logger = logging.getLogger(__name__)
+
+# builtin.com/login round-trips through accounts.builtin.com (OIDC). With a
+# live session cookie it bounces straight back authenticated; logged-out it
+# renders the email screen ("Enter your email and we'll send you a one-time
+# link"). There is NO password login — the only alternatives are Google SSO
+# (forbidden by operator policy) and the passwordless email link used here.
+_LOGIN_URL = "https://builtin.com/login"
+_EMAIL_FIELD = "input#Email, input[name='Email']"
+_LOGIN_SUBMIT = "button:has-text('LOGIN'), button[type='submit']"
 
 
 def _newtab_timeout_ms() -> int:
@@ -81,6 +92,180 @@ class BuiltInAdapter(BasePlatformAdapter):
         self._iframe_mode: bool = False
         self._frame_locator = None
         self._frame = None
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Candidate login (passwordless one-time email link — never Google SSO)
+    # ──────────────────────────────────────────────────────────────────────
+
+    async def _on_login_screen(self, page: Page) -> bool:
+        try:
+            if "accounts.builtin.com" not in (page.url or "").lower():
+                return False
+            return await page.locator(_EMAIL_FIELD).first.is_visible()
+        except Exception:
+            return False
+
+    async def _submit_login_email(self, page: Page, email: str) -> bool:
+        """Fill the email field and click LOGIN. Recovers from the error page
+        accounts.builtin.com intermittently serves by reloading /login first."""
+        try:
+            url = (page.url or "").lower()
+            if "accounts.builtin.com" not in url or url.startswith("chrome-error"):
+                await page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+                await asyncio.sleep(3.0)
+            box = page.locator(_EMAIL_FIELD).first
+            await box.wait_for(state="visible", timeout=15_000)
+            await box.fill(email)
+            await self.human_delay(0.3, 0.9)
+            await page.locator(_LOGIN_SUBMIT).first.click(timeout=5_000)
+            logger.info(f"[BuiltIn] one-time-link request submitted for {email!r}")
+            await asyncio.sleep(4.0)
+            return True
+        except Exception as exc:
+            logger.warning(f"[BuiltIn] login email submit failed: {exc}")
+            return False
+
+    async def _ensure_logged_in(self, page: Page) -> bool:
+        """Authenticate on builtin.com AS THE CANDIDATE via the passwordless
+        email one-time-link flow (builtin has no password login; Google SSO is
+        deliberately never used).
+
+        Returns True when a logged-in session exists (restored or fresh),
+        False when no credentials/candidate identity is available (caller
+        falls back to the legacy anonymous mini-form flow). Raises
+        RuntimeError("BLOCKED: ...") when the login email was submitted but
+        the one-time link never arrived — the account-walled apply is doomed
+        without it, and BLOCKED routes to the standard login-failure handling.
+        """
+        email = self._login_credential(
+            "login_email", "BUILTIN_EMAIL", "BUILTIN_CANDIDATE_EMAIL"
+        )
+        candidate_id = getattr(self, "candidate_id", None)
+        if not email or not candidate_id:
+            logger.info(
+                "[BuiltIn] no login email / candidate_id available — "
+                "proceeding with the anonymous flow"
+            )
+            return False
+
+        # Restore a previously-saved session directly onto this context.
+        # context_manager's file-based restore only engages when the executor's
+        # platform key is literally 'builtin'; ad-hoc URL runs pass the full
+        # job URL as the platform, so restore here too (idempotent either way).
+        try:
+            import json as _json
+            _sess = session_file_path("builtin")
+            if _sess.is_file():
+                _cookies = (_json.loads(_sess.read_text()) or {}).get("cookies") or []
+                if _cookies:
+                    await page.context.add_cookies(_cookies)
+                    logger.info(
+                        f"[BuiltIn] restored {len(_cookies)} session cookies ← {_sess}"
+                    )
+        except Exception as exc:
+            logger.debug(f"[BuiltIn] session cookie restore skipped: {exc}")
+
+        try:
+            await page.goto(_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+        except Exception as exc:
+            logger.warning(f"[BuiltIn] login page goto failed: {exc}")
+            return False
+
+        # builtin.com/login renders a "Redirecting…" shim for several seconds
+        # before bouncing to accounts.builtin.com (logged out) or back into
+        # builtin.com (session live). Staying on /login means NOTHING has been
+        # decided yet — wait for a decisive state, never infer from silence.
+        on_wall = False
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline:
+            u = (page.url or "").lower()
+            if "accounts.builtin.com" in u and await self._on_login_screen(page):
+                on_wall = True
+                break
+            if ("builtin.com" in u and "accounts.builtin.com" not in u
+                    and "/login" not in u):
+                # OIDC bounced us straight back — restored session is live.
+                logger.info(f"[BuiltIn] session already authenticated (url={page.url!r})")
+                return True
+            await asyncio.sleep(1.0)
+        if not on_wall:
+            logger.warning(
+                f"[BuiltIn] login state undecided after 30s (url={page.url!r}) "
+                "— proceeding anonymously"
+            )
+            return False
+
+        from ..verification.code_fetcher import fetch_magic_link
+
+        magic = None
+        for attempt in (1, 2):
+            # Epoch marker BEFORE the send so the Gmail poll only accepts a
+            # link generated by THIS submission (5s skew tolerance).
+            after_epoch = int(time.time()) - 5
+            await self._submit_login_email(page, email)
+            # Poll Gmail even if the response page errored — accounts.builtin
+            # sometimes 500s AFTER dispatching the email.
+            # BuiltIn's SES delivery is slow — observed 2.5–5 min from submit
+            # to inbox. Short windows lose the race (a link once arrived 2s
+            # AFTER a 150s poll gave up).
+            magic = await fetch_magic_link(
+                candidate_id,
+                after_epoch,
+                sender_hint="builtin",
+                host_hint="builtin.com",
+                timeout_s=360.0 if attempt == 1 else 240.0,
+            )
+            if magic:
+                break
+            logger.warning(
+                f"[BuiltIn] one-time link not received (attempt {attempt}/2)"
+            )
+
+        if not magic:
+            raise RuntimeError(
+                "BLOCKED: BuiltIn one-time login link never arrived in the "
+                f"candidate's Gmail ({email}). Passwordless login is the only "
+                "non-SSO path — check the account exists on builtin.com, the "
+                "google_refresh_token is valid, and the message isn't in spam."
+            )
+
+        logger.info("[BuiltIn] one-time login link received — opening")
+        try:
+            await page.goto(magic, wait_until="domcontentloaded", timeout=45_000)
+        except Exception as exc:
+            logger.warning(f"[BuiltIn] magic-link navigation error: {exc}")
+        # accounts.builtin.com shows an auto-running "Verifying login…" page
+        # (/Token/Verify) and then round-trips OIDC back into builtin.com.
+        # Verification appears to be bound to the browser context that
+        # requested the link (a fresh context stalls on /Token/Verify forever)
+        # — this page IS that context, but give it a generous window.
+        verified = False
+        for _ in range(60):
+            u = (page.url or "").lower()
+            if ("builtin.com" in u and "accounts.builtin.com" not in u
+                    and not u.startswith("chrome-error")):
+                verified = True
+                break
+            await asyncio.sleep(1.0)
+        if not verified:
+            raise RuntimeError(
+                "BLOCKED: BuiltIn one-time login link did not complete "
+                f"verification (stuck at {page.url!r}) — token expired/"
+                "consumed, or Token/Verify rejected this browser context."
+            )
+
+        # Persist the session so every future run (context_manager auto-loads
+        # backend/data/sessions/builtin.json) skips this entire dance.
+        try:
+            path = session_file_path("builtin")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            await page.context.storage_state(path=str(path))
+            logger.info(f"[BuiltIn] session persisted → {path}")
+        except Exception as exc:
+            logger.warning(f"[BuiltIn] session persist failed (non-fatal): {exc}")
+
+        logger.info(f"[BuiltIn] logged in as {email!r} (url={page.url!r})")
+        return True
 
     # ──────────────────────────────────────────────────────────────────────
     # Click-through resolution
@@ -244,6 +429,15 @@ class BuiltInAdapter(BasePlatformAdapter):
             await self._inner.navigate_to_application(page, job_url)
             self._mirror_inner_attrs()
             return
+
+        # 0.5. builtin.com now walls Easy Apply behind an account: logged out,
+        # the Apply click redirects to accounts.builtin.com (Google SSO or
+        # one-time email link — no password exists). Log in as the candidate
+        # first via the email-link flow; anonymous fallback keeps the legacy
+        # mini-form flow working for jobs that still allow it. A BLOCKED
+        # RuntimeError from a failed credential login propagates — an
+        # account-walled job cannot proceed logged-out.
+        await self._ensure_logged_in(page)
 
         # 1. Do the mini-form + Continue + new-tab dance on Built In.
         resolved = await self._click_through_to_ats(page, job_url)

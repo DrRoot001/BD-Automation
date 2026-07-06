@@ -411,6 +411,15 @@ def execute_application(self, package_dict: dict):
                     failure_reason="EMAIL_VERIFICATION",
                 ))
                 return result.dict()
+            # FORM_COMPLETED means the submit was CLICKED but no confirmation
+            # marker was found. Re-running would double-submit; leave the row
+            # for the watchdog, which promotes fired-submit rows to SUBMITTED.
+            if result.status == "FORM_COMPLETED":
+                logger.warning(
+                    f"[M4] FORM_COMPLETED (submit clicked, unconfirmed) for "
+                    f"{package_dict.get('application_id')} — not retrying (would double-submit)"
+                )
+                return result.dict()
             raise Exception(f"Execution failed: {result.error_message}")
             
         return result.dict()
@@ -567,6 +576,8 @@ def retry_failed_application(package_dict: dict):
         "BOT_DETECTED", "ROBOTS_BLOCKED", "JOB_EXPIRED",
         "LOGIN_REQUIRED", "MAX_RETRIES_EXCEEDED",
         "SPAM_FLAGGED", "ALREADY_APPLIED", "QUALIFICATION_MISMATCH",
+        # Submit already fired — re-executing would double-submit.
+        "EMAIL_VERIFICATION",
     }
     failure_reason = (package_dict.get("failure_reason") or "").upper()
     if failure_reason in _terminal_reasons:

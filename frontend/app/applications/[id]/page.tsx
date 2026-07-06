@@ -7,15 +7,17 @@ import { api, type ApplicationHistoryEntry } from '@/lib/api'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
 import { resolveFileUrl } from '@/components/utils'
-import { ExternalLink, AlertCircle, ArrowLeft, FileText } from 'lucide-react'
+import { FAILURE_INFO } from '@/lib/failureReasons'
+import { ExternalLink, AlertCircle, ArrowLeft, FileText, Camera } from 'lucide-react'
 
 export default function ApplicationDetailPage() {
   const { id } = useParams()
 
-  const { data: application, isLoading: isAppLoading, isError: isAppError } = useQuery({
+  const { data: application, isLoading: isAppLoading } = useQuery({
     queryKey: ['application', id],
     queryFn: () => api.getApplication(id as string),
-    retry: false
+    retry: false,
+    refetchInterval: 15_000,
   })
 
   const { data: job, isLoading: isJobLoading } = useQuery({
@@ -40,6 +42,7 @@ export default function ApplicationDetailPage() {
     queryKey: ['application-history', id],
     queryFn: () => api.getApplicationHistory(id as string),
     enabled: !!application,
+    refetchInterval: 15_000,
   })
 
   const isLoading = isAppLoading || isJobLoading || isCandLoading
@@ -54,7 +57,9 @@ export default function ApplicationDetailPage() {
     )
   }
 
-  if (isAppError || !application) {
+  // Only show the full-page error when there is no cached data — a failed
+  // 15s background poll must not blank an already-rendered page.
+  if (!application) {
     return (
       <div className="max-w-7xl mx-auto flex flex-col items-center justify-center h-64 text-center">
         <div className="text-danger text-base font-semibold mb-2">Application not found or failed to load.</div>
@@ -149,9 +154,12 @@ export default function ApplicationDetailPage() {
               <div className="flex items-start gap-2">
                 <AlertCircle className="w-5 h-5 text-danger shrink-0 mt-0.5" />
                 <div>
-                  <h2 className="text-sm font-semibold text-danger">Application Incomplete / Failed</h2>
+                  <h2 className="text-sm font-semibold text-danger">
+                    {FAILURE_INFO[application.failure_reason ?? '']?.title ?? 'Application Incomplete / Failed'}
+                  </h2>
                   <p className="text-xs text-danger/90 mt-1">
-                    {application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity."}
+                    {FAILURE_INFO[application.failure_reason ?? '']?.description
+                      ?? (application.error_message || 'The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity.')}
                   </p>
                 </div>
               </div>
@@ -219,6 +227,31 @@ export default function ApplicationDetailPage() {
                   </div>
                 )}
               </div>
+            </div>
+          )}
+
+          {application.screenshot_url && resolveFileUrl(application.screenshot_url) && (
+            <div className="card p-6 bg-bg-card border border-bg-border rounded-xl">
+              <h2 className="text-sm font-semibold text-text-primary border-b border-bg-border pb-3 mb-4 flex items-center gap-2">
+                <Camera className="w-4 h-4 text-text-muted" />
+                Submission Evidence
+              </h2>
+              <a
+                href={resolveFileUrl(application.screenshot_url)!}
+                target="_blank"
+                rel="noreferrer"
+                title="Open full-size screenshot"
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={resolveFileUrl(application.screenshot_url)!}
+                  alt="Screenshot captured at submission"
+                  className="w-full max-h-96 object-contain rounded-lg border border-bg-border bg-bg-primary hover:opacity-90 transition-opacity"
+                />
+              </a>
+              <p className="text-xs text-text-muted mt-2">
+                Captured automatically when the application was submitted.
+              </p>
             </div>
           )}
         </div>
