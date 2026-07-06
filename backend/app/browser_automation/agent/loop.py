@@ -69,6 +69,41 @@ def _linkedin_policy_value(profile: Optional[Dict[str, Any]]) -> str:
     return "N/A"
 
 
+def _professional_url_value(profile: Optional[Dict[str, Any]]) -> str:
+    """Best valid URL for a URL-VALIDATED professional-link field, or "".
+
+    Some ATSes (Ashby's "LinkedIn or Professional Website:", Lever's required
+    LinkedIn field) enforce client-side URL format and reject the literal
+    string "N/A" with "Please enter a valid URL" — the submit then hard-fails
+    and the whole application dies. For those fields "N/A" is never a usable
+    answer, so we fall back through every URL the profile carries:
+    policy-approved LinkedIn → linkedin_url even without the env opt-in
+    (a required URL field means the choice is "real URL or no application",
+    which is what ALLOW_REAL_LINKEDIN existed to resolve) → website.
+    Returns "" when the profile has no URL at all; callers must then leave
+    the field to the AI rather than filling a value that fails validation.
+    """
+    p = profile or {}
+    policy = _linkedin_policy_value(p)
+    if policy != "N/A":
+        return policy
+    li = (p.get("linkedin_url") or "").strip()
+    if li.lower().startswith("http") and "linkedin.com" in li.lower():
+        return li
+    site = (p.get("website") or "").strip()
+    if site.lower().startswith("http"):
+        return site
+    return ""
+
+
+def _is_url_validated_link_label(label: str) -> bool:
+    """True for labels like "LinkedIn or Professional Website:" that pair a
+    LinkedIn ask with website/URL wording — the tell that the ATS validates
+    URL format and will reject "N/A"."""
+    l = (label or "").lower()
+    return "linkedin" in l and any(w in l for w in ("website", "url", "profile link", "professional"))
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tunables
 # ─────────────────────────────────────────────────────────────────────────────
@@ -395,10 +430,18 @@ DECISION POLICY — read in order:
         or "Prefer not to say".
       * "Do you identify as transgender?" → **ALWAYS "No"**.
       * "LinkedIn URL" / "LinkedIn Profile" / "LinkedIn" / any field asking
-        for a LinkedIn URL → **ALWAYS "N/A"** (literally the string "N/A").
-        Do NOT submit the candidate's real LinkedIn URL from the identity
-        card — operator policy. This rule does NOT apply to a separate
-        "Website" / "Portfolio" / "GitHub" field, only LinkedIn.
+        for a LinkedIn URL → fill EXACTLY the "LinkedIn URL" value from the
+        identity card above (it is policy-resolved). Do NOT pull a different
+        LinkedIn URL out of the resume text. This rule does NOT apply to a
+        separate "Website" / "Portfolio" / "GitHub" field, only LinkedIn.
+        **EXCEPTION — URL-validated fields:** if the identity-card value is
+        "N/A" but the field enforces URL format (combined labels like
+        "LinkedIn or Professional Website", or the form rejected "N/A" with
+        "Please enter a valid URL"), NEVER type "N/A" — it hard-fails the
+        submit. Use the identity card's Website URL instead; if the identity
+        card has no URL at all, use the LinkedIn/portfolio URL visible in the
+        resume context. Submitting with a real professional URL beats losing
+        the application to a validation error.
       * "Country" / "Country of residence" / "Where are you currently based?"
         / "Are you currently based in any of these countries?" / "Which country
         do you live in?" / any location-or-residence question whose options are
@@ -1897,6 +1940,19 @@ async def _execute_action(
                 )
                 value = _li_target
                 action.value = _li_target
+        elif _is_url_validated_link_label(_lbl) and value.strip().upper() in ("N/A", "NA", "NONE", ""):
+            # Combined "LinkedIn or Professional Website" fields validate URL
+            # format — "N/A" fails with "Please enter a valid URL" and kills
+            # the submit (seen live on Ashby/ClickUp). Swap in a real URL when
+            # the profile has one; otherwise leave the AI's value untouched.
+            _url = _professional_url_value(self.profile)
+            if _url:
+                logger.info(
+                    f"[AgentLoop] URL-validated link field {action.field_label!r}: "
+                    f"replacing {value!r} with {_url!r}"
+                )
+                value = _url
+                action.value = _url
         try:
             loc = ctx.locator(sel).first
             if await loc.count() == 0:
@@ -3110,6 +3166,25 @@ class AgentLoop:
                         f"was {str(answer)[:50]!r}, forcing {_li_target!r}"
                     )
                     answer = _li_target
+            elif _is_url_validated_link_label(label) and str(answer).strip().upper() in ("N/A", "NA", "NONE"):
+                # A cached "N/A" on a URL-validated field ("LinkedIn or
+                # Professional Website") replays the exact fill that failed
+                # Ashby's URL check. Substitute a real profile URL, or skip
+                # the pre-fill so the AI (whose prompt now covers this case)
+                # handles the field instead.
+                _url = _professional_url_value(self.profile)
+                if _url:
+                    logger.info(
+                        f"[AgentLoop] memory pre-fill URL-field override: {label!r} "
+                        f"was 'N/A', forcing {_url!r}"
+                    )
+                    answer = _url
+                else:
+                    logger.info(
+                        f"[AgentLoop] memory pre-fill skipped for URL-validated "
+                        f"field {label!r}: cached 'N/A' and profile has no URL"
+                    )
+                    continue
 
             # ── Combobox / native-select: COMMIT via the proven option-click
             # path (the same _commit_policy_field used by deterministic prefill),

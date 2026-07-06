@@ -123,6 +123,10 @@
       {
         "timestamp": "2026-07-03T16:05:53.858618",
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=MAX_STEPS, error=wall-clock timeout after 570s)"
+      },
+      {
+        "timestamp": "2026-07-03T17:24:44.384853",
+        "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=Could not clear email verification code screen)"
       }
     ],
     "spam_backoff": {
