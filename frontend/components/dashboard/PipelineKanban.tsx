@@ -10,7 +10,7 @@ import { MoreHorizontal } from 'lucide-react'
 
 const PIPELINE_STAGES = [
   { id: 'SOURCING', statuses: ['FOUND', 'ANALYZED', 'MATCHED'] },
-  { id: 'APPLYING', statuses: ['QUEUED', 'SUBMITTED', 'CONFIRMED'] },
+  { id: 'APPLYING', statuses: ['RESUME_UPDATED', 'COVER_LETTER_CREATED', 'QUEUED', 'APPLICATION_STARTED', 'FORM_COMPLETED', 'SUBMITTED', 'CONFIRMED'] },
   { id: 'INTERVIEWING', statuses: ['INTERVIEW_R1', 'INTERVIEW_R2', 'ASSESSMENT'] },
   { id: 'OFFER', statuses: ['OFFER'] },
   { id: 'REJECTED', statuses: ['REJECTED', 'FAILED', 'BLOCKED'] },
@@ -59,7 +59,7 @@ export function PipelineKanban({ candidateId }: { candidateId?: string }) {
                 stageApps.map(app => (
                   <div
                     key={app.application_id}
-                    onClick={() => router.push(`/dashboard/applications/${app.application_id}`)}
+                    onClick={() => router.push(`/applications/${app.application_id}`)}
                     className="bg-bg-card border border-bg-border rounded-lg p-3 hover:bg-bg-hover hover:border-text-muted cursor-pointer transition-all group"
                   >
                     <div className="flex items-start justify-between mb-2">

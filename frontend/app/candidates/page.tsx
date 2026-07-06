@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import Link from 'next/link'
 import { api, Candidate } from '@/lib/api'
@@ -16,7 +16,12 @@ export default function CandidatesPage() {
   const [search, setSearch] = useState('')
 
   const { data: currentUser } = useCurrentUser()
-  const isAdmin = currentUser?.role === 'admin'
+  // Admin-only markup must not appear in the first client render — the user
+  // query can resolve before hydration finishes, causing a mismatch with the
+  // server HTML (which always renders as non-admin).
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+  const isAdmin = mounted && currentUser?.role === 'admin'
 
   const { data: candidates = [], isLoading, isError, refetch } = useQuery({
     queryKey: ['candidates'],

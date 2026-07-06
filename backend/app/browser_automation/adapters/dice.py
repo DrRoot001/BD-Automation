@@ -211,6 +211,199 @@ class DiceAdapter(BasePlatformAdapter):
             )
         await self.human_delay(0.6, 1.2)
 
+        # 5. Fix the wizard's ACCOUNT-profile defaults before the AgentLoop
+        # runs. Dice pre-fills the resume, work authorization and location
+        # from the logged-in account's profile — which belongs to whoever
+        # owns the Dice login, not necessarily this candidate. Every field
+        # counts as "filled", so the loop's required-field gate can't catch
+        # wrong-but-present values (a live run submitted the account owner's
+        # resume, no cover letter and work-auth "Prefer Not to Answer").
+        if _WIZARD_URL_RE.search(page.url or ""):
+            try:
+                await self._prepare_wizard(page)
+            except Exception as exc:
+                logger.warning(
+                    f"[Dice] wizard preparation incomplete ({exc}) — AgentLoop "
+                    "hints remain the backstop"
+                )
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Wizard preparation (deterministic; candidate data over account profile)
+    # ──────────────────────────────────────────────────────────────────────
+
+    # Candidate work_authorization_type → Dice's exact dropdown labels
+    # (<select name="workAuthorization">, verified empirically 2026-07-06).
+    _DICE_WORK_AUTH = {
+        "us citizen": "US Citizen",
+        "green card holder": "Green Card Holder",
+        "h1b": "Have H1 Visa",
+        "opt": "Employment Auth Document",
+        "ead": "Employment Auth Document",
+        "tn visa": "TN Permit Holder",
+    }
+
+    async def _upload_via_chooser(self, page: Page, trigger, path: str, tag: str) -> bool:
+        """Click `trigger` and feed `path` to the resulting file chooser.
+        Falls back to set_input_files on a bare file input (Dice's inputs have
+        no id/name, so the chooser event is the reliable route)."""
+        try:
+            async with page.expect_file_chooser(timeout=6_000) as fc_info:
+                await trigger.click(timeout=5_000)
+            chooser = await fc_info.value
+            await chooser.set_files(path)
+            logger.info(f"[Dice] {tag} uploaded via file chooser: {os.path.basename(path)}")
+            return True
+        except Exception as exc:
+            logger.debug(f"[Dice] {tag} chooser route failed ({exc}); trying bare input")
+        try:
+            loc = page.locator("input[type='file']").first
+            if await loc.count() > 0:
+                await loc.set_input_files(path, timeout=8_000)
+                logger.info(f"[Dice] {tag} uploaded via bare file input: {os.path.basename(path)}")
+                return True
+        except Exception as exc:
+            logger.warning(f"[Dice] {tag} upload failed on both routes: {exc}")
+        return False
+
+    async def _prepare_wizard(self, page: Page) -> None:
+        resume_path = getattr(self, "resume_local_path", None)
+        cover_path = getattr(self, "cover_letter_local_path", None)
+        profile = getattr(self, "candidate_profile", None) or {}
+
+        # A resumed draft ("Continue Application") reopens the wizard on the
+        # REVIEW step — the step-1 document controls don't exist there. Go
+        # Back first so the file fixes below always run from step 1.
+        try:
+            content = await self._safe_content(page)
+            if "review your application" in content.lower():
+                back_btn = page.locator("button:has-text('Back')").first
+                if await back_btn.count() > 0 and await back_btn.is_visible():
+                    await back_btn.click(timeout=5_000)
+                    await self.human_delay(1.5, 2.5)
+                    logger.info("[Dice] resumed draft on review step — went Back to step 1")
+        except Exception as exc:
+            logger.debug(f"[Dice] draft-resume check skipped: {exc}")
+
+        # ── Step 1: replace the account-profile resume with the tailored one ──
+        if resume_path and os.path.isfile(resume_path):
+            try:
+                menu_btn = page.locator("button[aria-label='File options']").first
+                if await menu_btn.count() > 0 and await menu_btn.is_visible():
+                    await menu_btn.click(timeout=5_000)
+                    await self.human_delay(0.5, 1.0)
+                    replace_item = page.locator(
+                        "[role='menuitem']", has_text=re.compile(r"replace|upload", re.I)
+                    ).first
+                    if await replace_item.count() > 0:
+                        ok = await self._upload_via_chooser(page, replace_item, resume_path, "resume")
+                        if ok:
+                            # Give Dice's upload processing a moment, then verify
+                            # the card shows the new filename.
+                            await asyncio.sleep(3.0)
+                            base = os.path.basename(resume_path)[:20]
+                            content = await self._safe_content(page)
+                            if base.lower() in content.lower():
+                                logger.info("[Dice] resume card now shows the tailored file")
+                            else:
+                                logger.warning("[Dice] resume filename not visible after replace — verify on review step")
+                    else:
+                        await page.keyboard.press("Escape")
+                        logger.warning("[Dice] File-options menu had no replace/upload item")
+                else:
+                    logger.info("[Dice] no 'File options' menu — resume card layout differs; leaving to AgentLoop")
+            except Exception as exc:
+                logger.warning(f"[Dice] resume replace failed (non-fatal): {exc}")
+
+        # ── Step 1: attach the cover letter (dropzone reveals a chooser) ──
+        if cover_path and os.path.isfile(cover_path):
+            try:
+                drop_btn = page.locator(
+                    "button:has-text('Upload your cover letter'), "
+                    "button:has-text('cover letter')"
+                ).first
+                if await drop_btn.count() > 0 and await drop_btn.is_visible():
+                    await self._upload_via_chooser(page, drop_btn, cover_path, "cover letter")
+                    await asyncio.sleep(2.0)
+                else:
+                    logger.info("[Dice] no cover-letter dropzone on this wizard")
+            except Exception as exc:
+                logger.warning(f"[Dice] cover-letter upload failed (non-fatal): {exc}")
+
+        # ── Advance to the review step (exact 'Next' only — never Submit) ──
+        advanced = False
+        try:
+            for b in await page.locator("button").all():
+                if not await b.is_visible():
+                    continue
+                txt = (await b.inner_text() or "").strip().lower()
+                if re.fullmatch(r"next( step)?|continue", txt):
+                    await b.click(timeout=5_000)
+                    advanced = True
+                    break
+        except Exception as exc:
+            logger.warning(f"[Dice] could not advance to review step: {exc}")
+        if not advanced:
+            return
+        await self.human_delay(2.0, 3.5)
+
+        # ── Review step: force Work Authorization to the candidate's value ──
+        desired_raw = (profile.get("work_authorization_type") or "").strip()
+        desired = self._DICE_WORK_AUTH.get(desired_raw.lower())
+        if not desired and (profile.get("work_authorization") or "").lower() == "yes":
+            desired = "US Citizen"
+        if desired:
+            try:
+                card_text = await page.evaluate(r"""() => {
+                    const el = Array.from(document.querySelectorAll('section,article,div'))
+                        .find(e => /^Work Authorization/.test((e.innerText||'').trim())
+                                   && (e.innerText||'').length < 200);
+                    return el ? el.innerText : '';
+                }""")
+                if desired.lower() not in (card_text or "").lower():
+                    opened = await page.evaluate(r"""() => {
+                        const blocks = Array.from(document.querySelectorAll('section,article,div'))
+                            .filter(e => /^Work Authorization/.test((e.innerText||'').trim())
+                                         && (e.innerText||'').length < 200);
+                        for (const b of blocks) {
+                            const btn = b.querySelector('button');
+                            if (btn) { btn.click(); return true; }
+                        }
+                        return false;
+                    }""")
+                    if opened:
+                        sel = page.locator("select[name='workAuthorization']").first
+                        await sel.wait_for(state="attached", timeout=8_000)
+                        await sel.select_option(label=desired)
+                        logger.info(f"[Dice] work authorization set → {desired!r}")
+                        # Location shares this edit form. Only touch it when the
+                        # candidate has a real 'City, ST' style value — never
+                        # overwrite with a bare country code like 'US'.
+                        loc_val = (profile.get("location") or "").strip()
+                        if "," in loc_val and len(loc_val) >= 6:
+                            try:
+                                loc_input = page.locator(
+                                    "input[placeholder*='city or postal' i]"
+                                ).first
+                                if await loc_input.count() > 0 and await loc_input.is_visible():
+                                    await loc_input.fill("")
+                                    await loc_input.type(loc_val, delay=40)
+                                    await asyncio.sleep(2.0)
+                                    opt = page.locator("[role='option']").first
+                                    if await opt.count() > 0 and await opt.is_visible():
+                                        await opt.click(timeout=4_000)
+                                        logger.info(f"[Dice] location set → {loc_val!r}")
+                            except Exception as exc:
+                                logger.warning(f"[Dice] location edit skipped: {exc}")
+                        update_btn = page.locator("button:has-text('Update')").first
+                        if await update_btn.count() > 0 and await update_btn.is_visible():
+                            await update_btn.click(timeout=5_000)
+                            await self.human_delay(1.5, 2.5)
+                            logger.info("[Dice] review-card edits saved")
+                else:
+                    logger.info(f"[Dice] work authorization already correct ({desired!r})")
+            except Exception as exc:
+                logger.warning(f"[Dice] work-authorization fix failed (non-fatal): {exc}")
+
     async def detect_application_type(self, page: Page) -> str:
         return "EASY_APPLY"
 

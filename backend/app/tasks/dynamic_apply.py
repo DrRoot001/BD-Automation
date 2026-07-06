@@ -89,13 +89,17 @@ async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: 
 
 
 # Failure reasons that will just fail again on retry — keep those jobs excluded.
-# Everything else FAILED (INFRA_ERROR, EMAIL_VERIFICATION, unknown) is worth a
-# retry: the failure was on our side, not the job's.
+# Everything else FAILED (INFRA_ERROR, unknown) is worth a retry: the failure
+# was on our side, not the job's.
 _TERMINAL_FAILURE_REASONS = {
     "BOT_DETECTED", "ROBOTS_BLOCKED", "JOB_EXPIRED",
     "LOGIN_REQUIRED", "MAX_RETRIES_EXCEEDED",
     # Retrying these re-submits into the same rejection (or the job is done):
     "SPAM_FLAGGED", "ALREADY_APPLIED", "QUALIFICATION_MISMATCH",
+    # The submit already FIRED for these — the application is on file at the
+    # ATS even though verification timed out. Re-running would double-submit
+    # (empirically hits the portal's "already applied" wall).
+    "EMAIL_VERIFICATION",
 }
 
 

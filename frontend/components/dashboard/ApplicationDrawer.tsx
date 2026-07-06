@@ -6,6 +6,7 @@ import { useApplicationHistory } from '@/hooks/useApplicationHistory'
 import { useJob } from '@/hooks/useJob'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
+import { FAILURE_INFO } from '@/lib/failureReasons'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -21,6 +22,28 @@ const COMPLETED_STATUSES = [
 
 function isCompleted(status: string) {
   return COMPLETED_STATUSES.includes(status?.toUpperCase())
+}
+
+// Timeline entries carry machine-oriented meta_data (screening answers, raw
+// errors, scores). Surface only the parts that read as plain English.
+function describeMeta(meta: Record<string, unknown> | null | undefined): string | null {
+  if (!meta || Object.keys(meta).length === 0) return null
+  const parts: string[] = []
+  if (typeof meta.info === 'string') parts.push(meta.info)
+  if (typeof meta.ats_score_before === 'number' && typeof meta.ats_score_after === 'number') {
+    const before = Math.round(meta.ats_score_before)
+    const after = Math.round(meta.ats_score_after)
+    parts.push(before === after ? `ATS score: ${after}` : `ATS score improved ${before} → ${after}`)
+  }
+  if (typeof meta.explanation === 'string') {
+    const text = meta.explanation.length > 220 ? meta.explanation.slice(0, 220) + '…' : meta.explanation
+    parts.push(text)
+  }
+  if (parts.length === 0 && typeof meta.error_message === 'string') {
+    const text = meta.error_message.length > 160 ? meta.error_message.slice(0, 160) + '…' : meta.error_message
+    parts.push(text)
+  }
+  return parts.length > 0 ? parts.join(' · ') : null
 }
 
 interface ApplicationDrawerProps {
@@ -87,16 +110,12 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                   <div className="flex items-start gap-2">
                     <AlertCircle className="w-4.5 h-4.5 shrink-0 mt-0.5" />
                     <span className="font-semibold">
-                      {application.failure_reason === 'JOB_EXPIRED' ? 'Job Posting Expired' : 
-                       application.failure_reason === 'ROBOTS_BLOCKED' ? 'Robots Policy Block' : 'Application Incomplete / Failed'}
+                      {FAILURE_INFO[application.failure_reason ?? '']?.title ?? 'Application Incomplete / Failed'}
                     </span>
                   </div>
                   <span className="text-xs text-danger/80">
-                    {application.failure_reason === 'JOB_EXPIRED' 
-                      ? 'This job posting has been removed or expired. The position is no longer available.'
-                      : application.failure_reason === 'ROBOTS_BLOCKED'
-                      ? 'This job portal does not permit automated access. Please apply manually.'
-                      : (application.error_message || "The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity.")
+                    {FAILURE_INFO[application.failure_reason ?? '']?.description
+                      ?? (application.error_message || 'The automated application process could not be completed. You can submit the application manually to prevent losing this opportunity.')
                     }
                   </span>
                   {application.failure_reason !== 'JOB_EXPIRED' && application.job_url && (
@@ -229,9 +248,9 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                           <Clock className="w-3 h-3" />
                           {formatDistanceToNow(event.created_at)} ago
                         </div>
-                        {event.meta_data && Object.keys(event.meta_data).length > 0 && (
+                        {describeMeta(event.meta_data) && (
                           <div className="mt-2 text-xs text-text-secondary bg-bg-secondary p-2 rounded border border-bg-border">
-                            {JSON.stringify(event.meta_data)}
+                            {describeMeta(event.meta_data)}
                           </div>
                         )}
                       </div>

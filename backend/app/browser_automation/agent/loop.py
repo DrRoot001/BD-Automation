@@ -95,18 +95,25 @@ LLM_RETRY_LIMIT = 3     # consecutive LLM failures before abort
 # agnostically here (not just in adapters/ashby.py's verify_success(), which
 # only runs on the deterministic-fallback path — never reached when AgentLoop
 # completes the whole flow itself, the common case).
-_POST_SUBMIT_REJECTION_PATTERNS = (
+_SPAM_REJECTION_PATTERNS = (
     "flagged as possible spam",
     "couldn't submit your application",
     "could not submit your application",
     "submission was flagged",
     "we were unable to submit",
+)
+# Duplicate-application banners are NOT spam/bot rejections — the candidate
+# already has an application on file (often from a prior run whose post-submit
+# verification timed out). They must map to ALREADY_APPLIED so the platform
+# spam-backoff is not armed by our own duplicates.
+_ALREADY_APPLIED_PATTERNS = (
     "already applied",
     "already submitted an application",
     "you've already applied",
     "you have already applied",
     "already have an application on file",
 )
+_POST_SUBMIT_REJECTION_PATTERNS = _SPAM_REJECTION_PATTERNS + _ALREADY_APPLIED_PATTERNS
 STEP_TIMEOUT_S = 45.0   # per-step LLM call timeout (was 30s — bumped after observing
                         # Anthropic vision calls occasionally taking 30-40s during
                         # peak hours, causing unnecessary fallback to OpenRouter/Gemini)
@@ -5363,16 +5370,21 @@ class AgentLoop:
                             except Exception as exc:
                                 logger.debug(f"[AgentLoop] post-submit rejection scan failed (non-fatal): {exc}")
                             if rejection_hit:
+                                _reason = (
+                                    "ALREADY_APPLIED"
+                                    if rejection_hit in _ALREADY_APPLIED_PATTERNS
+                                    else "SPAM_FLAGGED"
+                                )
                                 logger.error(
                                     f"[AgentLoop] POST-SUBMIT: rejection banner detected "
-                                    f"(pattern={rejection_hit!r}) — submission was NOT "
-                                    "accepted despite no OTP wall. Reporting as failure, "
-                                    "not SUBMITTED."
+                                    f"(pattern={rejection_hit!r}, reason={_reason}) — "
+                                    "submission was NOT accepted despite no OTP wall. "
+                                    "Reporting as failure, not SUBMITTED."
                                 )
                                 return LoopResult(
                                     success=False,
                                     status="ABORTED",
-                                    error=f"SPAM_FLAGGED: server rejected the submission "
+                                    error=f"{_reason}: server rejected the submission "
                                           f"(detected {rejection_hit!r} on the post-submit "
                                           "page). Do not retry — retrying would resubmit "
                                           "into the same rejection or escalate an anti-bot flag.",

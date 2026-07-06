@@ -644,6 +644,16 @@ class ApplicationExecutor:
             # it simply ignore the attribute.
             try:
                 adapter.candidate_profile = package.candidate_profile
+                # Candidate id (not a secret) — login-gated adapters need it at
+                # navigate-time to fetch one-time codes/links from the
+                # candidate's Gmail (e.g. BuiltIn's passwordless login).
+                adapter.candidate_id = package.candidate_id
+                # Local artifact paths, for adapters that deterministically fix
+                # account-profile-sourced wizard defaults at navigate-time
+                # (e.g. Dice pre-selects the ACCOUNT owner's resume — it must
+                # be replaced with this candidate's tailored file).
+                adapter.resume_local_path = _temp_resume
+                adapter.cover_letter_local_path = _temp_cover
                 # Surface the candidate's Gmail (an email address — not a secret)
                 # so adapters whose flow reads it back from that mailbox can use
                 # it (e.g. Talent's email/OTP gate). The password is NOT added
@@ -827,7 +837,13 @@ class ApplicationExecutor:
                     if loop_result.status == "SUBMITTED":
                         _agent_submitted = True
                         _agent_confirmation = loop_result.confirmation
-                        await transition_status(package.application_id, "FORM_COMPLETED")
+                        # submit_confirmed lets the watchdog distinguish "loop
+                        # confirmed the submission, pipeline died before the
+                        # SUBMITTED PATCH" from "form filled, never submitted".
+                        await transition_status(
+                            package.application_id, "FORM_COMPLETED",
+                            {"submit_confirmed": True},
+                        )
 
                     elif loop_result.status in ("WRONG_PAGE", "ABORTED"):
                         raise Exception(f"AgentLoop aborted: {loop_result.error}")
@@ -836,19 +852,33 @@ class ApplicationExecutor:
                         # The AgentLoop already CLICKED submit but did not reach a
                         # confirmed SUBMITTED (e.g. an email-verification wall it
                         # couldn't clear in time, or it ran out of steps on the
-                        # post-submit page). The form was already sent to the ATS,
-                        # so the scripted fallback below MUST NOT run — re-detecting
-                        # and re-submitting would file a DUPLICATE application.
-                        # Mark terminal with a clear, non-retryable reason.
+                        # post-submit page). The form was already sent to the ATS —
+                        # empirically these applications ARE on file (retrying them
+                        # hits the portal's "already applied" wall), so record the
+                        # submission instead of failing it. The scripted fallback
+                        # below MUST NOT run — re-detecting and re-submitting would
+                        # file a DUPLICATE application. Genuine server-side
+                        # rejections never reach this branch: they return ABORTED
+                        # (handled above) with an explicit rejection banner.
                         logger.warning(
                             f"[M4] AgentLoop fired submit but ended {loop_result.status!r} "
-                            "without confirmation — NOT running scripted fallback "
-                            "(would double-submit). Marking EMAIL_VERIFICATION_REQUIRED."
+                            "without confirmation — recording as SUBMITTED with "
+                            "verification pending (scripted fallback skipped: "
+                            "would double-submit)."
                         )
-                        raise Exception(
-                            "EMAIL_VERIFICATION_REQUIRED: application was submitted but "
-                            "post-submit verification did not complete "
-                            f"(loop status={loop_result.status}, error={loop_result.error})"
+                        _agent_submitted = True
+                        _agent_confirmation = (
+                            "Submitted — post-submit email verification did not "
+                            f"complete (loop status={loop_result.status}); "
+                            "confirmation pending"
+                        )
+                        await transition_status(
+                            package.application_id, "FORM_COMPLETED",
+                            {
+                                "submit_confirmed": True,
+                                "info": "Submit fired; post-submit email verification "
+                                        "did not complete before timeout",
+                            },
                         )
 
                     elif loop_result.status == "VERIFICATION_FAILED":
@@ -1298,7 +1328,17 @@ class ApplicationExecutor:
                     )
             else:
                 status = "FORM_COMPLETED"
-                db_persisted = await transition_status(package.application_id, "FORM_COMPLETED")
+                # Submit was clicked (we only reach here past the submit step);
+                # verify_success just couldn't find a confirmation marker. Tag
+                # the transition so the watchdog treats this as a fired submit
+                # rather than an abandoned form.
+                db_persisted = await transition_status(
+                    package.application_id, "FORM_COMPLETED",
+                    {
+                        "submit_fired": True,
+                        "info": "Submit clicked; confirmation marker not detected",
+                    },
+                )
                 if not db_persisted:
                     logger.error(
                         f"[M4] DB persist failed for application {package.application_id} "

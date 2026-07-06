@@ -28,6 +28,20 @@ function isCompleted(status: string) {
   return COMPLETED_STATUSES.includes(status?.toUpperCase())
 }
 
+// Statuses where automation is actively working the application —
+// showing a red "Apply Manually" link here reads as failure mid-run.
+const IN_FLIGHT_STATUSES = [
+  'QUEUED',
+  'RESUME_UPDATED',
+  'COVER_LETTER_CREATED',
+  'APPLICATION_STARTED',
+  'FORM_COMPLETED',
+]
+
+function isInFlight(status: string) {
+  return IN_FLIGHT_STATUSES.includes(status?.toUpperCase())
+}
+
 export default function ApplicationsPage() {
   const toast = useToast()
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
@@ -176,7 +190,7 @@ export default function ApplicationsPage() {
                             <div className="font-semibold text-text-primary group-hover:text-accent transition-colors">{app.job_title}</div>
                             <div className="text-text-muted text-xs mt-0.5">{app.company}</div>
                           </div>
-                          {!isCompleted(app.status) && app.job_url && (
+                          {!isCompleted(app.status) && !isInFlight(app.status) && app.job_url && (
                             <a
                               href={app.job_url}
                               target="_blank"

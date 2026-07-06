@@ -708,45 +708,71 @@ def _extract_links(msg: dict) -> List[str]:
     return list(dict.fromkeys(links))
 
 
+_ASSET_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+                     ".css", ".woff", ".woff2", ".ttf", ".dtd")
+
+
+def _unwrap_tracking_link(u: str) -> Optional[str]:
+    """Extract the real target from a click-tracking wrapper URL.
+
+    Handles both wrapper shapes seen in transactional mail:
+      - query-param (sendgrid/mailgun style): ?url=https%3A%2F%2F…
+      - path-embedded (AWS SES awstrack.me):  /L0/https:%2F%2Fhost%2Fpath/1/…
+        (the target's own slashes stay %2F-encoded, so it survives as a single
+        path segment).
+    Returns None when `u` is not a recognizable wrapper.
+    """
+    from urllib.parse import urlparse, parse_qs, unquote
+    try:
+        p = urlparse(u)
+    except Exception:
+        return None
+    for key in ("url", "target", "u", "redirect", "link"):
+        for val in parse_qs(p.query or "").get(key, []):
+            dec = unquote(val)
+            if dec.lower().startswith("http"):
+                return dec
+    for seg in (p.path or "").split("/"):
+        low = seg.lower()
+        if low.startswith("https:%2f%2f") or low.startswith("http:%2f%2f"):
+            return unquote(seg)
+    return None
+
+
 def _pick_login_link(links: List[str], host_hint: str, path_hints: Tuple[str, ...]) -> Optional[str]:
     """Choose the best login/magic link from a message's links.
 
+    Tracking wrappers are unwrapped FIRST so ranking is judged on the real
+    target (BuiltIn's SES mail hides the login URL inside an awstrack.me path
+    segment while the email's logo images sit directly on builtin.com — naive
+    host matching returns a PNG). Asset URLs are never candidates.
+
     Priority:
-      1. A link whose host contains `host_hint` AND whose path/query matches a
+      1. Target whose host contains `host_hint` AND whose path/query matches a
          login-ish `path_hint` (login/verify/magic/token/auth/confirm/signin).
-      2. Any link whose host contains `host_hint`.
-      3. A click-tracking wrapper (sendgrid/mailgun/…) whose target= / url=
-         query param decodes to a `host_hint` URL.
+      2. First non-asset target whose host contains `host_hint`.
     Returns None if nothing plausible is found.
     """
-    from urllib.parse import urlparse, parse_qs, unquote
+    from urllib.parse import urlparse
     host_hint = (host_hint or "").lower()
-    hosted = []
+    best_host_match: Optional[str] = None
     for u in links:
+        target = _unwrap_tracking_link(u) or u
         try:
-            p = urlparse(u)
+            p = urlparse(target)
         except Exception:
+            continue
+        if (p.path or "").lower().endswith(_ASSET_EXTENSIONS):
             continue
         host = (p.hostname or "").lower()
-        blob = (p.path + "?" + (p.query or "")).lower()
-        if host_hint and host_hint in host:
-            hosted.append(u)
-            if any(h in blob for h in path_hints):
-                return u  # priority 1
-    if hosted:
-        return hosted[0]  # priority 2
-    # priority 3: tracking-wrapper links that embed the real URL in a query arg.
-    for u in links:
-        try:
-            qs = parse_qs(urlparse(u).query)
-        except Exception:
+        if not (host_hint and host_hint in host):
             continue
-        for key in ("url", "target", "u", "redirect", "link"):
-            for val in qs.get(key, []):
-                dec = unquote(val)
-                if host_hint and host_hint in dec.lower() and dec.lower().startswith("http"):
-                    return dec
-    return None
+        blob = ((p.path or "") + "?" + (p.query or "")).lower()
+        if any(h in blob for h in path_hints):
+            return target  # priority 1
+        if best_host_match is None:
+            best_host_match = target
+    return best_host_match
 
 
 def _gmail_search_link_sync(
@@ -768,8 +794,10 @@ def _gmail_search_link_sync(
     if sender_hint:
         q = f"from:{sender_hint} {q}"
     try:
+        # includeSpamTrash: transactional login mail from a new sender lands in
+        # spam often enough that missing it silently blocks the whole login.
         listing = service.users().messages().list(
-            userId="me", q=q, maxResults=max_results,
+            userId="me", q=q, maxResults=max_results, includeSpamTrash=True,
         ).execute()
     except Exception as exc:
         err_msg = str(exc).lower()
