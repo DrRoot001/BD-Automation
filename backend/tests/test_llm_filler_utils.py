@@ -16,12 +16,12 @@ def test_get_api_base_url_default(monkeypatch):
     monkeypatch.delenv("M1_API_BASE_URL", raising=False)
     monkeypatch.delenv("API_BASE_URL", raising=False)
     monkeypatch.delenv("API_URL", raising=False)
-    assert get_api_base_url() == "http://localhost:8002"
+    assert get_api_base_url() == "http://localhost:8000"
 
 
-def test_get_api_base_url_rewrites_8000(monkeypatch):
+def test_get_api_base_url_strips_api_suffix(monkeypatch):
     monkeypatch.setenv("M1_API_BASE_URL", "http://localhost:8000/api")
-    assert get_api_base_url() == "http://localhost:8002"
+    assert get_api_base_url() == "http://localhost:8000"
 
 
 @pytest.mark.asyncio

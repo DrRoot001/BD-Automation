@@ -45,9 +45,7 @@ ALLOWED_WORK_TYPES = {
 }
 
 def get_api_base_url() -> str:
-    url = (os.environ.get("M1_API_BASE_URL") or os.environ.get("API_BASE_URL") or os.environ.get("API_URL") or "http://localhost:8002").rstrip("/").replace("/api", "")
-    if ":8000" in url:
-        url = url.replace(":8000", ":8002")
+    url = (os.environ.get("M1_API_BASE_URL") or os.environ.get("API_BASE_URL") or os.environ.get("API_URL") or "http://localhost:8000").rstrip("/").replace("/api", "")
     return url
 
 SCRAPE_TIMEOUT_SECONDS = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "300"))

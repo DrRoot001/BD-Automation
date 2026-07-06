@@ -396,7 +396,7 @@ async def run_matching_for_candidate(
         return {"error": "resume_data_load_failed"}
 
     # Derive api_base_url
-    api_base = os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8002/api").rstrip("/")
+    api_base = os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api").rstrip("/")
     api_base_url = api_base[:-4] if api_base.endswith("/api") else api_base
 
     for job in jobs:
