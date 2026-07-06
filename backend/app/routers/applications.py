@@ -269,7 +269,7 @@ async def prepare_package(request: PreparePackageRequest):
     from module3.orchestrator import prepare_package_for_live_application
     # Derive the API base URL from the server's own base address so that
     # prepare_package_for_live_application can make internal API calls correctly.
-    api_base_url = os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8002/api").rstrip("/")
+    api_base_url = os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api").rstrip("/")
     if api_base_url.endswith("/api"):
         api_base_url = api_base_url[: -len("/api")]
 

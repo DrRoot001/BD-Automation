@@ -18,12 +18,12 @@ BD Automator is a multi-module job application automation system. It discovers j
 ./dev.sh
 ```
 
-This starts all four services (FastAPI on `:8002`, Celery worker, Celery beat, Next.js on `:3000`) with colour-coded log tails. Logs land in `./logs/`. `PYTHONPATH` is set to the repo root so all five modules resolve.
+This starts all four services (FastAPI on `:8000`, Celery worker, Celery beat, Next.js on `:3000`) with colour-coded log tails. Logs land in `./logs/`. `PYTHONPATH` is set to the repo root so all five modules resolve.
 
 Individual services:
 ```bash
 # Backend only (from backend/)
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8002 --reload --reload-dir app
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir app
 
 # Celery worker (from backend/)
 python -m celery -A app.celery_app worker --loglevel=info --concurrency=2 \
@@ -121,7 +121,7 @@ python backend/app/scripts/e2e_m1_to_m4_test.py
 ### Frontend (`frontend/`)
 - Next.js 14 App Router, TypeScript, Tailwind CSS, Recharts for analytics, TanStack Query for data fetching, Supabase JS for auth.
 - Pages under `frontend/app/`: `dashboard`, `candidates`, `jobs`, `applications`, `matches`, `automation`, `analytics`, `admin`.
-- API base configured via `NEXT_PUBLIC_API_BASE` env var (default `http://localhost:8002/api`).
+- API base configured via `NEXT_PUBLIC_API_BASE` env var (default `http://localhost:8000/api`).
 
 ---
 

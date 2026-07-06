@@ -20,7 +20,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 NODE_BIN="$HOME/.nvm/versions/node/v20.19.5/bin"
 
-BACKEND_PORT=8002
+BACKEND_PORT=8000
 FRONTEND_PORT=3000
 HEALTH_TIMEOUT=30   # seconds to wait for backend to become healthy
 
@@ -100,7 +100,7 @@ _kill_old_processes() {
     echo "$old_pids" | xargs kill -9 2>/dev/null || true
   fi
 
-  # Free ports 3000 (frontend) and 8002 (backend) if previously occupied
+  # Free ports 3000 (frontend) and 8000 (backend) if previously occupied
   for p in "$FRONTEND_PORT" "$BACKEND_PORT"; do
     local port_pid
     port_pid=$(lsof -ti :"$p" 2>/dev/null || true)

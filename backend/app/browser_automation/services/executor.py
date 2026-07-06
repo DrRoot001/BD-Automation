@@ -954,7 +954,7 @@ class ApplicationExecutor:
                 )
 
                 if open_questions:
-                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
+                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
                     try:
                         async with httpx.AsyncClient(timeout=300.0) as client:
                             resp = await client.post(
@@ -1278,7 +1278,7 @@ class ApplicationExecutor:
                 # Resolve resume_id: find the tailored resume DB record for this
                 # candidate+job combination so the application FK is correctly set.
                 try:
-                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
+                    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
                     async with httpx.AsyncClient(timeout=10) as client:
                         rv = await client.get(f"{api_base}/resumes/{package.candidate_id}")
                     if rv.status_code == 200:

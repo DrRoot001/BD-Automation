@@ -40,7 +40,7 @@ GREENHOUSE_COMPANIES: List[str] = [
     "postman",
 ]
 
-API_BASE_URL = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
+API_BASE_URL = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
 
 
 @celery_app.task(name="task:discover_jobs_all_platforms", bind=True, max_retries=1)

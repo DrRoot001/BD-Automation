@@ -2,7 +2,7 @@
 import { cookies } from 'next/headers'
 
 const API_BASE = (() => {
-  const raw = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8002'
+  const raw = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
   return raw.replace(/\/api\/?$/, '') + '/api'
 })()
 
@@ -65,7 +65,7 @@ export async function logoutAction() {
 }
 
 export async function getWebSocketConnectionDetailsAction() {
-  const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8002'
+  const apiUrl = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
   const wsUrl = apiUrl.replace(/^http/, 'ws') + '/ws/updates'
   const cookieStore = await cookies()
   const token = cookieStore.get('auth_token')?.value || null

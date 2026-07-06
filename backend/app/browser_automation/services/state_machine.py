@@ -13,7 +13,7 @@ async def transition_status(
     metadata: Dict = {},
     **extra_fields,          # cover_letter_url, resume_id, fit_score, etc.
 ) -> bool:
-    m1_api_base_url = os.getenv("M1_API_BASE_URL", "http://localhost:8002/api")
+    m1_api_base_url = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
     url = f"{m1_api_base_url}/applications/{application_id}/status"
 
     payload = {"status": new_status, "metadata": metadata, **extra_fields}

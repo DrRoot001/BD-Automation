@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 
 def _api_base() -> str:
-    return os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8002/api")
+    return os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api")
 
 MAX_APPLICATIONS_PER_RUN = int(os.getenv("M4_MAX_APPS_PER_RUN", "10"))
 SCORE_FLOOR = float(os.getenv("M4_DYNAMIC_SCORE_FLOOR", "0.25"))
