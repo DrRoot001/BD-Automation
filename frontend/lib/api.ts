@@ -369,6 +369,9 @@ export const api = {
   exchangeGoogleCode: (candidateId: string, code: string) =>
     postJSON<GoogleCodeResponse>(`/candidates/${candidateId}/google/callback`, { code }),
 
+  disconnectGmail: (candidateId: string) =>
+    postJSON<{ status: string; message: string }>(`/candidates/${candidateId}/google/disconnect`, {}),
+
   runMatching: (candidateId: string) =>
     postJSON<MatchingRunResponse>(`/candidates/${candidateId}/run-matching`, {}),
 

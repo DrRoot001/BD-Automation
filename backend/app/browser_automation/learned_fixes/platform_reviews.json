@@ -97,6 +97,10 @@
       {
         "timestamp": "2026-06-27T16:38:15.235873",
         "error": "BLOCKED: DICE_EMAIL / DICE_PASSWORD not configured \u2014 cannot log in to Dice (Easy Apply requires an authenticated seeker account)."
+      },
+      {
+        "timestamp": "2026-07-07T14:46:21.147266",
+        "error": "BLOCKED: Dice posting is external-apply only (no Easy Apply). This adapter only drives Dice Easy Apply postings."
       }
     ]
   },

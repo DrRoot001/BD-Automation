@@ -164,6 +164,29 @@ export default function CandidateDetailPage() {
     }
   }
 
+  const handleDisconnectGmail = async () => {
+    const isConfirmed = await confirm({
+      title: 'Disconnect Gmail?',
+      message: 'This will remove the candidate\'s connected Gmail account. The candidate will need to re-authenticate to allow AI email scans.',
+      confirmLabel: 'Disconnect',
+      variant: 'danger',
+    })
+    
+    if (isConfirmed) {
+      setConnectingGmail(true)
+      try {
+        await api.disconnectGmail(id as string)
+        await refetch()
+        toast.success('Gmail disconnected successfully.')
+      } catch (err: unknown) {
+        const errorObj = err as { message?: string }
+        toast.error(errorObj.message || 'Failed to disconnect Gmail')
+      } finally {
+        setConnectingGmail(false)
+      }
+    }
+  }
+
   const validateMaxApps = (val: number): string | null => {
     if (!Number.isInteger(val) || val < 1) return 'Must be at least 1'
     if (val > 100) return 'Maximum is 100'
@@ -230,10 +253,19 @@ export default function CandidateDetailPage() {
               {candidate.email}
             </span>
             {candidate.google_connected ? (
-              <span className="text-xs text-success bg-success/10 border border-success/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5 font-semibold">
-                <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
-                Gmail Connected
-              </span>
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-success bg-success/10 border border-success/20 px-2.5 py-0.5 rounded-full flex items-center gap-1.5 font-semibold">
+                  <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse" />
+                  Gmail Connected
+                </span>
+                <button
+                  onClick={handleDisconnectGmail}
+                  disabled={connectingGmail}
+                  className="text-[10px] uppercase tracking-wide text-danger/80 hover:text-danger transition-colors font-bold px-2 py-0.5 border border-danger/30 rounded-full hover:bg-danger/10"
+                >
+                  Disconnect
+                </button>
+              </div>
             ) : (
               <button
                 onClick={handleConnectGmail}

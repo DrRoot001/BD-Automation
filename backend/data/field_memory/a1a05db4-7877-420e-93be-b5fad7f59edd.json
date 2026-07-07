@@ -1,0 +1,26 @@
+{
+  "are you hispanic/latino": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1783435455,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name",
+    "last_seen": 1783435222,
+    "source": "agent_loop",
+    "value": "Dexter"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name",
+    "last_seen": 1783435235,
+    "source": "agent_loop",
+    "value": "Watts"
+  }
+}
