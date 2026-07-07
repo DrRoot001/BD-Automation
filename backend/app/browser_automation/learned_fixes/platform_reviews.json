@@ -17,6 +17,22 @@
       {
         "timestamp": "2026-07-03T15:58:05.796082",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-07T10:29:17.417729",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-07T10:29:51.205692",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-07T10:30:27.229123",
+        "error": "Page.evaluate: Connection closed while reading from the driver"
+      },
+      {
+        "timestamp": "2026-07-07T10:30:28.131728",
+        "error": "Page.evaluate: Connection closed while reading from the driver"
       }
     ]
   },
@@ -277,6 +293,52 @@
       {
         "timestamp": "2026-07-03T21:56:08.482072",
         "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-07T10:25:41.827693",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      }
+    ]
+  },
+  "www.talent.com": {
+    "needs_review": true,
+    "failures": [
+      {
+        "timestamp": "2026-07-07T10:16:11.055533",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T10:20:00.731620",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T10:20:58.015025",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T10:22:04.339527",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T10:22:45.769606",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T10:24:04.127867",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T10:24:39.853942",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      }
+    ]
+  },
+  "lever": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-07T10:21:42.292633",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]
   }

@@ -15,6 +15,14 @@
     "source": "screening",
     "value": "Not provided"
   },
+  "address line 1": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Address Line 1",
+    "last_seen": 1783419720,
+    "source": "screening",
+    "value": "Not specified in candidate details."
+  },
   "addresssvgs not supported by this browser": {
     "count": 1,
     "field_type": "text",
@@ -79,6 +87,54 @@
     "source": "agent_loop",
     "value": "Asian (Not Hispanic or Latino)"
   },
+  "cards[4851be38 b077 4ad2 b757 4d9a2d9a0cf6][field0]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[4851be38 b077 4ad2 b757 4d9a2d9a0cf6][field0]",
+    "last_seen": 1783419659,
+    "source": "screening",
+    "value": "I have 5 years of experience, including leading AI strategy and automation as Head of AI Automation at Mavericks United, where I architected and delivered AI-powered systems. My background also includes extensive data engineering, building scalable ELT pipelines and BI solutions."
+  },
+  "cards[4851be38-b077-4ad2-b757-4d9a2d9a0cf6][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[4851be38-b077-4ad2-b757-4d9a2d9a0cf6][field0]",
+    "last_seen": 1783419405,
+    "source": "agent_loop",
+    "value": "As a Senior AI Automation Engineer, I have extensive experience in designing and scaling AI-driven products and architecting production-grade SaaS platforms. My background in leading cross-functional teams to deliver scalable AI solutions aligns well with setting the technical direction for Generative AI and building production systems at Egen."
+  },
+  "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field0]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field0]",
+    "last_seen": 1783419660,
+    "source": "screening",
+    "value": "5 years"
+  },
+  "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field1]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field1]",
+    "last_seen": 1783419661,
+    "source": "screening",
+    "value": "My salary expectation is $250,000 annually, negotiable based on the overall compensation package."
+  },
+  "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field0]",
+    "last_seen": 1783419437,
+    "source": "agent_loop",
+    "value": "As a Senior AI Automation Engineer, I architected and delivered AI-powered systems, including a production-grade cloud communication & CRM platform. This involved setting technical direction and hands-on building of scalable solutions, which aligns well with the Principal AI Engineer role at Egen focusing on architecting production systems and driving AI strategies."
+  },
+  "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field1]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field1]",
+    "last_seen": 1783419464,
+    "source": "agent_loop",
+    "value": "I am highly interested in working at Egen as a Principal AI Engineer, as my experience in designing and scaling AI-driven products, particularly in architecting production-grade SaaS platforms and leading cross-functional teams, aligns perfectly with the role's focus on setting technical direction for Generative AI and hands-on building. I am passionate about leveraging AI to optimize processes and drive organizational growth, which resonates with Egen's mission."
+  },
   "city": {
     "count": 1,
     "field_type": "text",
@@ -94,6 +150,14 @@
     "last_seen": 1783115078,
     "source": "agent_loop",
     "value": "United States"
+  },
+  "country phone code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Country Phone Code*",
+    "last_seen": 1783419607,
+    "source": "agent_loop",
+    "value": "United States (+1)"
   },
   "current company / employer": {
     "count": 7,
@@ -111,6 +175,22 @@
     "source": "agent_loop",
     "value": "Senior Data Engineer"
   },
+  "current location no location found. try entering a different locationloading": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Current location No location found. Try entering a different locationLoading",
+    "last_seen": 1783419653,
+    "source": "profile_direct",
+    "value": "US"
+  },
+  "do you currently reside in the usa": {
+    "count": 2,
+    "field_type": "radio",
+    "label": "Do you currently reside in the USA?",
+    "last_seen": 1783419692,
+    "source": "screening",
+    "value": "Not specified"
+  },
   "do you currently work for or have you ever worked for a u.s. government entity,": {
     "count": 2,
     "field_type": "text",
@@ -126,6 +206,22 @@
     "last_seen": 1782503705,
     "source": "agent_loop",
     "value": "chammar310@gmail.com"
+  },
+  "email✱": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Email✱",
+    "last_seen": 1783419652,
+    "source": "profile_direct",
+    "value": "sabih0364@gmail.com"
+  },
+  "family name - western script": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Family Name - Western Script",
+    "last_seen": 1783419717,
+    "source": "profile_direct",
+    "value": "Ammar Hanif"
   },
   "first name": {
     "count": 10,
@@ -143,6 +239,14 @@
     "source": "agent_loop",
     "value": "M. Ammar"
   },
+  "full name✱": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Full name✱",
+    "last_seen": 1783419651,
+    "source": "profile_direct",
+    "value": "M. Ammar Hanif"
+  },
   "gender": {
     "count": 2,
     "field_type": "text",
@@ -150,6 +254,30 @@
     "last_seen": 1782746634,
     "source": "agent_loop",
     "value": "Male"
+  },
+  "github url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "GitHub URL",
+    "last_seen": 1783419656,
+    "source": "screening",
+    "value": "Not provided"
+  },
+  "given name(s) - western script": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Given Name(s) - Western Script*",
+    "last_seen": 1783419592,
+    "source": "agent_loop",
+    "value": "Ammar"
+  },
+  "have you been employed by quantiphi previously": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Have you been employed by Quantiphi previously?*",
+    "last_seen": 1783419566,
+    "source": "agent_loop",
+    "value": "No"
   },
   "have you been employed, or otherwise engaged, by an asana entity in the past (p": {
     "count": 2,
@@ -166,6 +294,14 @@
     "last_seen": 1783088482,
     "source": "llm:0.70",
     "value": "Senior AI Automation Engineer"
+  },
+  "how did you hear about us": {
+    "count": 1,
+    "field_type": "text",
+    "label": "How Did You Hear About Us?*",
+    "last_seen": 1783419715,
+    "source": "screening",
+    "value": "Not specified in candidate details."
   },
   "how would you describe your english fluency": {
     "count": 13,
@@ -231,6 +367,30 @@
     "source": "screening",
     "value": "Not provided"
   },
+  "linkedin url✱": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn URL✱",
+    "last_seen": 1783419655,
+    "source": "screening",
+    "value": "Not provided"
+  },
+  "local family name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Local Family Name",
+    "last_seen": 1783419719,
+    "source": "profile_direct",
+    "value": "Ammar Hanif"
+  },
+  "local given name(s)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Local Given Name(s)",
+    "last_seen": 1783419718,
+    "source": "profile_direct",
+    "value": "M."
+  },
   "location": {
     "count": 5,
     "field_type": "text",
@@ -255,6 +415,22 @@
     "source": "agent_loop",
     "value": "M. Ammar Hanif"
   },
+  "other website": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Other website",
+    "last_seen": 1783419658,
+    "source": "screening",
+    "value": "Not provided"
+  },
+  "password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Password*",
+    "last_seen": 1783419512,
+    "source": "agent_loop",
+    "value": "AmmarHanif@123"
+  },
   "phone": {
     "count": 9,
     "field_type": "text",
@@ -263,11 +439,27 @@
     "source": "agent_loop",
     "value": "+15855844775"
   },
+  "phone extension": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone Extension",
+    "last_seen": 1783419733,
+    "source": "profile_direct",
+    "value": "+15855844775"
+  },
   "phone number": {
     "count": 1,
     "field_type": "phone",
     "label": "Phone Number",
     "last_seen": 1782744938,
+    "source": "profile_direct",
+    "value": "+15855844775"
+  },
+  "phone ✱": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone ✱",
+    "last_seen": 1783419653,
     "source": "profile_direct",
     "value": "+15855844775"
   },
@@ -302,6 +494,22 @@
     "last_seen": 1783115158,
     "source": "agent_loop",
     "value": "US Citizen"
+  },
+  "portfolio url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Portfolio URL",
+    "last_seen": 1783419657,
+    "source": "screening",
+    "value": "Not provided"
+  },
+  "postal code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Postal Code",
+    "last_seen": 1783419722,
+    "source": "screening",
+    "value": "Not specified in candidate details."
   },
   "postcode": {
     "count": 2,
@@ -454,6 +662,22 @@
     "last_seen": 1783088085,
     "source": "screening",
     "value": "Yes"
+  },
+  "twitter url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Twitter URL",
+    "last_seen": 1783419656,
+    "source": "screening",
+    "value": "Not provided"
+  },
+  "verify new password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Verify New Password*",
+    "last_seen": 1783419525,
+    "source": "agent_loop",
+    "value": "AmmarHanif@123"
   },
   "website": {
     "count": 1,

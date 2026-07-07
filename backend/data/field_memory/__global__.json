@@ -271,6 +271,22 @@
     "source": "agent_loop",
     "value": "I frequently use AI tools for optimizing data pipelines, real-time ML inference, and deploying scalable production ML systems. I often work with PyTorch and Tensorflow for model development and deployment, and leverage MLOps practices for CI/CD."
   },
+  "cards[4851be38 b077 4ad2 b757 4d9a2d9a0cf6][field0]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[4851be38 b077 4ad2 b757 4d9a2d9a0cf6][field0]",
+    "last_seen": 1783419659,
+    "source": "screening",
+    "value": "I have 5 years of experience, including leading AI strategy and automation as Head of AI Automation at Mavericks United, where I architected and delivered AI-powered systems. My background also includes extensive data engineering, building scalable ELT pipelines and BI solutions."
+  },
+  "cards[4851be38-b077-4ad2-b757-4d9a2d9a0cf6][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[4851be38-b077-4ad2-b757-4d9a2d9a0cf6][field0]",
+    "last_seen": 1783419406,
+    "source": "agent_loop",
+    "value": "As a Senior AI Automation Engineer, I have extensive experience in designing and scaling AI-driven products and architecting production-grade SaaS platforms. My background in leading cross-functional teams to deliver scalable AI solutions aligns well with setting the technical direction for Generative AI and building production systems at Egen."
+  },
   "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
     "count": 14,
     "field_type": "text",
@@ -286,6 +302,38 @@
     "last_seen": 1782912622,
     "source": "agent_loop",
     "value": "120000"
+  },
+  "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field0]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field0]",
+    "last_seen": 1783419660,
+    "source": "screening",
+    "value": "5 years"
+  },
+  "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field1]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field1]",
+    "last_seen": 1783419661,
+    "source": "screening",
+    "value": "My salary expectation is $250,000 annually, negotiable based on the overall compensation package."
+  },
+  "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field0]",
+    "last_seen": 1783419438,
+    "source": "agent_loop",
+    "value": "As a Senior AI Automation Engineer, I architected and delivered AI-powered systems, including a production-grade cloud communication & CRM platform. This involved setting technical direction and hands-on building of scalable solutions, which aligns well with the Principal AI Engineer role at Egen focusing on architecting production systems and driving AI strategies."
+  },
+  "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field1]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field1]",
+    "last_seen": 1783419464,
+    "source": "agent_loop",
+    "value": "I am highly interested in working at Egen as a Principal AI Engineer, as my experience in designing and scaling AI-driven products, particularly in architecting production-grade SaaS platforms and leading cross-functional teams, aligns perfectly with the role's focus on setting technical direction for Generative AI and hands-on building. I am passionate about leveraging AI to optimize processes and drive organizational growth, which resonates with Egen's mission."
   },
   "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field0]": {
     "count": 1,
@@ -366,6 +414,14 @@
     "last_seen": 1782468142,
     "source": "llm:0.90",
     "value": "Yes"
+  },
+  "do you currently reside in the usa": {
+    "count": 2,
+    "field_type": "radio",
+    "label": "Do you currently reside in the USA?",
+    "last_seen": 1783419692,
+    "source": "screening",
+    "value": "Not specified"
   },
   "do you currently work for datavant, cvs or any affiliates of either company": {
     "count": 1,
@@ -527,6 +583,14 @@
     "source": "llm:0.90",
     "value": "No"
   },
+  "have you been employed by quantiphi previously": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Have you been employed by Quantiphi previously?*",
+    "last_seen": 1783419566,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "have you been employed, or otherwise engaged, by an asana entity in the past (p": {
     "count": 2,
     "field_type": "text",
@@ -616,12 +680,12 @@
     "value": "Online Job Board"
   },
   "how did you hear about us": {
-    "count": 15,
+    "count": 16,
     "field_type": "text",
-    "label": "How did you hear about us?*",
-    "last_seen": 1782468064,
-    "source": "agent_loop",
-    "value": "Online"
+    "label": "How Did You Hear About Us?*",
+    "last_seen": 1783419715,
+    "source": "screening",
+    "value": "Not specified in candidate details."
   },
   "how many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct ic reports)": {
     "count": 1,
@@ -727,6 +791,14 @@
     "source": "agent_loop",
     "value": "MST Developers"
   },
+  "password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Password*",
+    "last_seen": 1783419512,
+    "source": "agent_loop",
+    "value": "AmmarHanif@123"
+  },
   "pick your favorite color": {
     "count": 1,
     "field_type": "text",
@@ -782,6 +854,14 @@
     "last_seen": 1782185297,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "postal code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Postal Code",
+    "last_seen": 1783419722,
+    "source": "screening",
+    "value": "Not specified in candidate details."
   },
   "postcode": {
     "count": 2,
@@ -943,6 +1023,14 @@
     "source": "llm:0.70",
     "value": "Yes"
   },
+  "twitter url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Twitter URL",
+    "last_seen": 1783419656,
+    "source": "screening",
+    "value": "Not provided"
+  },
   "type your response": {
     "count": 11,
     "field_type": "text",
@@ -950,6 +1038,14 @@
     "last_seen": 1782932431,
     "source": "agent_loop",
     "value": "$150,000 - $180,000"
+  },
+  "verify new password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Verify New Password*",
+    "last_seen": 1783419525,
+    "source": "agent_loop",
+    "value": "AmmarHanif@123"
   },
   "veteran status": {
     "count": 3,
