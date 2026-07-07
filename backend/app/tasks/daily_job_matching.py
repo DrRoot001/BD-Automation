@@ -51,7 +51,20 @@ def daily_job_matching(self):
     
     async def _fetch_candidates():
         from sqlalchemy import text
+        from app.config import get_settings
+        from app.services.dev_resolver import auto_resolve_candidate_id
+        
+        settings = get_settings()
+        dev_candidate_id = (settings.dev_candidate_id or "").strip()
+        
         async with task_session() as session:
+            if not dev_candidate_id:
+                dev_candidate_id = await auto_resolve_candidate_id(session)
+                
+            if dev_candidate_id:
+                logger.info("[DailyMatching] Dynamic Developer Separation: running matching ONLY for candidate %s", dev_candidate_id)
+                return [dev_candidate_id]
+                
             result = await session.execute(text("SELECT id FROM candidates"))
             return [str(row[0]) for row in result.fetchall()]
 

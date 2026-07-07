@@ -34,7 +34,20 @@ $Frontend  = Join-Path $Root 'frontend'
 $LogDir    = Join-Path $Root 'logs'
 $PidFile   = Join-Path $LogDir 'run_all.pids'
 
-$BackendPort  = if ($env:BACKEND_PORT)  { $env:BACKEND_PORT }  else { '8000' }
+$BackendPort = "8000"
+$EnvFile = Join-Path $Backend '.env'
+if (Test-Path $EnvFile) {
+    Get-Content $EnvFile | ForEach-Object {
+        if ($_ -match '^\s*M1_API_BASE_URL\s*=\s*(.*)$') {
+            $val = $Matches[1].Trim().Trim('"').Trim("'")
+            if ($val -match ':(\d+)/?.*') {
+                $BackendPort = $Matches[1]
+            }
+        }
+    }
+}
+if ($env:BACKEND_PORT) { $BackendPort = $env:BACKEND_PORT }
+
 $FrontendPort = if ($env:FRONTEND_PORT) { $env:FRONTEND_PORT } else { '3000' }
 # 'threads' (NOT 'solo') is the default: the solo pool runs the task inline in the
 # SAME thread that services the broker, so a multi-minute browser run starves the
@@ -90,7 +103,22 @@ if (-not (Test-Path (Join-Path $Backend '.env')))         { throw "backend/.env 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 if (Test-Path $PidFile) { Remove-Item $PidFile -Force }
 
-$Queues = 'celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan'
+# Read QUEUE_SUFFIX from backend/.env if it exists
+$QueueSuffix = ""
+$EnvFile = Join-Path $Backend '.env'
+if (Test-Path $EnvFile) {
+    Get-Content $EnvFile | ForEach-Object {
+        if ($_ -match '^\s*QUEUE_SUFFIX\s*=\s*(.*)$') {
+            $QueueSuffix = $Matches[1].Trim().Trim('"').Trim("'")
+        }
+    }
+}
+if (-not $QueueSuffix) {
+    $QueueSuffix = $env:USERNAME.ToLower()
+}
+
+$Suffix = if ($QueueSuffix) { "_$QueueSuffix" } else { "" }
+$Queues = "celery$Suffix,queue:job_discovery$Suffix,queue:job_processing$Suffix,queue:resume_generation$Suffix,queue:application_execution$Suffix,queue:email_scan$Suffix"
 
 Write-Host ""
 Write-Host "BD-Automator - starting full stack" -ForegroundColor Cyan
@@ -139,8 +167,9 @@ Start-Sleep -Seconds 3
 #      fetches the code" failure. 900s gives fill + verification ample room;
 #      the executor's hard per-application deadline sits above it at 1500s.
 $WorkerEnv = "`$env:AGENT_LOOP_WALL_TIMEOUT_S='900'; `$env:APPLICATION_EXEC_TIMEOUT_S='1500'; `$env:STRICT_MEMORY_ISOLATION='true'; "
-Start-Svc 'BD-Celery-Worker' $Backend `
-    ($WorkerEnv + "& '$Python' -m celery -A app.celery_app worker --loglevel=info --pool=$CeleryPool --concurrency=$CeleryConc -Q $Queues -n worker@%h --without-mingle --without-gossip --without-heartbeat") | Out-Null
+$WorkerTitle = if ($QueueSuffix) { "BD-Celery-Worker ($QueueSuffix)" } else { "BD-Celery-Worker" }
+Start-Svc $WorkerTitle $Backend `
+    ($WorkerEnv + "& '$Python' -m celery -A app.celery_app worker --loglevel=info --pool=$CeleryPool --concurrency=$CeleryConc -Q $Queues -n worker$Suffix@%h --without-mingle --without-gossip --without-heartbeat") | Out-Null
 
 # 3. Celery beat - scheduled pipelines
 Start-Svc 'BD-Celery-Beat' $Backend `

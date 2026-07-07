@@ -2,12 +2,36 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from xhtml2pdf import pisa
 
 # Define the path to the templates directory
 TEMPLATE_DIR = Path(__file__).parent.parent / "templates"
+
+def sanitize_text(val):
+    """Recursively replace curly quotes, dashes, and bullet artifacts in string fields."""
+    if isinstance(val, str):
+        # Replace smart single quotes / apostrophes
+        replacements = {
+            '\u2018': "'", '\u2019': "'", '\u201a': "'", '\u201b': "'", '\u2032': "'", '\u2035': "'", '\x92': "'", '’': "'", '‘': "'", '\u02bc': "'",
+            '\u201c': '"', '\u201d': '"', '\u201e': '"', '“': '"', '”': '"',
+            '\u2013': '-', '\u2014': '-', '–': '-', '—': '-',
+        }
+        for src, dst in replacements.items():
+            val = val.replace(src, dst)
+        # Correct the specific "■" black box bullet/apostrophe character in strings
+        val = re.sub(r'(?<=[a-zA-Z])■(?=[a-zA-Z])', "'", val)
+        # Handle cases with adjacent letters or patterns representing apostrophes
+        val = val.replace('■s', "'s").replace('■t', "'t").replace('■re', "'re").replace('■ve', "'ve").replace('■ll', "'ll").replace('■d', "'d").replace('■m', "'m")
+        return val
+    elif isinstance(val, list):
+        return [sanitize_text(item) for item in val]
+    elif isinstance(val, dict):
+        return {k: sanitize_text(v) for k, v in val.items()}
+    return val
+
 
 def _render_pdf(html_content: str, output_path: str) -> None:
     """Helper to render HTML to PDF via xhtml2pdf."""
@@ -71,6 +95,8 @@ def generate_resume_pdf(
         "projects": projects  # Passed to template, but not returned to DB
     }
     
+    resume_data = sanitize_text(resume_data)
+    
     html_content = template.render(resume=resume_data)
     _render_pdf(html_content, output_path)
 
@@ -99,6 +125,9 @@ def generate_cover_letter_pdf(
     resume_data = {
         "basics": {"name": candidate_name}
     }
+    
+    letter_data = sanitize_text(letter_data)
+    resume_data = sanitize_text(resume_data)
     
     html_content = template.render(letter=letter_data, resume=resume_data)
     _render_pdf(html_content, output_path)

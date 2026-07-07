@@ -425,7 +425,7 @@ async def orchestrate_application_package(
             await publish_event("application.package_ready", event_payload)
             print("[ORCHESTRATOR] Redis event published successfully.")
 
-        print(f"[ORCHESTRATOR] ✓ APPLICATION PACKAGE PREPARATION COMPLETE (App ID: {app_id})")
+        print(f"[ORCHESTRATOR] [SUCCESS] APPLICATION PACKAGE PREPARATION COMPLETE (App ID: {app_id})")
 
         return {
             "status": "QUEUED",

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     job_matching_lookback_hours: int = 24
     job_matching_monday_lookback_hours: int = 72
 
+    # ── Developer/Queue Isolation ─────────────────────────────────────────────
+    queue_suffix: str = ""
+    dev_candidate_id: str = ""
+
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     rate_limit_matching_per_minute: int = 5
     rate_limit_apply_per_minute: int = 10

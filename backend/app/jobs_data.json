@@ -12579,5 +12579,49 @@
     "embedding": null,
     "id": "8b27f05c-5325-4225-827c-65df0ef7158a",
     "created_at": "2026-06-30T20:57:19.276532+00:00"
+  },
+  {
+    "title": "React Developer",
+    "company": "TechCorp",
+    "location": "Remote, US",
+    "source": "linkedin",
+    "source_url": "https://linkedin.com/jobs/123",
+    "canonical_url": null,
+    "description": "Building beautiful React apps",
+    "skills": [
+      "React",
+      "TypeScript",
+      "Tailwind"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": null,
+    "posted_at": null,
+    "embedding": null,
+    "id": "92073906-1012-4e7d-81b5-83911eadfc28",
+    "created_at": "2026-07-07T13:03:00.304517+00:00"
+  },
+  {
+    "title": "FastAPI Engineer",
+    "company": "DataSoft",
+    "location": "New York",
+    "source": "glassdoor",
+    "source_url": "https://glassdoor.com/jobs/456",
+    "canonical_url": null,
+    "description": "Python API development",
+    "skills": [
+      "Python",
+      "FastAPI",
+      "Docker"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": null,
+    "posted_at": null,
+    "embedding": null,
+    "id": "d82d3ae1-9f78-469b-bddc-532944b30dee",
+    "created_at": "2026-07-07T13:03:46.180386+00:00"
   }
 ]

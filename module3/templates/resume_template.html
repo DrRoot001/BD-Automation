@@ -261,7 +261,7 @@
           {{ edu.degree }}
         </td>
         <td style="text-align: right; font-size: 10pt; vertical-align: top; white-space: nowrap; padding: 0;">
-          {{ edu.date }}
+          {% if edu.date and edu.date != 'None' and edu.date != 'none' and edu.date != 'null' %}{{ edu.date }}{% endif %}
         </td>
       </tr>
     </table>

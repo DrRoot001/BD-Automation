@@ -47,7 +47,24 @@ def scan_candidate_inbox(self):
     async def _fetch_connected_candidates():
         from app.database import task_session
         from sqlalchemy import text
+        from app.config import get_settings
+        from app.services.dev_resolver import auto_resolve_candidate_id
+        
+        settings = get_settings()
+        dev_candidate_id = (settings.dev_candidate_id or "").strip()
+        
         async with task_session() as db:
+            if not dev_candidate_id:
+                dev_candidate_id = await auto_resolve_candidate_id(db)
+                
+            if dev_candidate_id:
+                logger.info("[EmailScan] Dynamic Developer Separation: scanning ONLY for candidate %s", dev_candidate_id)
+                result = await db.execute(
+                    text("SELECT id FROM candidates WHERE id = :cid AND google_refresh_token IS NOT NULL"),
+                    {"cid": dev_candidate_id}
+                )
+                return [str(row[0]) for row in result.fetchall()]
+
             result = await db.execute(
                 text("SELECT id FROM candidates WHERE google_refresh_token IS NOT NULL")
             )
@@ -168,7 +185,24 @@ def scan_interviews(self):
     async def _fetch_connected_candidates():
         from app.database import task_session
         from sqlalchemy import text
+        from app.config import get_settings
+        from app.services.dev_resolver import auto_resolve_candidate_id
+        
+        settings = get_settings()
+        dev_candidate_id = (settings.dev_candidate_id or "").strip()
+        
         async with task_session() as db:
+            if not dev_candidate_id:
+                dev_candidate_id = await auto_resolve_candidate_id(db)
+                
+            if dev_candidate_id:
+                logger.info("[InterviewScan] Dynamic Developer Separation: scanning interviews ONLY for candidate %s", dev_candidate_id)
+                result = await db.execute(
+                    text("SELECT id FROM candidates WHERE id = :cid AND google_refresh_token IS NOT NULL"),
+                    {"cid": dev_candidate_id}
+                )
+                return [str(row[0]) for row in result.fetchall()]
+
             result = await db.execute(
                 text("SELECT id FROM candidates WHERE google_refresh_token IS NOT NULL")
             )

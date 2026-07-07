@@ -70,38 +70,44 @@ celery_app = Celery(
 )
 
 # ── Queue definitions ─────────────────────────────────────────────────────────
+import getpass
+queue_suffix = (settings.queue_suffix or "").strip()
+if not queue_suffix:
+    queue_suffix = getpass.getuser().lower()
+suffix = f"_{queue_suffix}" if queue_suffix else ""
+
 celery_app.conf.task_queues = [
-    Queue("celery", routing_key="celery"),
-    Queue("queue:job_discovery", routing_key="queue:job_discovery"),
-    Queue("queue:job_processing", routing_key="queue:job_processing"),
-    Queue("queue:resume_generation", routing_key="queue:resume_generation"),
-    Queue("queue:application_execution", routing_key="queue:application_execution"),
-    Queue("queue:email_scan", routing_key="queue:email_scan"),
+    Queue(f"celery{suffix}", routing_key=f"celery{suffix}"),
+    Queue(f"queue:job_discovery{suffix}", routing_key=f"queue:job_discovery{suffix}"),
+    Queue(f"queue:job_processing{suffix}", routing_key=f"queue:job_processing{suffix}"),
+    Queue(f"queue:resume_generation{suffix}", routing_key=f"queue:resume_generation{suffix}"),
+    Queue(f"queue:application_execution{suffix}", routing_key=f"queue:application_execution{suffix}"),
+    Queue(f"queue:email_scan{suffix}", routing_key=f"queue:email_scan{suffix}"),
 ]
 
 # ── Task routing ──────────────────────────────────────────────────────────────
 celery_app.conf.task_routes = {
-    "task:discover_jobs_*":             {"queue": "queue:job_discovery"},
-    "task:daily_job_matching":          {"queue": "queue:job_processing"},
-    "task:match_single_candidate":      {"queue": "queue:job_processing"},
-    "task:aggregate_matching_results":  {"queue": "queue:job_processing"},
-    "task:normalize_job":               {"queue": "queue:job_processing"},
-    "task:deduplicate_job":             {"queue": "queue:job_processing"},
-    "task:filter_job":                  {"queue": "queue:job_processing"},
-    "task:score_job_match":             {"queue": "queue:resume_generation"},
-    "task:tailor_resume":               {"queue": "queue:resume_generation"},
-    "task:generate_cover_letter":       {"queue": "queue:resume_generation"},
-    "task:prepare_application_package": {"queue": "queue:resume_generation"},
-    "task:execute_application":         {"queue": "queue:application_execution"},
-    "task:retry_failed_application":    {"queue": "queue:application_execution"},
-    "task:dynamic_apply":               {"queue": "queue:application_execution"},
-    "task:scan_candidate_inbox":        {"queue": "queue:email_scan"},
-    "task:scan_single_inbox":           {"queue": "queue:email_scan"},
-    "task:scan_interviews":             {"queue": "queue:email_scan"},
-    "task:scan_single_candidate_interviews": {"queue": "queue:email_scan"},
-    "task:refresh_analytics":           {"queue": "queue:email_scan"},
-    "task:cleanup_old_resumes":         {"queue": "celery"},
-    "task:recover_stuck_applications":  {"queue": "celery"},
+    "task:discover_jobs_*":             {"queue": f"queue:job_discovery{suffix}"},
+    "task:daily_job_matching":          {"queue": f"queue:job_processing{suffix}"},
+    "task:match_single_candidate":      {"queue": f"queue:job_processing{suffix}"},
+    "task:aggregate_matching_results":  {"queue": f"queue:job_processing{suffix}"},
+    "task:normalize_job":               {"queue": f"queue:job_processing{suffix}"},
+    "task:deduplicate_job":             {"queue": f"queue:job_processing{suffix}"},
+    "task:filter_job":                  {"queue": f"queue:job_processing{suffix}"},
+    "task:score_job_match":             {"queue": f"queue:resume_generation{suffix}"},
+    "task:tailor_resume":               {"queue": f"queue:resume_generation{suffix}"},
+    "task:generate_cover_letter":       {"queue": f"queue:resume_generation{suffix}"},
+    "task:prepare_application_package": {"queue": f"queue:resume_generation{suffix}"},
+    "task:execute_application":         {"queue": f"queue:application_execution{suffix}"},
+    "task:retry_failed_application":    {"queue": f"queue:application_execution{suffix}"},
+    "task:dynamic_apply":               {"queue": f"queue:application_execution{suffix}"},
+    "task:scan_candidate_inbox":        {"queue": f"queue:email_scan{suffix}"},
+    "task:scan_single_inbox":           {"queue": f"queue:email_scan{suffix}"},
+    "task:scan_interviews":             {"queue": f"queue:email_scan{suffix}"},
+    "task:scan_single_candidate_interviews": {"queue": f"queue:email_scan{suffix}"},
+    "task:refresh_analytics":           {"queue": f"queue:email_scan{suffix}"},
+    "task:cleanup_old_resumes":         {"queue": f"celery{suffix}"},
+    "task:recover_stuck_applications":  {"queue": f"celery{suffix}"},
 }
 
 # ── Broker connection stability (Upstash / managed Redis) ─────────────────────
