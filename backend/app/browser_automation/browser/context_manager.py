@@ -4,83 +4,22 @@ import logging
 import redis.asyncio as redis
 from playwright.async_api import async_playwright, BrowserContext, Playwright
 from dotenv import load_dotenv
-from .stealth_config import get_stealth_config, StealthConfig
+from .stealth_config import get_stealth_config, build_stealth_init_script, StealthConfig
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-STEALTH_JS = """
-(() => {
-    // navigator.webdriver = false
-    Object.defineProperty(navigator, 'webdriver', {
-        get: () => false,
-    });
 
-    // Remove webdriver property from navigator prototype
-    if (navigator.webdriver !== undefined) {
-        delete (navigator.__proto__.webdriver);
-    }
+def _session_ttl_s() -> int:
+    """Redis session TTL in seconds. `SESSION_TTL_DAYS` env overrides the 7-day
+    default. The TTL is (re)set on both restore and save so a session in active
+    use never expires mid-batch, even across runs that fail before save."""
+    try:
+        days = int(os.getenv("SESSION_TTL_DAYS", "7"))
+    except (TypeError, ValueError):
+        days = 7
+    return max(1, days) * 86400
 
-    // Patch chrome.runtime
-    window.chrome = {
-        runtime: {
-            OnInstalledReason: {
-                CHROME_UPDATE: 'chrome_update',
-                INSTALL: 'install',
-                SHARED_MODULE_UPDATE: 'shared_module_update',
-                UPDATE: 'update',
-            },
-            OnRestartRequiredReason: {
-                APP_UPDATE: 'app_update',
-                OS_UPDATE: 'os_update',
-                PERIODIC: 'periodic',
-            },
-            PlatformArch: {
-                ARM: 'arm',
-                ARM64: 'arm64',
-                MIPS: 'mips',
-                MIPS64: 'mips64',
-                X86_32: 'x86-32',
-                X86_64: 'x86-64',
-            },
-            PlatformNaclArch: {
-                ARM: 'arm',
-                MIPS: 'mips',
-                MIPS64: 'mips64',
-                X86_32: 'x86-32',
-                X86_64: 'x86-64',
-            },
-            PlatformOs: {
-                ANDROID: 'android',
-                CROS: 'cros',
-                LINUX: 'linux',
-                MAC: 'mac',
-                OPENBSD: 'openbsd',
-                WIN: 'win',
-            },
-            RequestUpdateCheckStatus: {
-                NO_UPDATE: 'no_update',
-                THROTTLED: 'throttled',
-                UPDATE_AVAILABLE: 'update_available',
-            },
-            connect: () => {},
-            sendMessage: () => {},
-        },
-    };
-
-    // Canvas noise
-    const originalToDataURL = HTMLCanvasElement.prototype.toDataURL;
-    HTMLCanvasElement.prototype.toDataURL = function(type, ...args) {
-        const context = this.getContext('2d');
-        if (context) {
-            const imageData = context.getImageData(0, 0, 1, 1);
-            imageData.data[0] = (imageData.data[0] + 1) % 256;
-            context.putImageData(imageData, 0, 0);
-        }
-        return originalToDataURL.apply(this, [type, ...args]);
-    };
-})();
-"""
 
 class BrowserContextManager:
     def __init__(self):
@@ -103,6 +42,15 @@ class BrowserContextManager:
         redis_client = await self._get_redis()
         session_key = f"session:{candidate_id}:{platform}"
         session_data = await redis_client.get(session_key)
+        if session_data:
+            # Refresh the TTL the moment we restore: any active use resets the
+            # 7-day clock, so a long-running batch (or a candidate whose runs
+            # keep failing before save_session) doesn't silently lose its
+            # authenticated session between attempts.
+            try:
+                await redis_client.expire(session_key, _session_ttl_s())
+            except Exception as exc:
+                logger.debug(f"[Browser] session TTL refresh skipped: {exc}")
 
         if self._playwright is None:
             self._playwright = await async_playwright().start()
@@ -133,12 +81,16 @@ class BrowserContextManager:
                 os.path.join(os.getcwd(), ".pw-userdata", candidate_id),
             )
             os.makedirs(user_data_dir, exist_ok=True)
+            # NOTE: no user_agent override here either — the persistent path
+            # also launches real Chrome (channel="chrome"), and overriding the
+            # UA desyncs it from the browser's native sec-ch-ua/userAgentData
+            # (the Greenhouse react-select lesson). Real Chrome's genuine UA
+            # is always coherent; viewport/timezone/locale are safe to set.
             launch_context_kwargs = dict(
                 user_data_dir=user_data_dir,
                 headless=headless,
                 args=ext_args,
                 viewport=config.viewport,
-                user_agent=config.user_agent,
                 timezone_id=config.timezone,
                 locale=config.locale,
             )
@@ -152,11 +104,22 @@ class BrowserContextManager:
                 persistent_ctx = await self._playwright.chromium.launch_persistent_context(
                     **launch_context_kwargs
                 )
-            await persistent_ctx.add_init_script(STEALTH_JS)
+            await persistent_ctx.add_init_script(build_stealth_init_script(config))
             if session_data:
                 try:
-                    cookies = json.loads(session_data)
-                    await persistent_ctx.add_cookies(cookies)
+                    # launch_persistent_context does NOT accept storage_state,
+                    # so we can only restore cookies here. localStorage /
+                    # sessionStorage persist automatically via user_data_dir,
+                    # so nothing is lost for the persistent path.
+                    parsed = json.loads(session_data)
+                    if isinstance(parsed, dict):
+                        # NEW format: a Playwright storage_state dict
+                        cookies = parsed.get("cookies", [])
+                    else:
+                        # OLD format: a bare list of cookies
+                        cookies = parsed
+                    if cookies:
+                        await persistent_ctx.add_cookies(cookies)
                 except Exception as exc:
                     logger.warning(f"[Browser] Could not restore cookies into persistent ctx: {exc}")
             # Stash so destroy_context() can close it cleanly
@@ -231,12 +194,21 @@ class BrowserContextManager:
         # add_init_script. Anything more turned out to make Greenhouse's
         # react-select refuse to open. Once dropdowns are working, we can
         # selectively re-add stealth signals that don't trip detection.
+        # color_scheme and device_scale_factor are safe Playwright context
+        # options — they don't contradict any HTTP header or UA axis, and
+        # device_scale_factor doesn't conflict with viewport.
         context_kwargs = dict(
             viewport=config.viewport,
             locale=config.locale,
             timezone_id=config.timezone,
+            color_scheme=config.color_scheme,
+            device_scale_factor=config.device_scale_factor,
         )
-        logger.info(f"[Browser] Randomize context — viewport={config.viewport}, locale={config.locale}, timezone={config.timezone}")
+        logger.info(
+            f"[Browser] Randomize context — viewport={config.viewport}, "
+            f"locale={config.locale}, timezone={config.timezone}, "
+            f"color_scheme={config.color_scheme}, dsf={config.device_scale_factor}"
+        )
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
@@ -261,22 +233,75 @@ class BrowserContextManager:
         except Exception as exc:
             logger.debug(f"[Browser] storage_state load skipped: {exc}")
 
-        context = await self._browser.new_context(**context_kwargs)
+        # ── Redis session restore (dict = new storage_state, list = legacy) ──
+        # The redis blob can be either the NEW full storage_state (a dict with
+        # "cookies"/"origins" — carries localStorage too) or the OLD bare
+        # cookie list. A dict must be passed via context_kwargs BEFORE
+        # new_context(); a list is applied afterwards via add_cookies(). The
+        # file-based storage_state (above) always wins — if it was used we
+        # don't also apply the redis blob.
+        redis_session_parsed = None
+        redis_session_is_dict = False
+        if session_data and not storage_state_used:
+            try:
+                redis_session_parsed = json.loads(session_data)
+                if isinstance(redis_session_parsed, dict):
+                    redis_session_is_dict = True
+                    context_kwargs["storage_state"] = redis_session_parsed
+                    logger.info(f"[Browser] Restoring redis storage_state for {platform} (full state)")
+            except Exception as exc:
+                logger.warning(f"[Browser] Could not parse redis session for {platform}: {exc}")
+                redis_session_parsed = None
+
+        try:
+            context = await self._browser.new_context(**context_kwargs)
+        except Exception as exc:
+            # A corrupted/structurally-invalid redis storage_state dict can make
+            # new_context() itself raise, failing context creation entirely.
+            # Only for the redis-dict case: drop the bad storage_state and
+            # recreate the context bare so the run can still proceed (a fresh
+            # login just gets triggered downstream). File-based storage_state
+            # precedence is untouched — this only fires when we injected the
+            # redis dict above.
+            if redis_session_is_dict and context_kwargs.get("storage_state") is redis_session_parsed:
+                logger.warning(
+                    f"[Browser] new_context failed with redis storage_state for {platform} "
+                    f"({exc}); retrying without it"
+                )
+                context_kwargs.pop("storage_state", None)
+                redis_session_is_dict = False
+                redis_session_parsed = None
+                context = await self._browser.new_context(**context_kwargs)
+            else:
+                raise
 
         # Inject stealth scripts
-        await context.add_init_script(STEALTH_JS)
+        await context.add_init_script(build_stealth_init_script(config))
 
-        if session_data and not storage_state_used:
-            cookies = json.loads(session_data)
-            await context.add_cookies(cookies)
+        # Legacy list format: cookies must be added after the context exists.
+        if redis_session_parsed is not None and not redis_session_is_dict:
+            try:
+                await context.add_cookies(redis_session_parsed)
+                logger.info(f"[Browser] Restored redis cookies for {platform} (legacy list)")
+            except Exception as exc:
+                logger.warning(f"[Browser] Could not restore legacy redis cookies for {platform}: {exc}")
 
         return context
 
     async def save_session(self, candidate_id: str, platform: str, context: BrowserContext) -> None:
-        cookies = await context.cookies()
+        # Persist the FULL storage_state (cookies + localStorage + origins) so
+        # auth-walled ATSes don't force a fresh login (and bot-throttle) each
+        # run. Fall back to a cookie-only blob if storage_state is unavailable
+        # (e.g. a persistent context in some Playwright versions). Same redis
+        # key + 7-day TTL either way.
+        try:
+            state = await context.storage_state()
+        except Exception as exc:
+            logger.warning(f"[Browser] storage_state() unavailable for {platform} ({exc}); saving cookies only")
+            state = {"cookies": await context.cookies()}
         session_key = f"session:{candidate_id}:{platform}"
         redis_client = await self._get_redis()
-        await redis_client.set(session_key, json.dumps(cookies), ex=604800)
+        await redis_client.set(session_key, json.dumps(state), ex=_session_ttl_s())
 
     async def destroy_context(self, context: BrowserContext) -> None:
         await context.close()

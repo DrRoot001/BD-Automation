@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useQueryClient } from '@tanstack/react-query'
+import { StatusBadge } from '../shared/StatusBadge'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -22,37 +23,25 @@ const COMPLETED_STATUSES = [
   'ASSESSMENT'
 ]
 
+// Statuses where automation is actively working the application —
+// showing a red "Apply Manually" link here reads as failure mid-run.
+const IN_FLIGHT_STATUSES = [
+  'QUEUED',
+  'RESUME_UPDATED',
+  'COVER_LETTER_CREATED',
+  'APPLICATION_STARTED',
+  'FORM_COMPLETED',
+]
+
 function isCompleted(status: string) {
   return COMPLETED_STATUSES.includes(status?.toUpperCase())
 }
 
-const PAGE_SIZE = 15
-
-function StatusBadge({ status }: { status: string }) {
-  const s = status.toLowerCase()
-  const map: Record<string, string> = {
-    queued:         'badge-queued',
-    found:          'badge-found',
-    analyzed:       'badge-found',
-    matched:        'badge-found',
-    submitted:      'badge-submitted',
-    confirmed:      'badge-confirmed',
-    interview_r1:   'badge-interview_r1',
-    interview_r2:   'badge-interview_r2',
-    interview_r3:   'badge-interview_r1',
-    interview_r4:   'badge-interview_r1',
-    failed:         'badge-failed',
-    blocked:        'badge-blocked',
-    rejected:       'badge-rejected',
-    offer:          'badge-offer',
-    assessment:     'badge-interview_r1',
-  }
-  return (
-    <span className={clsx('badge', map[s] ?? 'badge-found')}>
-      {status.replace(/_/g, ' ')}
-    </span>
-  )
+function isInFlight(status: string) {
+  return IN_FLIGHT_STATUSES.includes(status?.toUpperCase())
 }
+
+const PAGE_SIZE = 15
 
 function TableSkeleton() {
   return (
@@ -129,20 +118,22 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
   return (
     <div className="card">
       <div className="card-header">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <h2 className="card-title">Application Queue</h2>
           {!isLoading && (
-            <span className="text-xs text-text-muted">{apps.length} shown</span>
+            <span className="text-xs text-text-muted bg-bg-secondary px-2.5 py-0.5 rounded-full border border-bg-border font-medium">
+              {apps.length} shown
+            </span>
           )}
         </div>
         <div className="flex items-center gap-3">
           {pipelineState && (
             <div className="flex items-center gap-2 text-xs font-medium text-accent animate-pulse bg-accent/10 px-3 py-1 rounded-full border border-accent/20">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              {pipelineState.message}
+              <span>{pipelineState.message}</span>
             </div>
           )}
-          <div className="flex items-center gap-1.5 text-xs text-text-muted" title="Auto-refreshes every 30 seconds">
+          <div className="flex items-center gap-1.5 text-xs text-text-muted font-medium" title="Auto-refreshes every 30 seconds">
             <span className="live-dot" />
             Live
           </div>
@@ -201,19 +192,36 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                     <StatusBadge status={app.status} />
                   </td>
 
-                  {/* Resume link */}
+                  {/* Resume link + base/tailored badge */}
                   <td className="px-3 py-3 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
                     {resolveFileUrl(app.resume_url) ? (
-                      <a
-                        href={resolveFileUrl(app.resume_url)!}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
-                        title="View resume"
-                      >
-                        <FileText className="w-3.5 h-3.5" />
-                        Resume
-                      </a>
+                      <div className="flex flex-col items-start gap-1">
+                        <a
+                          href={resolveFileUrl(app.resume_url)!}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-xs text-accent hover:underline"
+                          title="View resume"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          Resume
+                        </a>
+                        {app.resume_is_base === false ? (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-accent/10 text-accent font-medium"
+                            title="A resume tailored to this job was used"
+                          >
+                            Tailored
+                          </span>
+                        ) : app.resume_is_base === true ? (
+                          <span
+                            className="text-[10px] px-1.5 py-0.5 rounded bg-bg-secondary text-text-muted border border-bg-border font-medium"
+                            title="The candidate's base resume was used (no tailoring)"
+                          >
+                            Base
+                          </span>
+                        ) : null}
+                      </div>
                     ) : (
                       <span className="text-text-muted text-xs">—</span>
                     )}
@@ -221,7 +229,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
 
                   {/* JD link */}
                   <td className="px-3 py-3 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
-                    {!isCompleted(app.status) && app.job_url ? (
+                    {!isCompleted(app.status) && !isInFlight(app.status) && app.job_url ? (
                       <a
                         href={app.job_url}
                         target="_blank"
@@ -249,18 +257,43 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                   </td>
 
                   <td className="px-3 py-3 text-right hidden md:table-cell">
-                    {app.fit_score != null ? (
+                    {app.ats_score_after != null
+                      && app.ats_score_before != null
+                      && app.ats_score_after !== app.ats_score_before ? (
+                      // Tailoring changed the ATS score — show base → tailored.
                       <span
-                        className={clsx(
-                          'text-xs font-medium tabular-nums',
-                          app.fit_score >= 80 ? 'text-success'
-                          : app.fit_score >= 60 ? 'text-warning'
-                          : 'text-text-muted',
-                        )}
+                        className="inline-flex items-center gap-1 text-xs font-medium tabular-nums whitespace-nowrap"
+                        title="ATS score vs job description: base resume → tailored resume"
                       >
-                        {app.fit_score.toFixed(0)}%
+                        <span className="text-text-muted line-through decoration-text-muted/40">
+                          {app.ats_score_before.toFixed(0)}
+                        </span>
+                        <span className="text-text-muted">→</span>
+                        <span
+                          className={clsx(
+                            app.ats_score_after >= 80 ? 'text-success'
+                            : app.ats_score_after >= 60 ? 'text-warning'
+                            : 'text-text-muted',
+                          )}
+                        >
+                          {app.ats_score_after.toFixed(0)}%
+                        </span>
                       </span>
-                    ) : (
+                    ) : (app.fit_score != null || app.ats_score != null) ? (() => {
+                      const displayScore = app.fit_score ?? app.ats_score!
+                      return (
+                        <span
+                          className={clsx(
+                            'text-xs font-medium tabular-nums',
+                            displayScore >= 80 ? 'text-success'
+                            : displayScore >= 60 ? 'text-warning'
+                            : 'text-text-muted',
+                          )}
+                        >
+                          {displayScore.toFixed(0)}%
+                        </span>
+                      )
+                    })() : (
                       <span className="text-text-muted text-xs">—</span>
                     )}
                   </td>

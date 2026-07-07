@@ -100,7 +100,7 @@ celery_app.conf.task_routes = {
     "task:prepare_application_package": {"queue": f"queue:resume_generation{suffix}"},
     "task:execute_application":         {"queue": f"queue:application_execution{suffix}"},
     "task:retry_failed_application":    {"queue": f"queue:application_execution{suffix}"},
-    "task:dynamic_apply":               {"queue": f"queue:application_execution{suffix}"},
+    "task:dynamic_apply":               {"queue": f"queue:job_processing{suffix}"},
     "task:scan_candidate_inbox":        {"queue": f"queue:email_scan{suffix}"},
     "task:scan_single_inbox":           {"queue": f"queue:email_scan{suffix}"},
     "task:scan_interviews":             {"queue": f"queue:email_scan{suffix}"},
@@ -180,11 +180,7 @@ celery_app.conf.task_time_limit = 3600        # 60 minutes — hard kill
 
 # ── Beat schedule ─────────────────────────────────────────────────────────────
 celery_app.conf.beat_schedule = {
-    # Daily job matching — runs once per day at the configured hour (default 8 AM UTC)
-    "daily-job-matching": {
-        "task": "task:daily_job_matching",
-        "schedule": crontab(hour=settings.daily_match_hour, minute=0),
-    },
+
     # Job discovery — scrape all configured platforms every 24 hours
     "discover-jobs-every-24h": {
         "task": "task:discover_jobs_all_platforms",

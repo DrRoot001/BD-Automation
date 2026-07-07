@@ -133,6 +133,16 @@ async def _redis_subscriber() -> None:
                             if candidate_id:
                                 owner_id = await _get_candidate_owner(candidate_id)
                                 
+                            # Fallback: if candidate owner lookup failed but the event
+                            # carries a bd_user_id directly (set by dynamic_apply tasks),
+                            # use it to scope the event. This prevents pipeline.progress
+                            # events from leaking to other BD users when the DB lookup
+                            # fails or the cache hasn't been populated yet.
+                            if owner_id is None:
+                                bd_user_id = payload.get("data", {}).get("bd_user_id")
+                                if bd_user_id:
+                                    owner_id = bd_user_id
+                                    
                             await manager.broadcast(frame, candidate_owner_id=owner_id)
                         except Exception:
                             pass

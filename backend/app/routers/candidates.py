@@ -59,7 +59,10 @@ async def create_candidate(
         await db.refresh(db_candidate)
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
+        err_msg = str(e)
+        if "candidates_email_key" in err_msg or "UniqueViolationError" in err_msg:
+            raise HTTPException(status_code=400, detail="A candidate with this email address already exists.")
+        raise HTTPException(status_code=400, detail=f"Database error: {err_msg}")
     return db_candidate
 
 @router.get("/{candidate_id}", response_model=CandidateResponse)
@@ -86,6 +89,22 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
         raise HTTPException(status_code=404, detail="Candidate not found")
         
     update_data = candidate_update.model_dump(exclude_unset=True)
+
+    if "email" in update_data and update_data["email"]:
+        new_email = update_data["email"].strip()
+        update_data["email"] = new_email
+        email_check = await db.execute(
+            select(Candidate).where(
+                Candidate.email == new_email,
+                Candidate.id != candidate_uuid
+            )
+        )
+        if email_check.scalars().first():
+            raise HTTPException(
+                status_code=400,
+                detail=f"A candidate with email '{new_email}' already exists."
+            )
+
     for key, value in update_data.items():
         setattr(db_candidate, key, value)
         
@@ -94,7 +113,10 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
         await db.refresh(db_candidate)
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
+        err_msg = str(e)
+        if "candidates_email_key" in err_msg or "UniqueViolationError" in err_msg:
+            raise HTTPException(status_code=400, detail="A candidate with this email address already exists.")
+        raise HTTPException(status_code=400, detail=f"Database error: {err_msg}")
     return db_candidate
 
 @router.post("/{candidate_id}/resumes", response_model=ResumeResponse, status_code=201)
@@ -202,6 +224,7 @@ async def list_candidate_applications(
             "candidate_id": str(a.candidate_id),
             "job_id": str(a.job_id),
             "status": a.status,
+            "failure_reason": a.failure_reason,
             "created_at": a.created_at.isoformat() if a.created_at else None,
         }
         for a in applications
@@ -212,7 +235,13 @@ class ApplyRequest(BaseModel):
     max_apps: int = 10
 
 @router.post("/{candidate_id}/apply")
-async def trigger_apply(request: Request, candidate_id: str, request_body: ApplyRequest, db: AsyncSession = Depends(get_db)):
+async def trigger_apply(
+    request: Request,
+    candidate_id: str,
+    request_body: ApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     import logging as _bg_logging
     _bg_log = _bg_logging.getLogger("dynamic_apply.trigger")
 
@@ -226,24 +255,28 @@ async def trigger_apply(request: Request, candidate_id: str, request_body: Apply
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
-    from app.tasks.dynamic_apply import _run
-    import asyncio
+    # Enforce ownership: BD users can only trigger apply for their own candidates
+    if current_user.role != UserRole.admin:
+        if candidate.user_id is None or str(candidate.user_id) != str(current_user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: this candidate is not assigned to your account."
+            )
 
-    # Run directly in background on the same event loop (bypassing Celery due to Upstash Redis limitations).
-    async def run_in_background():
-        _bg_log.info(f"[BG] Auto-apply task started: candidate={candidate_id} max_apps={request_body.max_apps}")
-        try:
-            bg_result = await _run(candidate_id, request_body.max_apps)
-            _bg_log.info(f"[BG] Auto-apply completed: {bg_result}")
-        except Exception as e:
-            import traceback
-            _bg_log.error(f"[BG] Auto-apply FAILED for candidate={candidate_id}: {e}")
-            _bg_log.error(traceback.format_exc())
+    # Pass the triggering user's supabase_user_id so Celery workers can scope
+    # WebSocket events to only the correct BD user's browser session.
+    bd_user_id = str(current_user.supabase_user_id) if current_user.supabase_user_id else None
+
+    from app.tasks.dynamic_apply import dynamic_apply
 
     try:
-        asyncio.create_task(run_in_background())
+        dynamic_apply.apply_async(args=[candidate_id, request_body.max_apps, bd_user_id])
+        _bg_log.info(
+            f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} "
+            f"max_apps={request_body.max_apps} triggered_by={current_user.email}"
+        )
     except Exception as e:
-        _bg_log.error(f"[Apply] Failed to schedule background task for candidate={candidate_id}: {e}")
+        _bg_log.error(f"[Apply] Failed to dispatch Celery task for candidate={candidate_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start apply pipeline: {e}")
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}

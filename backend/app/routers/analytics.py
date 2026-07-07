@@ -18,20 +18,20 @@ async def analytics_summary(
     Module 5 calls this on load and after WebSocket events.
     """
     # Build queries dynamically based on candidate_id
-    base_filter = "WHERE candidate_id = :cid" if candidate_id else ""
-    
+    cand_cond = "candidate_id = :cid" if candidate_id else "TRUE"
+    cand_cond_joined = "a.candidate_id = :cid" if candidate_id else "TRUE"
+
     queries = {
-        "total_applied": f"SELECT COUNT(*) FROM applications {base_filter}",
+        "total_applied": f"SELECT COUNT(*) FROM applications WHERE {cand_cond}",
         "interviews_this_week": f"""
             SELECT COUNT(*) FROM interviews i
             JOIN applications a ON i.application_id = a.id
-            {base_filter.replace('WHERE', 'WHERE a.')}
+            WHERE {cand_cond_joined}
             AND i.scheduled_at > NOW() AND i.scheduled_at < NOW() + INTERVAL '7 days'
         """,
         "pending_in_queue": f"""
-            SELECT COUNT(*) FROM applications {base_filter} AND status = 'QUEUED'
+            SELECT COUNT(*) FROM applications WHERE {cand_cond} AND status = 'QUEUED'
         """,
-        # ... etc
     }
     
     results = {}

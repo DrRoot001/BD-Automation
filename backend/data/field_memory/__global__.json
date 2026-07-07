@@ -23,6 +23,14 @@
     "source": "agent_loop",
     "value": " "
   },
+  "addresssvgs not supported by this browser": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*AddressSVGs not supported by this browser.",
+    "last_seen": 1783088078,
+    "source": "rules",
+    "value": "US"
+  },
   "ai policy for application": {
     "count": 1,
     "field_type": "select",
@@ -263,6 +271,22 @@
     "source": "agent_loop",
     "value": "I frequently use AI tools for optimizing data pipelines, real-time ML inference, and deploying scalable production ML systems. I often work with PyTorch and Tensorflow for model development and deployment, and leverage MLOps practices for CI/CD."
   },
+  "cards[4851be38 b077 4ad2 b757 4d9a2d9a0cf6][field0]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[4851be38 b077 4ad2 b757 4d9a2d9a0cf6][field0]",
+    "last_seen": 1783419659,
+    "source": "screening",
+    "value": "I have 5 years of experience, including leading AI strategy and automation as Head of AI Automation at Mavericks United, where I architected and delivered AI-powered systems. My background also includes extensive data engineering, building scalable ELT pipelines and BI solutions."
+  },
+  "cards[4851be38-b077-4ad2-b757-4d9a2d9a0cf6][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[4851be38-b077-4ad2-b757-4d9a2d9a0cf6][field0]",
+    "last_seen": 1783419406,
+    "source": "agent_loop",
+    "value": "As a Senior AI Automation Engineer, I have extensive experience in designing and scaling AI-driven products and architecting production-grade SaaS platforms. My background in leading cross-functional teams to deliver scalable AI solutions aligns well with setting the technical direction for Generative AI and building production systems at Egen."
+  },
   "cards[624fe404-27fe-400a-bf57-28a23b988412][field0]": {
     "count": 14,
     "field_type": "text",
@@ -278,6 +302,38 @@
     "last_seen": 1782912622,
     "source": "agent_loop",
     "value": "120000"
+  },
+  "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field0]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field0]",
+    "last_seen": 1783419660,
+    "source": "screening",
+    "value": "5 years"
+  },
+  "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field1]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[72b05921 859d 4fa5 ae5c 98395af0b6db][field1]",
+    "last_seen": 1783419661,
+    "source": "screening",
+    "value": "My salary expectation is $250,000 annually, negotiable based on the overall compensation package."
+  },
+  "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field0]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field0]",
+    "last_seen": 1783419438,
+    "source": "agent_loop",
+    "value": "As a Senior AI Automation Engineer, I architected and delivered AI-powered systems, including a production-grade cloud communication & CRM platform. This involved setting technical direction and hands-on building of scalable solutions, which aligns well with the Principal AI Engineer role at Egen focusing on architecting production systems and driving AI strategies."
+  },
+  "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field1]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[72b05921-859d-4fa5-ae5c-98395af0b6db][field1]",
+    "last_seen": 1783419464,
+    "source": "agent_loop",
+    "value": "I am highly interested in working at Egen as a Principal AI Engineer, as my experience in designing and scaling AI-driven products, particularly in architecting production-grade SaaS platforms and leading cross-functional teams, aligns perfectly with the role's focus on setting technical direction for Generative AI and hands-on building. I am passionate about leveraging AI to optimize processes and drive organizational growth, which resonates with Egen's mission."
   },
   "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field0]": {
     "count": 1,
@@ -358,6 +414,14 @@
     "last_seen": 1782468142,
     "source": "llm:0.90",
     "value": "Yes"
+  },
+  "do you currently reside in the usa": {
+    "count": 2,
+    "field_type": "radio",
+    "label": "Do you currently reside in the USA?",
+    "last_seen": 1783419692,
+    "source": "screening",
+    "value": "Not specified"
   },
   "do you currently work for datavant, cvs or any affiliates of either company": {
     "count": 1,
@@ -447,6 +511,14 @@
     "source": "llm:0.80",
     "value": "Available to start immediately"
   },
+  "do you have experience implementing access control models (like oauth)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have experience implementing access control models (like OAuth)*",
+    "last_seen": 1783046644,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
   "do you have hands-on experience building production user interfaces using modern": {
     "count": 2,
     "field_type": "text",
@@ -511,6 +583,14 @@
     "source": "llm:0.90",
     "value": "No"
   },
+  "have you been employed by quantiphi previously": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Have you been employed by Quantiphi previously?*",
+    "last_seen": 1783419566,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "have you been employed, or otherwise engaged, by an asana entity in the past (p": {
     "count": 2,
     "field_type": "text",
@@ -567,6 +647,14 @@
     "source": "llm:0.40",
     "value": "No"
   },
+  "headline (optional)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Headline (Optional)",
+    "last_seen": 1783088482,
+    "source": "llm:0.70",
+    "value": "Senior AI Automation Engineer"
+  },
   "how did you first hear about cockroach labs": {
     "count": 1,
     "field_type": "select",
@@ -592,12 +680,12 @@
     "value": "Online Job Board"
   },
   "how did you hear about us": {
-    "count": 15,
+    "count": 16,
     "field_type": "text",
-    "label": "How did you hear about us?*",
-    "last_seen": 1782468064,
-    "source": "agent_loop",
-    "value": "Online"
+    "label": "How Did You Hear About Us?*",
+    "last_seen": 1783419715,
+    "source": "screening",
+    "value": "Not specified in candidate details."
   },
   "how many years of experience do you have directly managing software engineering teams (i.e., as a people manager with direct ic reports)": {
     "count": 1,
@@ -639,6 +727,14 @@
     "source": "agent_loop",
     "value": "Daily - I use AI for multiple use cases"
   },
+  "how would you describe your english fluency": {
+    "count": 13,
+    "field_type": "radio",
+    "label": "*How would you describe your English Fluency?",
+    "last_seen": 1783371340,
+    "source": "screening",
+    "value": "Fluent"
+  },
   "i confirm and agree": {
     "count": 1,
     "field_type": "checkbox",
@@ -679,6 +775,14 @@
     "source": "agent_loop",
     "value": "N/A"
   },
+  "immediate family member": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Immediate family member",
+    "last_seen": 1783076549,
+    "source": "agent_loop",
+    "value": "No relationship to current employees"
+  },
   "org": {
     "count": 1,
     "field_type": "text",
@@ -686,6 +790,14 @@
     "last_seen": 1782930288,
     "source": "agent_loop",
     "value": "MST Developers"
+  },
+  "password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Password*",
+    "last_seen": 1783419512,
+    "source": "agent_loop",
+    "value": "AmmarHanif@123"
   },
   "pick your favorite color": {
     "count": 1,
@@ -743,6 +855,22 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "postal code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Postal Code",
+    "last_seen": 1783419722,
+    "source": "screening",
+    "value": "Not specified in candidate details."
+  },
+  "postcode": {
+    "count": 2,
+    "field_type": "text",
+    "label": "postcode",
+    "last_seen": 1783115067,
+    "source": "agent_loop",
+    "value": "94105"
+  },
   "preferred pronouns": {
     "count": 1,
     "field_type": "text",
@@ -766,6 +894,14 @@
     "last_seen": 1782075710,
     "source": "screening",
     "value": "Not provided in candidate profile"
+  },
+  "search for jobs or keywords": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Search for jobs or keywords",
+    "last_seen": 1783115518,
+    "source": "agent_loop",
+    "value": "HR AI/ML Engineer II"
   },
   "security code": {
     "count": 2,
@@ -847,6 +983,30 @@
     "source": "agent_loop",
     "value": "3"
   },
+  "summary (optional)": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Summary (Optional)",
+    "last_seen": 1783088082,
+    "source": "screening",
+    "value": "Senior Data Engineer with 5 years of experience in designing, building, and optimizing ETL pipelines and data warehouses using AWS and Snowflake. Proven track record in re-architecting data solutions and leading AI automation initiatives."
+  },
+  "svgs not supported by this browser.svgs not supported by this browser.svgs not supported by this browser.no": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.No",
+    "last_seen": 1783088086,
+    "source": "screening",
+    "value": "Yes"
+  },
+  "svgs not supported by this browser.svgs not supported by this browser.svgs not supported by this browser.yes": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "SVGs not supported by this browser.SVGs not supported by this browser.SVGs not supported by this browser.Yes",
+    "last_seen": 1783088085,
+    "source": "screening",
+    "value": "Yes"
+  },
   "this role is a hands-on backend software engineering position requiring producti": {
     "count": 2,
     "field_type": "text",
@@ -863,6 +1023,14 @@
     "source": "llm:0.70",
     "value": "Yes"
   },
+  "twitter url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Twitter URL",
+    "last_seen": 1783419656,
+    "source": "screening",
+    "value": "Not provided"
+  },
   "type your response": {
     "count": 11,
     "field_type": "text",
@@ -870,6 +1038,14 @@
     "last_seen": 1782932431,
     "source": "agent_loop",
     "value": "$150,000 - $180,000"
+  },
+  "verify new password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Verify New Password*",
+    "last_seen": 1783419525,
+    "source": "agent_loop",
+    "value": "AmmarHanif@123"
   },
   "veteran status": {
     "count": 3,
@@ -918,6 +1094,14 @@
     "last_seen": 1781983048,
     "source": "llm:0.70",
     "value": "Software Engineer"
+  },
+  "what is your desired salary range for this role, including base and any variable": {
+    "count": 5,
+    "field_type": "text",
+    "label": "What is your desired salary range for this role, including base and any variable",
+    "last_seen": 1783115080,
+    "source": "agent_loop",
+    "value": "$180,000 - $220,000"
   },
   "what is your expected compensation": {
     "count": 6,
@@ -974,6 +1158,14 @@
     "last_seen": 1782895922,
     "source": "agent_loop",
     "value": "I am a highly proficient Full Stack Engineer with 2+ years of experience in developing robust internal tooling and scalable applications, aligning well with the 'Pro-Create' aspect of this role. My expertise in backend systems, API integrations, and CI/CD pipelines, as demonstrated by leading development for platforms like Finmile and optimizing database performance, would allow me to contribute significantly to Suno's engineering team. I am eager to apply my skills in a dynamic environment focused on innovative software solutions."
+  },
+  "why did you decide to apply to this role at clickup": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Why did you decide to apply to this role at ClickUp?",
+    "last_seen": 1783115107,
+    "source": "agent_loop",
+    "value": "I am excited by the opportunity to leverage my expertise in AI automation and data engineering to contribute to ClickUp's mission. My experience in architecting production-grade SaaS platforms and leading cross-functional teams aligns well with the Staff Data Engineer role, especially in leading architecture and initiatives for data platforms including AI workloads."
   },
   "why scale ai": {
     "count": 1,

@@ -161,7 +161,8 @@ def _run_discovery_thread():
     import os
     _discovery_state["running"] = True
     try:
-        api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+        base = os.getenv("M1_API_BASE_URL") or os.getenv("API_URL") or "http://localhost:8000"
+        api_base = base.rstrip("/").rstrip("/api") + "/api"
         result = asyncio.run(_run_discovery(api_base))
         _discovery_state["last_result"] = result
         logger.info(f"[Discovery] Completed: {result}")

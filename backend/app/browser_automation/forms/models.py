@@ -10,6 +10,10 @@ class FormField(BaseModel):
     raw_values: Optional[List[str]] = None
     custom_widget: bool = False
     value: Optional[str] = None
+    # True for a "select all that apply" group: multiple checkboxes sharing one
+    # `name` attribute, consolidated into a single field with `options`. A plain
+    # boolean checkbox (consent/terms) leaves this False and `options` None.
+    multi_select: bool = False
 
 class DetectedForm(BaseModel):
     form_type: Literal["EASY_APPLY", "EXTERNAL_FORM", "EMAIL", "UNKNOWN"]

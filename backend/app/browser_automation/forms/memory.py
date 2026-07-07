@@ -142,6 +142,39 @@ def _save(path: Path, data: Dict) -> None:
     tmp.replace(path)
 
 
+def _ttl_seconds() -> int:
+    """Recall staleness window in seconds. `FIELD_MEMORY_TTL_DAYS` env var
+    (default 180) governs it; 0 (or negative) disables expiry entirely.
+
+    Rationale: volatile answers (location, current company/title, "available
+    to start" dates) go stale over months. Expiring an answer is cheap — the
+    agent simply re-derives it from the current profile/inference on the next
+    run — so a conservative but non-infinite default keeps memory honest
+    without discarding freshly-learned answers during an active batch.
+    """
+    try:
+        days = int(os.getenv("FIELD_MEMORY_TTL_DAYS", "180"))
+    except (TypeError, ValueError):
+        days = 180
+    return days * 86400 if days > 0 else 0
+
+
+def _is_stale(entry: Dict) -> bool:
+    """True when `entry` is older than the configured TTL.
+
+    Legacy records written before `last_seen` was stored (and any record when
+    the TTL is disabled) are treated as fresh — we never discard an answer we
+    can't date, to avoid wiping useful pre-existing memory on first upgrade.
+    """
+    ttl = _ttl_seconds()
+    if ttl <= 0:
+        return False
+    last_seen = entry.get("last_seen")
+    if not isinstance(last_seen, (int, float)) or last_seen <= 0:
+        return False
+    return (time.time() - last_seen) > ttl
+
+
 def recall(
     label: str,
     field_type: str,
@@ -162,6 +195,9 @@ def recall(
     back-to-back and don't want ANY cross-candidate bleed (a referral
     source, a country preference, an acknowledgment text from candidate A
     being recalled into candidate B's run).
+
+    Answers older than `FIELD_MEMORY_TTL_DAYS` (default 180) are ignored so
+    stale locations/companies don't resurface — see `_is_stale`.
     """
     if not label:
         return None
@@ -175,7 +211,7 @@ def recall(
         if candidate_id:
             mem = _load(_memory_path(candidate_id))
             entry = mem.get(key)
-            if entry:
+            if entry and not _is_stale(entry):
                 ans = entry.get("value")
                 if ans and _options_ok(ans, options):
                     logger.info(
@@ -188,7 +224,7 @@ def recall(
         if not is_identity and not strict:
             mem = _load(_memory_path(None))
             entry = mem.get(key)
-            if entry:
+            if entry and not _is_stale(entry):
                 ans = entry.get("value")
                 if ans and _options_ok(ans, options):
                     logger.info(f"[Memory] Recalled '{ans}' for '{label}' (global, seen {entry.get('count',1)}x)")

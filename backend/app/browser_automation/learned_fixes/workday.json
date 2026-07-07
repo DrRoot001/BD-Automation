@@ -1,12 +1,15 @@
 {
   "_meta": {
     "ats": "workday",
-    "last_updated": 1782856931
+    "last_updated": 1783435299
   },
   "apply_button": [
     "[data-automation-id='adventureButton']"
   ],
   "apply_manually": [
     "[data-automation-id='applyManually']"
+  ],
+  "next_step": [
+    "[data-automation-id='pageFooterNextButton']"
   ]
 }

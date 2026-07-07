@@ -17,10 +17,18 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+# Python: try the well-known system path first, fall back to PATH lookup
+_PREFERRED_PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+if [ -f "$_PREFERRED_PYTHON" ]; then
+  PYTHON="$_PREFERRED_PYTHON"
+else
+  PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+fi
+
+# Node: try the nvm path first, then fall back to system PATH
 NODE_BIN="$HOME/.nvm/versions/node/v20.19.5/bin"
 
-BACKEND_PORT=8002
+BACKEND_PORT=8000
 FRONTEND_PORT=3000
 HEALTH_TIMEOUT=30   # seconds to wait for backend to become healthy
 
@@ -53,10 +61,13 @@ echo -e "${BOLD}BD Automator — Development Stack${RESET}"
 echo -e "${DIM}────────────────────────────────────────────────${RESET}"
 echo ""
 
-if [ ! -f "$PYTHON" ]; then
-  err "Python not found at $PYTHON"
-  echo "    Set PYTHON= at the top of this script to your python3 path."
-  exit 1
+if [ -z "$PYTHON" ] || [ ! -f "$PYTHON" ]; then
+  # Final fallback: check system PATH
+  PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  if [ -z "$PYTHON" ]; then
+    err "Python not found. Install Python 3.12+ and ensure it is on your PATH."
+    exit 1
+  fi
 fi
 
 if [ ! -f "$ROOT/backend/.env" ]; then
@@ -74,13 +85,43 @@ fi
 # ── PYTHONPATH — expose all modules to the backend and celery workers ─────────
 
 export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
+export M1_API_BASE_URL="http://localhost:$BACKEND_PORT/api"
+export API_BASE_URL="http://localhost:$BACKEND_PORT"
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 
 info "Project root : $ROOT"
 info "Python       : $($PYTHON --version 2>&1)"
 info "Node         : $(node --version)"
+info "API Base URL : $M1_API_BASE_URL"
 info "PYTHONPATH   : $PYTHONPATH"
 info "Logs         : $LOG_DIR"
 echo ""
+
+# ── Kill any orphaned Celery workers from previous dev.sh sessions ────────────
+# Without this, restarting dev.sh accumulates workers that all compete for the
+# same queues, making tasks unpredictably disappear into old workers' logs.
+
+_kill_old_processes() {
+  local old_pids
+  old_pids=$(pgrep -f "celery.*app.celery_app" 2>/dev/null || true)
+  if [ -n "$old_pids" ]; then
+    info "Killing orphaned Celery processes: $(echo $old_pids | tr '\n' ' ')"
+    echo "$old_pids" | xargs kill 2>/dev/null || true
+    sleep 1
+    echo "$old_pids" | xargs kill -9 2>/dev/null || true
+  fi
+
+  # Free ports 3000 (frontend) and 8000 (backend) if previously occupied
+  for p in "$FRONTEND_PORT" "$BACKEND_PORT"; do
+    local port_pid
+    port_pid=$(lsof -ti :"$p" 2>/dev/null || true)
+    if [ -n "$port_pid" ]; then
+      info "Freeing port $p (killing PID: $(echo $port_pid | tr '\n' ' '))"
+      echo "$port_pid" | xargs kill -9 2>/dev/null || true
+    fi
+  done
+}
+_kill_old_processes
 
 # ── PID tracking ─────────────────────────────────────────────────────────────
 
@@ -97,6 +138,8 @@ cleanup() {
   for pid in "${PIDS[@]}"; do
     kill -9 "$pid" 2>/dev/null || true
   done
+  # Also kill any Celery workers that may have forked children not in $PIDS
+  pkill -9 -f "celery.*app.celery_app" 2>/dev/null || true
   log "All services stopped."
   exit 0
 }
@@ -162,7 +205,7 @@ log "Starting Celery worker (modules 2-5) ..."
   "$PYTHON" -m celery \
     -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=2 \
+    --concurrency=6 \
     -n "worker@%h" \
     -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan
 ) > "$LOG_DIR/celery-worker.log" 2>&1 &
@@ -188,10 +231,23 @@ sleep 1
 
 log "Starting Next.js frontend on :$FRONTEND_PORT ..."
 export API_URL="http://localhost:$BACKEND_PORT"
+# FRONTEND_PROD=1 ./dev.sh — serve the production build (faster page loads,
+# no dev-compile pauses; run `npm run build` in frontend/ first).
+if [ "${FRONTEND_PROD:-0}" = "1" ]; then
+  if [ ! -d "$ROOT/frontend/.next" ]; then
+    err "FRONTEND_PROD=1 but frontend/.next not found — run 'npm run build' in frontend/ first."
+    exit 1
+  fi
+  (
+    cd "$ROOT/frontend"
+    npm run start -- --port "$FRONTEND_PORT"
+  ) > "$LOG_DIR/frontend.log" 2>&1 &
+else
 (
   cd "$ROOT/frontend"
   npm run dev -- --port "$FRONTEND_PORT"
 ) > "$LOG_DIR/frontend.log" 2>&1 &
+fi
 PIDS+=($!)
 stream_log "FRONT " "$C_FRONT" "$LOG_DIR/frontend.log"
 

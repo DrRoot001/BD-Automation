@@ -26,7 +26,9 @@ from app.services.sync_events import publish_event_sync
 logger = logging.getLogger(__name__)
 
 
-API_BASE = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api")
+def _api_base() -> str:
+    return os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api")
+
 MAX_APPLICATIONS_PER_RUN = int(os.getenv("M4_MAX_APPS_PER_RUN", "10"))
 SCORE_FLOOR = float(os.getenv("M4_DYNAMIC_SCORE_FLOOR", "0.25"))
 
@@ -60,7 +62,7 @@ def _score_job(candidate_keywords: Set[str], job: Dict[str, Any]) -> float:
 
 
 async def _fetch_candidate(client: httpx.AsyncClient, candidate_id: str) -> Optional[Dict[str, Any]]:
-    r = await client.get(f"{API_BASE}/candidates/{candidate_id}")
+    r = await client.get(f"{_api_base()}/candidates/{candidate_id}")
     if r.status_code != 200:
         logger.error(f"[Dynamic] candidate fetch failed: {r.status_code}")
         return None
@@ -72,7 +74,7 @@ async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: 
     skip = 0
     page_size = 100
     while skip < limit:
-        r = await client.get(f"{API_BASE}/jobs/for-matching", params={"skip": skip, "limit": page_size, "candidate_id": candidate_id})
+        r = await client.get(f"{_api_base()}/jobs/for-matching", params={"skip": skip, "limit": page_size, "candidate_id": candidate_id})
         if r.status_code != 200:
             logger.error(f"[Dynamic] Failed to fetch jobs: HTTP {r.status_code} — {r.text}")
             raise RuntimeError(f"Failed to fetch jobs from API: HTTP {r.status_code}")
@@ -86,32 +88,63 @@ async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: 
     return out
 
 
+# Failure reasons that will just fail again on retry — keep those jobs excluded.
+# Everything else FAILED (INFRA_ERROR, unknown) is worth a retry: the failure
+# was on our side, not the job's.
+_TERMINAL_FAILURE_REASONS = {
+    "BOT_DETECTED", "ROBOTS_BLOCKED", "JOB_EXPIRED",
+    "LOGIN_REQUIRED", "MAX_RETRIES_EXCEEDED",
+    # Retrying these re-submits into the same rejection (or the job is done):
+    "SPAM_FLAGGED", "ALREADY_APPLIED", "QUALIFICATION_MISMATCH",
+    # The submit already FIRED for these — the application is on file at the
+    # ATS even though verification timed out. Re-running would double-submit
+    # (empirically hits the portal's "already applied" wall).
+    "EMAIL_VERIFICATION",
+}
+
+
+def _is_excluded(app: dict) -> bool:
+    """True if this application's job should be excluded from re-selection.
+
+    FAILED apps with a transient failure_reason are retryable — matching.py
+    reuses their record. All other statuses (in-flight, ANALYZED below-gate,
+    submitted, interviews...) stay excluded.
+    """
+    status = str(app.get("status") or "").upper()
+    if status != "FAILED":
+        return True
+    reason = str(app.get("failure_reason") or "").upper()
+    return reason in _TERMINAL_FAILURE_REASONS
+
+
 async def _already_applied_job_ids(client: httpx.AsyncClient, candidate_id: str) -> Set[str]:
-    """Get job IDs already applied to for this candidate.
-    
+    """Get job IDs that should NOT be re-selected for this candidate.
+
     Uses the per-candidate applications endpoint on the candidates router which
     does NOT require auth (unlike the global /applications list endpoint).
     Falls back gracefully — create_application handles server-side dedup anyway.
     """
     try:
         # Use the candidate-scoped applications endpoint (no auth required)
-        r = await client.get(f"{API_BASE}/candidates/{candidate_id}/applications")
+        r = await client.get(f"{_api_base()}/candidates/{candidate_id}/applications")
         if r.status_code == 200:
-            return {str(a.get("job_id")) for a in (r.json() or []) if a.get("job_id")}
+            return {str(a.get("job_id")) for a in (r.json() or [])
+                    if a.get("job_id") and _is_excluded(a)}
     except Exception:
         pass
     # Fallback: query the global endpoint, silently ignore 401
     try:
-        r = await client.get(f"{API_BASE}/applications", params={"candidate_id": candidate_id})
+        r = await client.get(f"{_api_base()}/applications", params={"candidate_id": candidate_id})
         if r.status_code == 200:
-            return {str(a.get("job_id")) for a in (r.json() or []) if a.get("job_id")}
+            return {str(a.get("job_id")) for a in (r.json() or [])
+                    if a.get("job_id") and _is_excluded(a)}
     except Exception:
         pass
     logger.warning(f"[Dynamic] Could not fetch already-applied jobs for {candidate_id}; dedup handled server-side.")
     return set()
 
 
-async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
+async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = None) -> Dict[str, Any]:
     queued: List[str] = []
     skipped: int = 0
 
@@ -129,6 +162,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
+            "bd_user_id": bd_user_id,
             "step": "fetching_jobs",
             "message": "Fetching available jobs from database..."
         })
@@ -139,6 +173,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
+            "bd_user_id": bd_user_id,
             "step": "matching",
             "message": f"Matching candidate profile against {len(jobs)} available jobs..."
         })
@@ -160,6 +195,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
         if not scored:
             publish_event_sync("pipeline.progress", {
                 "candidate_id": candidate_id,
+                "bd_user_id": bd_user_id,
                 "step": "no_matches",
                 "message": "No jobs found above the match score threshold."
             })
@@ -167,19 +203,20 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
+            "bd_user_id": bd_user_id,
             "step": "matches_found",
             "message": f"Found {len(scored)} suitable jobs. Triggering AI matching and application pipeline..."
         })
 
         target_job_ids = [str(job.get("id") or job.get("job_id")) for score, job in scored]
         
-        from app.database import AsyncSessionLocal
+        from app.database import task_session
         from app.services.matching import run_matching_for_candidate
         import uuid
-        
+
         cand_uuid = uuid.UUID(candidate_id)
-        
-        async with AsyncSessionLocal() as session:
+
+        async with task_session() as session:
             try:
                 result = await run_matching_for_candidate(
                     candidate_id=cand_uuid,
@@ -191,6 +228,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
                     active = result.get("active_count", 0)
                     publish_event_sync("pipeline.progress", {
                         "candidate_id": candidate_id,
+                        "bd_user_id": bd_user_id,
                         "step": "limit_reached",
                         "message": f"Application limit reached ({active} job(s) already pending/queued)."
                     })
@@ -212,6 +250,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
                 publish_event_sync("pipeline.progress", {
                     "candidate_id": candidate_id,
+                    "bd_user_id": bd_user_id,
                     "step": "done",
                     "message": f"Processed {len(enqueued_ids)} new jobs{skip_msg}."
                 })
@@ -225,37 +264,36 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 @celery_app.task(
     bind=True,
     name="task:dynamic_apply",
-    queue="queue:application_execution",
+    queue="queue:job_processing",
     max_retries=1,
 )
-def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None):
+def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None):
     """Score every open job against the candidate's CV, queue top matches into M4.
 
     Args:
         candidate_id: the candidate to source for.
         max_apps: cap on number of applications (defaults to MAX_APPLICATIONS_PER_RUN env).
+        bd_user_id: supabase_user_id of the BD user who triggered this run.
+                    Used to scope WebSocket pipeline.progress events to only that user.
     """
-    from app.tasks.dynamic_apply import _run
-    import asyncio
-    
-    logger.info(f"[Celery] Starting dynamic-apply for candidate={candidate_id} max_apps={max_apps}")
-    
-    loop = asyncio.new_event_loop()
+    logger.info(
+        f"[Celery] Starting dynamic-apply for candidate={candidate_id} "
+        f"max_apps={max_apps} triggered_by_user={bd_user_id}"
+    )
+
     try:
-        result = loop.run_until_complete(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN))
+        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN, bd_user_id))
         logger.info(f"[Celery] Dynamic-apply completed for candidate={candidate_id}: {result}")
         return result
     except Exception as e:
         logger.error(f"[Celery] Failed dynamic-apply for candidate={candidate_id}: {e}")
         try:
-            from app.tasks.dynamic_apply import publish_event_sync
             publish_event_sync("pipeline.progress", {
                 "candidate_id": candidate_id,
+                "bd_user_id": bd_user_id,
                 "step": "error",
                 "message": f"Pipeline failed: {e}"
             })
         except Exception as ev_err:
             logger.error(f"[Celery] Failed to broadcast error event: {ev_err}")
         raise e
-    finally:
-        loop.close()

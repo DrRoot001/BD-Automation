@@ -3,9 +3,9 @@
 import { useState, useRef, useEffect, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
-  Bell, Search, LogOut, User as UserIcon, ChevronDown,
+  Bell, LogOut, User as UserIcon, ChevronDown,
   CheckCircle2, XCircle, CalendarClock, Mail, Briefcase,
-  AlertTriangle, Trophy, Clock, TrendingUp, Users,
+  AlertTriangle, Trophy, Clock, TrendingUp,
 } from 'lucide-react'
 import Link from 'next/link'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -13,7 +13,7 @@ import { logoutAction } from '@/app/actions/auth'
 import { api, ActivityEvent, InterviewSummary } from '@/lib/api'
 import { formatDistanceToNow } from '@/lib/utils'
 
-// ── Notification shape ────────────────────────────────────────────────────────
+// ── Notification shape ──────────────────────────────────────────────────
 
 interface Notification {
   id: string
@@ -26,21 +26,21 @@ interface Notification {
   href?: string
 }
 
-// ── Map raw event_type / status → icon + colours ─────────────────────────────
+// ── Map event_type / status → icon + colors ─────────────────────────────
 
 const STATUS_META: Record<string, { label: string; icon: React.ElementType; color: string }> = {
   SUBMITTED:    { label: 'Applied',          icon: CheckCircle2,  color: 'text-accent'   },
-  CONFIRMED:    { label: 'Confirmed',         icon: CheckCircle2,  color: 'text-success'  },
-  REJECTED:     { label: 'Rejected',          icon: XCircle,       color: 'text-danger'   },
-  OFFER:        { label: '🎉 Offer received', icon: Trophy,        color: 'text-amber-400'},
-  INTERVIEW_R1: { label: 'Interview R1',      icon: CalendarClock, color: 'text-accent'   },
-  INTERVIEW_R2: { label: 'Interview R2',      icon: CalendarClock, color: 'text-accent'   },
-  INTERVIEW_R3: { label: 'Interview R3',      icon: CalendarClock, color: 'text-accent'   },
-  INTERVIEW_R4: { label: 'Interview R4',      icon: CalendarClock, color: 'text-accent'   },
-  ASSESSMENT:   { label: 'Assessment',        icon: TrendingUp,    color: 'text-purple-400'},
-  QUEUED:       { label: 'Queued',            icon: Clock,         color: 'text-text-muted'},
-  FOUND:        { label: 'Job found',         icon: Briefcase,     color: 'text-text-muted'},
-  FAILED:       { label: 'Failed',            icon: AlertTriangle, color: 'text-danger'   },
+  CONFIRMED:    { label: 'Confirmed',        icon: CheckCircle2,  color: 'text-success'  },
+  REJECTED:     { label: 'Rejected',         icon: XCircle,       color: 'text-danger'   },
+  OFFER:        { label: '🎉 Offer received', icon: Trophy,       color: 'text-amber-400'},
+  INTERVIEW_R1: { label: 'Interview R1',     icon: CalendarClock, color: 'text-accent'   },
+  INTERVIEW_R2: { label: 'Interview R2',     icon: CalendarClock, color: 'text-accent'   },
+  INTERVIEW_R3: { label: 'Interview R3',     icon: CalendarClock, color: 'text-accent'   },
+  INTERVIEW_R4: { label: 'Interview R4',     icon: CalendarClock, color: 'text-accent'   },
+  ASSESSMENT:   { label: 'Assessment',       icon: TrendingUp,    color: 'text-purple-400'},
+  QUEUED:       { label: 'Queued',           icon: Clock,         color: 'text-text-muted'},
+  FOUND:        { label: 'Job found',        icon: Briefcase,     color: 'text-text-muted'},
+  FAILED:       { label: 'Failed',           icon: AlertTriangle, color: 'text-danger'   },
 }
 
 function activityToNotification(event: ActivityEvent, idx: number): Notification {
@@ -50,7 +50,6 @@ function activityToNotification(event: ActivityEvent, idx: number): Notification
   const meta    = STATUS_META[status]
 
   if (event.event_type === 'email.classified') {
-    // "hr@company.com: OFFER" or "noreply@...: REJECTION"
     const [from, classification] = event.summary.split(': ')
     const cls = classification?.toUpperCase() ?? ''
     const isGood = cls.includes('OFFER') || cls.includes('INTERVIEW')
@@ -98,7 +97,7 @@ function interviewToNotification(iv: InterviewSummary, idx: number): Notificatio
   }
 }
 
-// ── Component ─────────────────────────────────────────────────────────────────
+// ── Component ───────────────────────────────────────────────────────────
 
 export function TopBar() {
   const { data: user, isLoading } = useCurrentUser()
@@ -111,7 +110,7 @@ export function TopBar() {
   const notificationsRef = useRef<HTMLDivElement>(null)
   const profileMenuRef   = useRef<HTMLDivElement>(null)
 
-  // ── Fetch real data ─────────────────────────────────────────────────────────
+  // ── Fetch real data ───────────────────────────────────────────────────
 
   const { data: activityFeed = [] } = useQuery({
     queryKey: ['activity-feed-notifs'],
@@ -134,15 +133,13 @@ export function TopBar() {
     enabled: !!user,
   })
 
-  // ── Build notification list ─────────────────────────────────────────────────
+  // ── Build notification list ───────────────────────────────────────────
 
   const notifications = useMemo<Notification[]>(() => {
     const list: Notification[] = []
 
-    // 1. Upcoming interviews (highest priority — always at top)
     upcomingInterviews.slice(0, 3).forEach((iv, i) => list.push(interviewToNotification(iv, i)))
 
-    // 2. Pending offers (pull from KPIs as a summary alert)
     if (kpis && kpis.total_offers > 0) {
       list.push({
         id: 'kpi-offers',
@@ -154,14 +151,12 @@ export function TopBar() {
         read: false,
         icon: Trophy,
         iconColor: 'text-amber-400',
-        href: isAdmin ? '/admin/applications' : '/dashboard/applications',
+        href: isAdmin ? '/admin' : '/dashboard/applications',
       })
     }
 
-    // 3. Recent activity events
     activityFeed.slice(0, 8).forEach((ev, i) => list.push(activityToNotification(ev, i)))
 
-    // 4. Admin-specific: pending queue summary
     if (isAdmin && kpis && kpis.pending_in_queue > 0) {
       list.push({
         id: 'kpi-queue',
@@ -171,11 +166,10 @@ export function TopBar() {
         read: true,
         icon: Clock,
         iconColor: 'text-text-muted',
-        href: '/admin/applications',
+        href: '/admin',
       })
     }
 
-    // 5. BD user: applied today
     if (!isAdmin && kpis && kpis.applied_today > 0) {
       list.push({
         id: 'kpi-today',
@@ -194,7 +188,7 @@ export function TopBar() {
 
   const unreadCount = notifications.filter(n => !n.read && !readIds.has(n.id)).length
 
-  // ── Close on outside click ──────────────────────────────────────────────────
+  // ── Close on outside click + Escape ───────────────────────────────────
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
@@ -203,16 +197,22 @@ export function TopBar() {
       if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node))
         setShowProfileMenu(false)
     }
+    function onEscape(e: KeyboardEvent) {
+      if (e.key === 'Escape') {
+        setShowNotifications(false)
+        setShowProfileMenu(false)
+      }
+    }
     document.addEventListener('mousedown', onOutside)
-    return () => document.removeEventListener('mousedown', onOutside)
+    document.addEventListener('keydown', onEscape)
+    return () => {
+      document.removeEventListener('mousedown', onOutside)
+      document.removeEventListener('keydown', onEscape)
+    }
   }, [])
 
   const handleLogout = async () => {
     setShowProfileMenu(false)
-    // Delete the auth cookie server-side, then hard-navigate to /login.
-    // window.location.href forces a full page reload which wipes the Next.js
-    // router cache, React Query cache, and all module-level state so the next
-    // user session always starts completely clean.
     await logoutAction()
     window.location.href = '/login'
   }
@@ -221,37 +221,50 @@ export function TopBar() {
     setReadIds(new Set(notifications.map(n => n.id)))
   }
 
+  // Determine greeting
+  const getGreeting = () => {
+    const hour = new Date().getHours()
+    if (hour < 12) return 'Good morning'
+    if (hour < 17) return 'Good afternoon'
+    return 'Good evening'
+  }
+
+  const displayName = user?.full_name || user?.name || user?.email || 'User'
+
   return (
     <header className="h-16 border-b border-bg-border bg-bg-primary flex items-center justify-between px-6 sticky top-0 z-20">
-      {/* Search */}
-      <div className="flex items-center text-text-muted">
-        <Search className="w-5 h-5 mr-3" />
-        <input
-          type="text"
-          placeholder="Search candidates, jobs..."
-          className="bg-transparent border-none outline-none text-sm w-64 placeholder:text-text-muted text-text-primary"
-        />
+      {/* Left side — Greeting */}
+      <div className="flex items-center">
+        <div>
+          <p className="text-sm font-medium text-text-primary">
+            {isLoading ? '' : `${getGreeting()}, ${displayName.split(' ')[0]}`}
+          </p>
+          <p className="text-xs text-text-muted">
+            {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })}
+          </p>
+        </div>
       </div>
 
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-5">
 
         {/* ── Notifications ── */}
         <div className="relative" ref={notificationsRef}>
           <button
-            className="relative text-text-muted hover:text-text-primary transition-colors focus:outline-none"
+            className="relative text-text-muted hover:text-text-primary transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 rounded-lg p-1"
             onClick={() => setShowNotifications(v => !v)}
-            aria-label="Notifications"
+            aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+            aria-expanded={showNotifications}
           >
             <Bell className="w-5 h-5" />
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-0.5 bg-accent text-white text-[9px] font-bold rounded-full flex items-center justify-center border border-bg-primary">
+              <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-0.5 bg-accent text-white text-[9px] font-bold rounded-full flex items-center justify-center border-2 border-bg-primary">
                 {unreadCount > 9 ? '9+' : unreadCount}
               </span>
             )}
           </button>
 
           {showNotifications && (
-            <div className="absolute right-0 mt-3 w-96 bg-bg-primary border border-bg-border rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="absolute right-0 mt-3 w-96 bg-bg-primary border border-bg-border rounded-xl shadow-2xl overflow-hidden z-50 animate-scale-up">
               {/* Header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-bg-border bg-bg-secondary/60">
                 <div>
@@ -286,13 +299,11 @@ export function TopBar() {
                       <div
                         key={n.id}
                         onClick={() => setReadIds(prev => new Set([...prev, n.id]))}
-                        className={`px-4 py-3.5 hover:bg-bg-secondary transition-colors cursor-pointer flex gap-3 ${isUnread ? 'bg-accent/4' : ''}`}
+                        className={`px-4 py-3.5 hover:bg-bg-secondary transition-colors cursor-pointer flex gap-3 ${isUnread ? 'bg-accent/[0.04]' : ''}`}
                       >
-                        {/* Icon */}
                         <div className={`mt-0.5 shrink-0 w-7 h-7 rounded-full bg-bg-secondary border border-bg-border flex items-center justify-center ${n.iconColor}`}>
                           <Icon className="w-3.5 h-3.5" />
                         </div>
-                        {/* Text */}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-start justify-between gap-2">
                             <p className={`text-sm font-medium leading-snug ${isUnread ? 'text-text-primary' : 'text-text-secondary'}`}>
@@ -302,7 +313,6 @@ export function TopBar() {
                           </div>
                           <p className="text-xs text-text-muted mt-0.5 leading-relaxed truncate">{n.message}</p>
                         </div>
-                        {/* Unread dot */}
                         {isUnread && (
                           <div className="shrink-0 mt-2">
                             <div className="w-1.5 h-1.5 rounded-full bg-accent" />
@@ -326,7 +336,7 @@ export function TopBar() {
               {notifications.length > 0 && (
                 <div className="border-t border-bg-border">
                   <Link
-                    href={isAdmin ? '/admin/applications' : '/dashboard/applications'}
+                    href={isAdmin ? '/admin' : '/dashboard/applications'}
                     onClick={() => setShowNotifications(false)}
                     className="block text-center text-xs text-accent font-medium py-3 hover:bg-bg-secondary transition-colors"
                   >
@@ -344,15 +354,16 @@ export function TopBar() {
         <div className="relative" ref={profileMenuRef}>
           <button
             onClick={() => setShowProfileMenu(v => !v)}
-            className="flex items-center gap-3 hover:opacity-80 transition-opacity focus:outline-none group"
+            className="flex items-center gap-3 hover:opacity-80 transition-opacity focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 rounded-lg"
             aria-label="Open profile menu"
+            aria-expanded={showProfileMenu}
           >
             <div className="flex flex-col items-end">
               <span className="text-sm font-medium text-text-primary">
-                {isLoading ? 'Loading...' : user?.full_name || user?.name || user?.email || 'Unknown User'}
+                {isLoading ? '' : displayName}
               </span>
               <span className="text-xs text-text-muted capitalize">
-                {isAdmin ? 'Administrator' : 'BD User'}
+                {isLoading || !user ? '' : isAdmin ? 'Administrator' : 'BD User'}
               </span>
             </div>
             <div className="relative w-9 h-9 rounded-full bg-bg-secondary flex items-center justify-center text-text-secondary border border-bg-border group-hover:border-accent/50 transition-colors">
@@ -364,19 +375,19 @@ export function TopBar() {
           </button>
 
           {showProfileMenu && (
-            <div className="absolute right-0 mt-3 w-52 bg-bg-primary border border-bg-border rounded-xl shadow-xl overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="absolute right-0 mt-3 w-52 bg-bg-primary border border-bg-border rounded-xl shadow-xl overflow-hidden z-50 animate-scale-up">
               <div className="px-4 py-3 border-b border-bg-border bg-bg-secondary/50">
                 <p className="text-sm font-semibold text-text-primary truncate">
-                  {user?.full_name || user?.name || user?.email || 'User'}
+                  {displayName}
                 </p>
                 <p className="text-xs text-text-muted capitalize mt-0.5">
-                  {isAdmin ? 'Administrator' : 'BD User'}
+                  {!user ? '' : isAdmin ? 'Administrator' : 'BD User'}
                 </p>
               </div>
               <div className="px-3 py-2">
                 <button
                   onClick={handleLogout}
-                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:text-danger hover:bg-danger/8 transition-colors"
+                  className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-sm text-text-secondary hover:text-danger hover:bg-danger/[0.08] transition-colors"
                 >
                   <LogOut className="w-4 h-4 shrink-0" />
                   Log Out

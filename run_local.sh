@@ -16,8 +16,18 @@ fi
 # Ensure Node is in PATH
 export PATH="/usr/local/bin:$HOME/.nvm/versions/node/v20.19.5/bin:$PATH"
 
-# Determine python command
-PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+# Determine python command — try the well-known system path first,
+# then fall back to whatever python3/python is on PATH
+_PREFERRED_PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+if [ -f "$_PREFERRED_PYTHON" ]; then
+  PYTHON="$_PREFERRED_PYTHON"
+else
+  PYTHON="$(command -v python3 || command -v python)"
+  if [ -z "$PYTHON" ]; then
+    echo "❌ Python 3 not found. Install Python 3.12+ and ensure it is on your PATH."
+    exit 1
+  fi
+fi
 CELERY="$PYTHON -m celery"
 UVICORN="$PYTHON -m uvicorn"
 

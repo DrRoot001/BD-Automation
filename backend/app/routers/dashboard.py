@@ -38,6 +38,14 @@ class ApplicationSummary(BaseModel):
     status: str
     fit_score: Optional[float] = None
     ats_score: Optional[float] = None
+    # ATS score of the base resume vs the JD (before tailoring) and of the
+    # tailored resume (after). ats_score_after is only present once the app has
+    # been tailored (QUEUED+); it comes from the QUEUED transition's history.
+    ats_score_before: Optional[float] = None
+    ats_score_after: Optional[float] = None
+    # True when the application used the candidate's base resume (no tailoring,
+    # e.g. ANALYZED apps below the gate); False when a tailored resume was used.
+    resume_is_base: Optional[bool] = None
     submitted_at: Optional[datetime] = None
     created_at: datetime
     error_message: Optional[str] = None
@@ -114,20 +122,13 @@ async def get_dashboard_candidate_filter(db: AsyncSession, current_user: User, c
             return "AND a.candidate_id = :cid", {"cid": str(candidate_id)}
         return "", {}
     else:
-        res = await db.execute(text("SELECT id FROM candidates WHERE user_id = :uid"), {"uid": current_user.id})
-        owned_ids = [str(row[0]) for row in res.fetchall()]
-        if not owned_ids:
-            # Force empty results if user manages zero candidates
-            return "AND a.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid", {}
+        # Scope via subquery instead of pre-fetching owned ids — saves one DB
+        # round-trip per request. A candidate_id the user doesn't own yields
+        # zero rows (cid must also be in the owned set), same as before.
+        owned = "a.candidate_id IN (SELECT id FROM candidates WHERE user_id = :uid)"
         if candidate_id:
-            if str(candidate_id) in owned_ids:
-                return "AND a.candidate_id = :cid", {"cid": str(candidate_id)}
-            else:
-                return "AND a.candidate_id = '00000000-0000-0000-0000-000000000000'::uuid", {}
-        else:
-            # Build a safe IN clause using UUID literals — avoids ANY(:list) serialization issues
-            uuid_literals = ", ".join(f"'{cid}'::uuid" for cid in owned_ids)
-            return f"AND a.candidate_id IN ({uuid_literals})", {}
+            return f"AND a.candidate_id = :cid AND {owned}", {"cid": str(candidate_id), "uid": current_user.id}
+        return f"AND {owned}", {"uid": current_user.id}
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -141,6 +142,8 @@ async def get_kpis(
     """Summary KPI cards for the dashboard header."""
     cid_filter, params = await get_dashboard_candidate_filter(db, current_user, candidate_id)
 
+    # Single round-trip: interviews-this-week runs as a scalar subquery whose
+    # inner "a" alias shadows the outer one, so the same cid_filter applies.
     rows = await db.execute(text(f"""
         SELECT
           COUNT(*) FILTER (WHERE a.status NOT IN ('FOUND','QUEUED'))          AS total_applied,
@@ -148,21 +151,17 @@ async def get_kpis(
           COUNT(*) FILTER (WHERE a.status = 'QUEUED')                         AS pending_in_queue,
           COUNT(*) FILTER (WHERE a.status = 'REJECTED')                       AS total_rejected,
           COUNT(*) FILTER (WHERE a.status = 'OFFER')                          AS total_offers,
-          COUNT(*) FILTER (WHERE a.status IN ('INTERVIEW_R1','INTERVIEW_R2'))  AS total_interviews
+          COUNT(*) FILTER (WHERE a.status IN ('INTERVIEW_R1','INTERVIEW_R2'))  AS total_interviews,
+          (SELECT COUNT(*) FROM interviews i
+             JOIN applications a ON i.application_id = a.id
+            WHERE i.scheduled_at >= NOW()
+              AND i.scheduled_at < NOW() + INTERVAL '7 days'
+              {cid_filter})                                                   AS interviews_this_week
         FROM applications a
         WHERE 1=1 {cid_filter}
     """), params)
     r = rows.fetchone()
-
-    # Interviews this week from the interviews table
-    iw_rows = await db.execute(text(f"""
-        SELECT COUNT(*) FROM interviews i
-        JOIN applications a ON i.application_id = a.id
-        WHERE i.scheduled_at >= NOW()
-          AND i.scheduled_at < NOW() + INTERVAL '7 days'
-          {cid_filter}
-    """), params)
-    interviews_this_week = iw_rows.scalar() or 0
+    interviews_this_week = r.interviews_this_week or 0
 
     total_applied = r.total_applied or 0
     total_interviews = r.total_interviews or 0
@@ -205,16 +204,30 @@ async def get_applications(
                a.status, a.fit_score, a.ats_score,
                a.submitted_at, a.created_at, a.error_message, a.failure_reason,
                r.file_url AS resume_url,
+               r.is_base AS resume_is_base,
                a.cover_letter_url,
                COALESCE(j.canonical_url, j.source_url) AS job_url,
                c.name AS candidate_name,
                u.full_name AS bd_user_name,
-               u.email AS bd_user_email
+               u.email AS bd_user_email,
+               -- Tailoring before/after ATS scores are recorded in the QUEUED
+               -- transition's history metadata (the app row only keeps the
+               -- pre-tailoring ats_score). Pull the most recent one.
+               (tail.meta_data ->> 'ats_score_before')::numeric AS ats_score_before,
+               (tail.meta_data ->> 'ats_score_after')::numeric  AS ats_score_after
         FROM applications a
         JOIN jobs j ON a.job_id = j.id
         JOIN candidates c ON a.candidate_id = c.id
         LEFT JOIN users u ON c.user_id = u.id
         LEFT JOIN resumes r ON a.resume_id = r.id
+        LEFT JOIN LATERAL (
+            SELECT ah.meta_data
+            FROM application_history ah
+            WHERE ah.application_id = a.id
+              AND ah.meta_data ? 'ats_score_after'
+            ORDER BY ah.created_at DESC
+            LIMIT 1
+        ) tail ON TRUE
         {where}
         ORDER BY a.created_at DESC
         LIMIT :limit OFFSET :offset
@@ -230,6 +243,9 @@ async def get_applications(
             status=r.status or "",
             fit_score=float(r.fit_score) if r.fit_score is not None else None,
             ats_score=float(r.ats_score) if r.ats_score is not None else None,
+            ats_score_before=float(r.ats_score_before) if r.ats_score_before is not None else None,
+            ats_score_after=float(r.ats_score_after) if r.ats_score_after is not None else None,
+            resume_is_base=r.resume_is_base,
             submitted_at=r.submitted_at,
             created_at=r.created_at,
             error_message=r.error_message,

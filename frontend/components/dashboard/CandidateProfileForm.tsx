@@ -170,7 +170,9 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
         work_auth: candidate.work_auth || 'us_authorized',
         years_exp: candidate.years_exp != null ? String(candidate.years_exp) : '',
         gmail: candidate.gmail || '',
-        password: candidate.password || '',
+        // Never pre-fill the password: the API no longer returns it, and leaving
+        // it blank means "keep the existing password". Typing a value updates it.
+        password: '',
       })
       setTechStack(Array.isArray(candidate.tech_stack) ? candidate.tech_stack : [])
     }
@@ -249,7 +251,7 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
     setStatus({ type: null, message: '' })
 
     try {
-      const candidatePayload = {
+      const candidatePayload: Record<string, unknown> = {
         name: formData.name.trim(),
         email: formData.email.trim(),
         phone: formData.phone.trim() || null,
@@ -259,7 +261,12 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
         years_exp: formData.years_exp ? parseInt(formData.years_exp) : null,
         linkedin_url: null,
         gmail: formData.gmail.trim() || null,
-        password: formData.password || null,
+      }
+      // Only send the password when the user actually typed one. Omitting it
+      // (exclude_unset on the backend) preserves the existing stored password
+      // instead of overwriting it with null on a blank edit.
+      if (formData.password) {
+        candidatePayload.password = formData.password
       }
 
       let candidateId = candidate?.id
@@ -270,14 +277,20 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(candidatePayload),
         })
-        if (!res.ok) throw new Error((await res.text()) || 'Failed to update candidate profile.')
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null)
+          throw new Error(errData?.detail || 'Failed to update candidate profile.')
+        }
       } else {
         const res = await fetch('/api/candidates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(candidatePayload),
         })
-        if (!res.ok) throw new Error((await res.text()) || 'Failed to create candidate profile.')
+        if (!res.ok) {
+          const errData = await res.json().catch(() => null)
+          throw new Error(errData?.detail || 'Failed to create candidate profile.')
+        }
         const data = await res.json()
         candidateId = data.id
       }
@@ -291,7 +304,8 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
           body: fd,
         })
         if (!uploadRes.ok) {
-          throw new Error(`Profile saved, but resume upload failed: ${await uploadRes.text()}`)
+          const errData = await uploadRes.json().catch(() => null)
+          throw new Error(`Profile saved, but resume upload failed: ${errData?.detail || 'Upload error'}`)
         }
       }
 

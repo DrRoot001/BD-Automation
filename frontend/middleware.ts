@@ -2,66 +2,97 @@ import { NextResponse, type NextRequest } from 'next/server'
 
 const API_BASE = (process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000').replace(/\/api$/, '')
 
+/**
+ * Route permission configuration.
+ * Routes not listed here are accessible to any authenticated user.
+ * The middleware checks prefixes — `/admin` matches `/admin/users`, `/admin/jobs`, etc.
+ */
+const ADMIN_ONLY_PREFIXES = ['/admin']
+const BD_USER_ONLY_PREFIXES = ['/dashboard']
+
+/** Routes that should not be accessible to any role (dead/orphaned routes) */
+const BLOCKED_ROUTES = ['/matches', '/automation']
+
+/**
+ * Short-lived in-process cache for /auth/me lookups. The middleware runs on
+ * every document/RSC request; without this, each page transition pays 2-3
+ * backend round-trips (~1s each) just to re-learn the user's role. The API
+ * still validates the token on every data request — this only affects page
+ * routing, so 60s of role staleness is acceptable (backend caches tokens
+ * for 120s anyway).
+ */
+const ME_CACHE = new Map<string, { user: { role?: string } | null; exp: number }>()
+const ME_CACHE_TTL_MS = 60_000
+const ME_CACHE_MAX = 500
+
 export async function middleware(request: NextRequest) {
   const token = request.cookies.get('auth_token')?.value
   const url = request.nextUrl.clone()
+  const { pathname } = url
 
-  // 1. Unauthenticated user
+  // ── 1. Static / API passthrough ────────────────────────────────────────
+  if (pathname.startsWith('/_next') || pathname.startsWith('/api/')) {
+    if (token && pathname.startsWith('/api/')) {
+      const requestHeaders = new Headers(request.headers)
+      requestHeaders.set('Authorization', `Bearer ${token}`)
+      return NextResponse.next({ request: { headers: requestHeaders } })
+    }
+    return NextResponse.next()
+  }
+
+  // ── 2. Unauthenticated user ────────────────────────────────────────────
   if (!token) {
-    if (!url.pathname.startsWith('/login') && !url.pathname.startsWith('/api/')) {
+    if (pathname !== '/login') {
       url.pathname = '/login'
       return NextResponse.redirect(url)
     }
     return NextResponse.next()
   }
 
-  // 2. Always inject Authorization header for all requests early so that if we return NextResponse.next()
-  // it includes the token. The Next.js rewrite will forward it to the backend.
+  // ── 3. Prepare auth header for downstream ──────────────────────────────
   const requestHeaders = new Headers(request.headers)
   requestHeaders.set('Authorization', `Bearer ${token}`)
   const nextResponseWithHeaders = NextResponse.next({
-    request: {
-      headers: requestHeaders,
-    },
+    request: { headers: requestHeaders },
   })
 
-  // If it's an API call, we DO NOT need to check /api/auth/me here because the backend handles it.
-  if (url.pathname.startsWith('/api/')) {
-    return nextResponseWithHeaders
-  }
-
-  // 3. Fetch current user from backend with 3s timeout (for page routes only)
+  // ── 4. Validate token with backend (page routes only) ──────────────────
   let user: { role?: string } | null = null
   let isUnauthorized = false
   let isTransientError = false
 
-  try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 3000)
-    const meRes = await fetch(`${API_BASE}/api/auth/me`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: controller.signal,
-      cache: 'no-store',
-    })
-    clearTimeout(timeout)
-    if (meRes.ok) {
-      user = await meRes.json()
-    } else {
-      if (meRes.status === 401 || meRes.status === 403) {
+  const cached = ME_CACHE.get(token)
+  if (cached && cached.exp > Date.now()) {
+    user = cached.user
+  } else {
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 3000)
+      const meRes = await fetch(`${API_BASE}/api/auth/me`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: controller.signal,
+        cache: 'no-store',
+      })
+      clearTimeout(timeout)
+      if (meRes.ok) {
+        user = await meRes.json()
+        if (ME_CACHE.size >= ME_CACHE_MAX) ME_CACHE.clear()
+        ME_CACHE.set(token, { user, exp: Date.now() + ME_CACHE_TTL_MS })
+      } else if (meRes.status === 401 || meRes.status === 403) {
         isUnauthorized = true
+        ME_CACHE.delete(token)
       } else {
         isTransientError = true
       }
+    } catch {
+      isTransientError = true
     }
-  } catch {
-    isTransientError = true
   }
 
-  // 4. Action based on auth validation
+  // ── 5. Handle invalid / expired tokens ─────────────────────────────────
   if (!user) {
-    const isLoginPath = url.pathname.startsWith('/login')
     if (isUnauthorized) {
-      if (isLoginPath) {
+      if (pathname === '/login') {
         const response = NextResponse.next()
         response.cookies.delete('auth_token')
         return response
@@ -70,36 +101,40 @@ export async function middleware(request: NextRequest) {
       response.cookies.delete('auth_token')
       return response
     }
-    
-    // Transient error (network timeout, backend restart): pass through rather than
-    // forcing a login redirect — the page-level queries will show their own error states.
+
+    // Transient error: pass through — page-level queries show their own error states
     if (isTransientError) {
       return nextResponseWithHeaders
     }
-    
-    // Unknown state (shouldn't happen): clear and redirect
+
+    // Unknown state: clear and redirect
     const response = NextResponse.redirect(new URL('/login', request.url))
     response.cookies.delete('auth_token')
     return response
   }
 
-  // 5. Role-based routing
+  // ── 6. Authenticated user — enforce role-based routing ─────────────────
   const role = user.role
 
-  if (url.pathname === '/' || url.pathname.startsWith('/login')) {
-    if (role === 'admin') {
-      url.pathname = '/admin'
-    } else {
-      url.pathname = '/dashboard'
-    }
+  // 6a. Redirect authenticated users away from login and root
+  if (pathname === '/' || pathname === '/login') {
+    url.pathname = role === 'admin' ? '/admin' : '/dashboard'
     return NextResponse.redirect(url)
   }
 
-  if (url.pathname.startsWith('/admin') && role !== 'admin') {
+  // 6b. Block orphaned / dead routes
+  if (BLOCKED_ROUTES.some(route => pathname === route || pathname.startsWith(route + '/'))) {
+    url.pathname = role === 'admin' ? '/admin' : '/dashboard'
+    return NextResponse.redirect(url)
+  }
+
+  // 6c. Admin-only routes: block BD users
+  if (ADMIN_ONLY_PREFIXES.some(prefix => pathname.startsWith(prefix)) && role !== 'admin') {
     url.pathname = '/dashboard'
     return NextResponse.redirect(url)
   }
 
+  // 6d. Shared routes (/dashboard, /candidates, /applications) — accessible to both roles
   return nextResponseWithHeaders
 }
 

@@ -33,6 +33,10 @@ logger = logging.getLogger(__name__)
 # real Playwright session (which has stealth + cookies) decide via
 # check_page_indicates_expired(). RR is the canonical case the user hit: a live
 # listing URL was being killed at pre-flight because httpx got bounced.
+# Built In / Glassdoor / ZipRecruiter sit behind Cloudflare or PerimeterX;
+# Himalayas / Adzuna / RemoteOK / hiring.cafe are aggregators whose listing
+# pages 403 or bounce plain httpx GETs the same way — all false-kill at
+# pre-flight, so they belong on this skip list too.
 _PREFLIGHT_SKIP_HOSTS = (
     "remoterocketship.com",
     "remote100k",
@@ -44,7 +48,42 @@ _PREFLIGHT_SKIP_HOSTS = (
     "talent.com",
     "icims.com",
     "smartrecruiters.com",
+    "builtin.com",
+    "glassdoor.com",
+    "ziprecruiter.com",
+    "himalayas.app",
+    "adzuna.com",
+    "remoteok.com",
+    "hiring.cafe",
 )
+
+
+# Per-platform AgentLoop step budgets. Multi-step wizard ATSes (login →
+# profile → per-page questions → review) burn far more loop iterations than a
+# single-page Greenhouse/Lever form, so the default 60 steps (env
+# AGENT_LOOP_MAX_STEPS) is not enough — the loop dies mid-wizard with
+# MAX_STEPS. Values here only ever RAISE the budget (we take the max with the
+# env default), never lower it.
+_PLATFORM_MAX_STEPS = {
+    "dice": 90,
+    "icims": 90,
+    "ziprecruiter": 90,
+    "workday": 90,
+}
+
+
+def _canonical_platform_key(platform: str, known_slugs) -> str:
+    """Resolve a canonical platform slug from a value that may arrive either as
+    a bare slug ("dice") or as a HOST ("www.dice.com"). Per the hints.py
+    contract, non-passthrough adapters frequently store platform as a host, so a
+    plain dict lookup misses. Substring-match the (normalized) value against the
+    known slugs and return the first hit; fall back to the normalized value."""
+    key = (platform or "").lower().strip()
+    normalized = key.replace("-", "").replace("_", "").replace(".", "")
+    for slug in known_slugs:
+        if slug in key or slug in normalized:
+            return slug
+    return key
 
 
 async def is_job_url_active(url: str) -> bool:
@@ -92,8 +131,23 @@ async def is_job_url_active(url: str) -> bool:
                 
                 orig_segments = [s for s in orig_path.split("/") if s]
                 final_segments = [s for s in final_path.split("/") if s]
-                
-                job_id_segments = [s for s in orig_segments if s.isdigit() or len(s) > 8]
+
+                def _looks_like_job_id(s: str) -> bool:
+                    # A path segment that plausibly identifies THIS specific job:
+                    #   • pure numeric id (12345)
+                    #   • long slug / UUID (len > 8, e.g. 1a750f3c-8595-...)
+                    #   • shorter alphanumeric id that mixes letters + digits
+                    #     (>=5 chars, e.g. "r4x9k2", "job2024") — these were
+                    #     previously missed and fell to the weaker homepage
+                    #     heuristic. Pure-alpha slugs ("software-engineer") are
+                    #     intentionally NOT job ids (too generic to anchor on).
+                    if s.isdigit() or len(s) > 8:
+                        return True
+                    return len(s) >= 5 and any(c.isdigit() for c in s) and any(c.isalpha() for c in s)
+
+                job_id_segments = [s for s in orig_segments if _looks_like_job_id(s)]
+                logger.debug(f"[Job Check] redirect heuristic: orig={orig_segments} "
+                             f"final={final_segments} job_id_segments={job_id_segments}")
                 if job_id_segments:
                     if not any(jid in final_url for jid in job_id_segments):
                         logger.info(f"[Job Check] Redirected away from job URL: {url} -> {final_url}")
@@ -214,7 +268,11 @@ class RateLimiter:
     async def check_and_increment(self, platform: str, candidate_id: str) -> bool:
         r = await self._get_redis()
         key = f"rate_limit:{candidate_id}:{platform}"
-        limit = self._limits.get(platform.lower(), self._default_limit)
+        # platform may arrive as a bare slug ("lever") or a host ("jobs.lever.co");
+        # substring-match against the known slugs so the per-platform limit still
+        # applies in the host case instead of silently falling back to default.
+        _limit_key = _canonical_platform_key(platform, self._limits.keys())
+        limit = self._limits.get(_limit_key, self._default_limit)
         count = await r.incr(key)
         if count == 1:
             await r.expire(key, 3600)
@@ -311,9 +369,29 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
 
         if not filename.lower().endswith(suffix.lower()):
             filename += suffix
+        # Avoid collisions when different URLs share the same basename (common for signed URLs).
+        import hashlib
+        digest = hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
+        root, ext = os.path.splitext(filename)
+        filename = f"{root}-{digest}{ext}"
 
-        temp_dir = tempfile.gettempdir()
-        temp_path = os.path.join(temp_dir, filename)
+        # Use a project-local, stable cache dir instead of the OS temp
+        # dir. Windows aggressively cleans %TEMP% (Storage Sense, tempfile
+        # module context managers elsewhere in this process, and any
+        # sibling cleanup call that walks tempfile.gettempdir()) — an
+        # already-downloaded resume can vanish between the executor's
+        # initial resolve and a later retry-attempt upload inside the
+        # AgentLoop, which is exactly what we saw on Palantir: the resume
+        # download succeeded on entry, but the file was gone by the time
+        # the form-fill retry called set_input_files → hard "Local file
+        # not found" failure at C:\Users\<u>\AppData\Local\Temp\... .
+        # A per-candidate cache under backend/data/ is out of every
+        # tempdir-cleanup path and survives across retries + runs.
+        _here = os.path.dirname(os.path.abspath(__file__))
+        _backend_root = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
+        cache_dir = os.path.join(_backend_root, "data", "upload_cache")
+        os.makedirs(cache_dir, exist_ok=True)
+        temp_path = os.path.join(cache_dir, filename)
         with open(temp_path, "wb") as f:
             f.write(resp.content)
 
@@ -325,6 +403,12 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
 
 
 def _cleanup_temp(*paths: Optional[str]) -> None:
+    # Only clean paths under the OS tempdir (legacy behavior — nothing
+    # writes here anymore since _resolve_file_to_local_path was moved to
+    # backend/data/upload_cache, but keep the guard for any pre-existing
+    # callers). The new cache dir is intentionally NOT cleaned: leaving
+    # the resume + cover letter cached across retries is a feature, not
+    # a leak — same candidate applying to N jobs reuses one download.
     for p in paths:
         if p and p.startswith(tempfile.gettempdir()):
             try:
@@ -362,9 +446,43 @@ class ApplicationExecutor:
 
         try:
             # Check platform review status
-            from .platform_review import is_platform_flagged
+            from .platform_review import (
+                is_platform_flagged,
+                get_spam_backoff_remaining,
+            )
             if is_platform_flagged(package.platform):
                 raise Exception(f"PLATFORM_NEEDS_REVIEW: Platform {package.platform} is flagged as needing review due to previous failures.")
+
+            # ── Phase 5.3: SPAM_FLAGGED exponential backoff gate ──
+            # A prior anti-bot rejection arms a growing cooldown for this ATS
+            # (see platform_review.record_spam_backoff). While it's active we
+            # short-circuit rather than re-tripping the host's spam filter.
+            # get_spam_backoff_remaining canonicalizes its argument to the same
+            # known-ATS slug the failure/success paths record under (via
+            # platform_review._canonical_spam_key over the full hints slug set),
+            # so passing the raw package.platform (bare slug OR host) here reads
+            # back the exact key an armed cooldown was written under. NOTE: for
+            # wrapper aggregators (RemoteRocketship) the failure path records
+            # under the resolved INNER ATS, which isn't known at pre-flight, so
+            # an inner-ATS cooldown still can't gate the wrapper-routed retry —
+            # a documented limitation; native/direct-host cooldowns gate.
+            _spam_remaining = get_spam_backoff_remaining(package.platform)
+            if _spam_remaining > 0:
+                logger.warning(
+                    f"[M4] SPAM_BACKOFF active for {package.platform!r} — "
+                    f"holding for {_spam_remaining}s after an anti-bot rejection"
+                )
+                _cleanup_temp(_temp_resume, _temp_cover)
+                return ApplicationResult(
+                    application_id=package.application_id,
+                    status="RATE_LIMITED",
+                    execution_time_seconds=_elapsed(),
+                    retry_count=retry_count,
+                    error_message=(
+                        f"SPAM_BACKOFF: {package.platform} is backing off for "
+                        f"{_spam_remaining}s after an anti-bot rejection"
+                    ),
+                )
 
             # ── PRE-FLIGHT: validate resume exists before launching browser ──
             if not package.resume_url:
@@ -441,23 +559,50 @@ class ApplicationExecutor:
             # with a specific LOGIN_REQUIRED status so the operator sees "this
             # job needs creds" rather than "browser opened and closed". Saves
             # ~30s per job and keeps the screenshot log meaningful.
+            # Load the candidate's own portal login credentials (Gmail-based
+            # login email + password) from their DB profile ONCE here, so the
+            # account-wall pre-flight below can accept EITHER per-candidate
+            # credentials OR global env-var credentials, and so we can inject
+            # them into the adapter before it navigates/logs in. Never placed on
+            # candidate_profile — keeps the password out of LLM prompts and logs.
+            _cand_creds = {"login_email": "", "password": "", "gmail": ""}
+            try:
+                from ..adapters.session_utils import load_candidate_credentials
+                _cand_creds = await load_candidate_credentials(package.candidate_id)
+            except Exception as _cc_exc:
+                logger.debug(f"[M4] candidate-credential load skipped: {_cc_exc}")
+            _has_cand_login = bool(
+                _cand_creds.get("login_email") and _cand_creds.get("password")
+            )
+
             _walled_creds = {
-                "workday": ("WORKDAY_USERNAME", "WORKDAY_PASSWORD"),
-                "icims":   ("ICIMS_USERNAME",   "ICIMS_PASSWORD"),
-                "dice":    ("DICE_EMAIL",       "DICE_PASSWORD"),
+                "workday":      ("WORKDAY_USERNAME",    "WORKDAY_PASSWORD"),
+                "icims":        ("ICIMS_USERNAME",      "ICIMS_PASSWORD"),
+                "dice":         ("DICE_EMAIL",          "DICE_PASSWORD"),
+                "glassdoor":    ("GLASSDOOR_EMAIL",     "GLASSDOOR_PASSWORD"),
+                "ziprecruiter": ("ZIPRECRUITER_EMAIL",  "ZIPRECRUITER_PASSWORD"),
             }
             _plat_key = (package.platform or "").lower().strip()
             _creds = _walled_creds.get(_plat_key)
             if _creds:
                 u_env, p_env = _creds
-                if not (os.getenv(u_env, "").strip() and os.getenv(p_env, "").strip()):
+                _has_env = bool(
+                    os.getenv(u_env, "").strip() and os.getenv(p_env, "").strip()
+                )
+                if not (_has_env or _has_cand_login):
                     logger.warning(
                         f"[M4] Pre-flight skip: {_plat_key} requires {u_env}/{p_env} "
-                        "in .env — no scraping bypass exists for account-walled ATSes."
+                        "in .env OR a gmail+password on the candidate profile — "
+                        "no scraping bypass exists for account-walled ATSes."
                     )
                     raise Exception(
-                        f"LOGIN_REQUIRED: {_plat_key} requires an account; "
-                        f"set {u_env} and {p_env} in .env to enable."
+                        f"LOGIN_REQUIRED: {_plat_key} requires an account; set "
+                        f"{u_env}/{p_env} in .env or add gmail+password to the candidate."
+                    )
+                if _has_cand_login and not _has_env:
+                    logger.info(
+                        f"[M4] {_plat_key}: authenticating with candidate-profile "
+                        "credentials (no env override set)."
                     )
 
             # ── STEP 1: Rate limit ──
@@ -499,6 +644,29 @@ class ApplicationExecutor:
             # it simply ignore the attribute.
             try:
                 adapter.candidate_profile = package.candidate_profile
+                # Candidate id (not a secret) — login-gated adapters need it at
+                # navigate-time to fetch one-time codes/links from the
+                # candidate's Gmail (e.g. BuiltIn's passwordless login).
+                adapter.candidate_id = package.candidate_id
+                # Local artifact paths, for adapters that deterministically fix
+                # account-profile-sourced wizard defaults at navigate-time
+                # (e.g. Dice pre-selects the ACCOUNT owner's resume — it must
+                # be replaced with this candidate's tailored file).
+                adapter.resume_local_path = _temp_resume
+                adapter.cover_letter_local_path = _temp_cover
+                # Surface the candidate's Gmail (an email address — not a secret)
+                # so adapters whose flow reads it back from that mailbox can use
+                # it (e.g. Talent's email/OTP gate). The password is NOT added
+                # here — it travels only via set_candidate_credentials below.
+                if _cand_creds.get("gmail") and isinstance(package.candidate_profile, dict):
+                    package.candidate_profile.setdefault("gmail", _cand_creds["gmail"])
+            except Exception:
+                pass
+            # Inject login credentials via the secure channel (NOT candidate_profile)
+            # so login-gated adapters authenticate as this candidate; the password
+            # never touches LLM prompts or logs.
+            try:
+                adapter.set_candidate_credentials(_cand_creds)
             except Exception:
                 pass
             await adapter.navigate_to_application(page, package.job_url)
@@ -627,6 +795,26 @@ class ApplicationExecutor:
                     # with confirmation="dry_run_stopped_before_submit" WITHOUT
                     # clicking the real Submit button.
                     dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
+                    # Per-platform step budget: multi-step wizards (Dice, iCIMS,
+                    # ZipRecruiter, Workday) need more than the default 60 steps.
+                    # Take the MAX with the env default so operators can still
+                    # raise the global budget via AGENT_LOOP_MAX_STEPS without
+                    # this table silently clamping it back down.
+                    try:
+                        _default_steps = int(os.getenv("AGENT_LOOP_MAX_STEPS", "60"))
+                    except ValueError:
+                        _default_steps = 60
+                    _loop_plat_key = _canonical_platform_key(
+                        effective_platform, _PLATFORM_MAX_STEPS.keys()
+                    )
+                    _loop_max_steps = max(
+                        _default_steps, _PLATFORM_MAX_STEPS.get(_loop_plat_key, 0)
+                    )
+                    if _loop_max_steps != _default_steps:
+                        logger.info(
+                            f"[M4] Raising AgentLoop step budget to {_loop_max_steps} "
+                            f"for multi-step platform {_loop_plat_key!r}"
+                        )
                     agent_loop = AgentLoop(
                         candidate_profile=package.candidate_profile,
                         job_context=job_ctx_for_loop,
@@ -635,6 +823,7 @@ class ApplicationExecutor:
                         screening_answers=pre_answers,
                         candidate_id=package.candidate_id,
                         stop_before_submit=dry_run,
+                        max_steps=_loop_max_steps,
                     )
                     frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                     loop_result: LoopResult = await agent_loop.run(
@@ -648,7 +837,13 @@ class ApplicationExecutor:
                     if loop_result.status == "SUBMITTED":
                         _agent_submitted = True
                         _agent_confirmation = loop_result.confirmation
-                        await transition_status(package.application_id, "FORM_COMPLETED")
+                        # submit_confirmed lets the watchdog distinguish "loop
+                        # confirmed the submission, pipeline died before the
+                        # SUBMITTED PATCH" from "form filled, never submitted".
+                        await transition_status(
+                            package.application_id, "FORM_COMPLETED",
+                            {"submit_confirmed": True},
+                        )
 
                     elif loop_result.status in ("WRONG_PAGE", "ABORTED"):
                         raise Exception(f"AgentLoop aborted: {loop_result.error}")
@@ -657,19 +852,33 @@ class ApplicationExecutor:
                         # The AgentLoop already CLICKED submit but did not reach a
                         # confirmed SUBMITTED (e.g. an email-verification wall it
                         # couldn't clear in time, or it ran out of steps on the
-                        # post-submit page). The form was already sent to the ATS,
-                        # so the scripted fallback below MUST NOT run — re-detecting
-                        # and re-submitting would file a DUPLICATE application.
-                        # Mark terminal with a clear, non-retryable reason.
+                        # post-submit page). The form was already sent to the ATS —
+                        # empirically these applications ARE on file (retrying them
+                        # hits the portal's "already applied" wall), so record the
+                        # submission instead of failing it. The scripted fallback
+                        # below MUST NOT run — re-detecting and re-submitting would
+                        # file a DUPLICATE application. Genuine server-side
+                        # rejections never reach this branch: they return ABORTED
+                        # (handled above) with an explicit rejection banner.
                         logger.warning(
                             f"[M4] AgentLoop fired submit but ended {loop_result.status!r} "
-                            "without confirmation — NOT running scripted fallback "
-                            "(would double-submit). Marking EMAIL_VERIFICATION_REQUIRED."
+                            "without confirmation — recording as SUBMITTED with "
+                            "verification pending (scripted fallback skipped: "
+                            "would double-submit)."
                         )
-                        raise Exception(
-                            "EMAIL_VERIFICATION_REQUIRED: application was submitted but "
-                            "post-submit verification did not complete "
-                            f"(loop status={loop_result.status}, error={loop_result.error})"
+                        _agent_submitted = True
+                        _agent_confirmation = (
+                            "Submitted — post-submit email verification did not "
+                            f"complete (loop status={loop_result.status}); "
+                            "confirmation pending"
+                        )
+                        await transition_status(
+                            package.application_id, "FORM_COMPLETED",
+                            {
+                                "submit_confirmed": True,
+                                "info": "Submit fired; post-submit email verification "
+                                        "did not complete before timeout",
+                            },
                         )
 
                     elif loop_result.status == "VERIFICATION_FAILED":
@@ -913,6 +1122,7 @@ class ApplicationExecutor:
                 dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
                 provider = os.getenv("CAPTCHA_PROVIDER", "2captcha").lower()
                 raw_key = os.getenv(
+                    "CAPSOLVER_API_KEY" if provider == "capsolver" else
                     "TWO_CAPTCHA_API_KEY" if provider == "2captcha" else
                     "ANTI_CAPTCHA_API_KEY" if provider == "anticaptcha" else
                     "OCILAR_API_KEY",
@@ -931,7 +1141,7 @@ class ApplicationExecutor:
                         error_message = (
                             f"BLOCKED: {form.captcha_type} captcha detected on {package.platform} "
                             f"but no solver API key is configured "
-                            f"(set TWO_CAPTCHA_API_KEY or ANTI_CAPTCHA_API_KEY)"
+                            f"(set CAPSOLVER_API_KEY, OCILAR_API_KEY, TWO_CAPTCHA_API_KEY, or ANTI_CAPTCHA_API_KEY)"
                         )
                         logger.error(f"[M4] {error_message}")
                         try:
@@ -1043,6 +1253,24 @@ class ApplicationExecutor:
                 status = "SUBMITTED"
                 submit_extra = {}
 
+                # DRY_RUN rows still land as SUBMITTED (state machine has no
+                # separate dry-run state), so stamp a STABLE, queryable prefix on
+                # confirmation_text. Downstream reporting can exclude dry runs
+                # with `confirmation_text NOT LIKE 'DRY_RUN:%'` regardless of
+                # which path (scripted vs AgentLoop) produced them.
+                _is_dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
+                if _is_dry_run and not str(confirmation_text or "").startswith("DRY_RUN:"):
+                    confirmation_text = f"DRY_RUN: {confirmation_text or 'stopped before submit'}"
+
+                # Phase 5.3: a successful apply means this ATS is not currently
+                # spam-blocking us — clear any stale SPAM backoff so the next
+                # attempt isn't needlessly delayed.
+                try:
+                    from .platform_review import reset_spam_backoff
+                    reset_spam_backoff(effective_platform if "effective_platform" in locals() else package.platform)
+                except Exception as _sb_exc:
+                    logger.debug(f"[M4] reset_spam_backoff skipped: {_sb_exc}")
+
                 # Save the cover letter path (use the original package URL, not temp path)
                 if package.cover_letter_url:
                     submit_extra["cover_letter_url"] = package.cover_letter_url
@@ -1081,14 +1309,41 @@ class ApplicationExecutor:
 
                 logger.info(f"[M4] SUBMITTED extras: {submit_extra}")
 
-                await transition_status(
+                db_persisted = await transition_status(
                     package.application_id, "SUBMITTED",
                     {"screenshot_url": screenshot_path, "confirmation_text": confirmation_text},
                     **submit_extra,
                 )
+                if not db_persisted:
+                    # The application WENT OUT to the employer, but the DB PATCH
+                    # failed (API down, invalid transition, network). Do NOT flip
+                    # status to FAILED — a retry would re-submit to the employer.
+                    # Log loudly so the row can be reconciled out-of-band, and
+                    # carry the flag back to the caller (was silently swallowed).
+                    logger.critical(
+                        f"[M4] DB PERSIST FAILED for application {package.application_id}: "
+                        f"the application was SUBMITTED to the employer but the status "
+                        f"PATCH to M1 did not succeed. Reconcile this row manually — do "
+                        f"NOT re-run the apply (it would double-submit)."
+                    )
             else:
                 status = "FORM_COMPLETED"
-                await transition_status(package.application_id, "FORM_COMPLETED")
+                # Submit was clicked (we only reach here past the submit step);
+                # verify_success just couldn't find a confirmation marker. Tag
+                # the transition so the watchdog treats this as a fired submit
+                # rather than an abandoned form.
+                db_persisted = await transition_status(
+                    package.application_id, "FORM_COMPLETED",
+                    {
+                        "submit_fired": True,
+                        "info": "Submit clicked; confirmation marker not detected",
+                    },
+                )
+                if not db_persisted:
+                    logger.error(
+                        f"[M4] DB persist failed for application {package.application_id} "
+                        f"(FORM_COMPLETED status PATCH to M1 did not succeed)."
+                    )
 
             # ── STEP 13: Persist session ──
             if context_mgr and context:
@@ -1104,6 +1359,7 @@ class ApplicationExecutor:
                 confirmation_text=confirmation_text,
                 execution_time_seconds=_elapsed(),
                 retry_count=retry_count,
+                db_persisted=db_persisted,
             )
 
         except Exception as exc:
@@ -1132,6 +1388,18 @@ class ApplicationExecutor:
                 record_platform_failure(_eff_platform, error_message)
             except Exception as p_exc:
                 logger.warning(f"Failed to record platform failure: {p_exc}")
+
+            # Phase 5.3: an ATS anti-bot rejection (SPAM_FLAGGED) arms an
+            # exponential per-platform cooldown so the next attempt is delayed
+            # instead of immediately re-tripping the host's spam filter. Keyed
+            # to the resolved inner ATS (_eff_platform), same as the failure
+            # record above.
+            try:
+                if "SPAM_FLAGGED" in error_message:
+                    from .platform_review import record_spam_backoff
+                    record_spam_backoff(_eff_platform)
+            except Exception as sb_exc:
+                logger.warning(f"Failed to record SPAM backoff: {sb_exc}")
 
             if "PLATFORM_NEEDS_REVIEW" in error_message:
                 status = "FAILED"

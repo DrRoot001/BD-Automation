@@ -121,16 +121,6 @@ async def run_matching_for_candidate(
     
     is_mock = type(session).__name__ in ("AsyncMock", "MagicMock") or hasattr(session, "_mock_self")
     
-    # 0. Clean up stale applications first (only if session is not a mock)
-    if not is_mock:
-        from app.services.state_machine import recover_stuck_applications_async
-        try:
-            t0 = time.time()
-            await recover_stuck_applications_async(session)
-            logger.info(f"[Matching] watchdog done in {time.time()-t0:.2f}s")
-        except Exception as e:
-            logger.error(f"Watchdog failed during match pipeline: {e}")
-
     t0 = time.time()
     candidate = await session.get(Candidate, candidate_id)
     if not candidate:
@@ -256,12 +246,38 @@ async def run_matching_for_candidate(
     # Build maps of existing apps to check retry/skip conditions
     skipped_jobs = set()
     retryable_apps = {}
-    
+
+    # Only skip jobs with terminal-positive outcomes. Jobs that FAILED or were
+    # WITHDRAWN/REJECTED due to transient errors should be retryable — filtering
+    # them out permanently means a candidate can never retry after fixing infra.
+    _TERMINAL_POSITIVE = {
+        "SUBMITTED", "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2",
+        "INTERVIEW_R3", "INTERVIEW_R4", "OFFER",
+        # Active in-progress states — don't double-dispatch
+        "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
+        "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED",
+    }
+    # FAILED apps with these reasons will fail identically on retry — or, for
+    # EMAIL_VERIFICATION, the submit already fired and a re-run would
+    # double-submit. Keep in sync with _TERMINAL_FAILURE_REASONS in
+    # app/tasks/dynamic_apply.py (duplicated to avoid a circular import).
+    _TERMINAL_FAILURE = {
+        "BOT_DETECTED", "ROBOTS_BLOCKED", "JOB_EXPIRED",
+        "LOGIN_REQUIRED", "MAX_RETRIES_EXCEEDED",
+        "SPAM_FLAGGED", "ALREADY_APPLIED", "QUALIFICATION_MISMATCH",
+        "EMAIL_VERIFICATION",
+    }
     all_apps_stmt = select(Application).where(Application.candidate_id == candidate_id)
     all_apps = (await session.execute(all_apps_stmt)).scalars().all()
-    
+
     for app in all_apps:
-        skipped_jobs.add(app.job_id)
+        if app.status in _TERMINAL_POSITIVE:
+            skipped_jobs.add(app.job_id)
+        elif (
+            app.status == "FAILED"
+            and str(app.failure_reason or "").upper() in _TERMINAL_FAILURE
+        ):
+            skipped_jobs.add(app.job_id)
 
     # 4. Fetch jobs added in lookback window (defaults to 24h, 72h on Mondays) that are not duplicates and pass pgvector distance < 0.35
     from sqlalchemy import or_, and_
@@ -277,6 +293,36 @@ async def run_matching_for_candidate(
         and_(Job.title.ilike('%test%'), Job.company.ilike('%test%'))
     )
 
+    # Portal viability: portals that hard-require credentials/sessions we don't
+    # have configured — or that are infrastructure-blocked (captcha/IP ban) —
+    # guarantee a failed application and burn one of the candidate's slots.
+    # Applied only to automatic discovery; explicitly targeted jobs
+    # (target_job_ids) are honored as operator intent (e.g. Dice credentials
+    # stored on the candidate profile instead of env vars).
+    _unviable = []
+    if not (os.getenv("DICE_EMAIL") and os.getenv("DICE_PASSWORD")):
+        _unviable.append(Job.source_url.ilike('%dice.com%'))
+    if not (os.getenv("WORKDAY_USERNAME") and os.getenv("WORKDAY_PASSWORD")):
+        _unviable.append(Job.source_url.ilike('%myworkdayjobs.com%'))
+    if not (os.getenv("GLASSDOOR_EMAIL") and os.getenv("GLASSDOOR_PASSWORD")):
+        _unviable.append(Job.source_url.ilike('%glassdoor.com%'))
+    if not (os.getenv("ZIPRECRUITER_EMAIL") and os.getenv("ZIPRECRUITER_PASSWORD")):
+        _unviable.append(Job.source_url.ilike('%ziprecruiter.com%'))
+    if not os.getenv("PROXY_URL"):
+        # builtin.com /job/ pages are Cloudflare IP-banned from datacenter egress.
+        _unviable.append(Job.source_url.ilike('%builtin.com%'))
+        if not os.getenv("NOPECHA_API_KEY"):
+            # Lever's final submit is hCaptcha-gated; needs a token solver or a
+            # residential proxy — neither configured means guaranteed failure.
+            _unviable.append(Job.source_url.ilike('%jobs.lever.co%'))
+            _unviable.append(Job.source == 'lever')
+    # LinkedIn Easy Apply needs a manually pre-seeded browser session; there is
+    # no automated login path.
+    _unviable.append(Job.source_url.ilike('%linkedin.com/jobs%'))
+    # RemoteRocketship '/company/' pages don't expose the publicjobs apply flow
+    # the adapter drives — only '/publicjobs/' URLs are supported.
+    _unviable.append(Job.source_url.ilike('%remoterocketship.com/company/%'))
+
     if target_job_ids:
         # If specific target jobs were requested (e.g. from dynamic_apply), skip pgvector and time filters.
         from uuid import UUID as _UUID
@@ -286,11 +332,11 @@ async def run_matching_for_candidate(
                 valid_uuids.append(_UUID(jid))
             except Exception:
                 pass
-        
+
         if not valid_uuids:
             logger.warning(f"[Matching] target_job_ids provided but no valid UUIDs found.")
             return {"error": "invalid_target_job_ids"}
-            
+
         jobs_stmt = select(Job).where(Job.id.in_(valid_uuids), ~exclusions)
     else:
         weekday = datetime.now(timezone.utc).weekday()
@@ -304,6 +350,8 @@ async def run_matching_for_candidate(
             Job.embedding.cosine_distance(base_resume.embedding) < 0.35,
             ~exclusions
         )
+        if _unviable:
+            jobs_stmt = jobs_stmt.where(~or_(*_unviable))
     t0 = time.time()
     jobs = (await session.execute(jobs_stmt)).scalars().all()
     pgvector_passed_count = len(jobs)
@@ -348,7 +396,7 @@ async def run_matching_for_candidate(
         return {"error": "resume_data_load_failed"}
 
     # Derive api_base_url
-    api_base = os.getenv("M1_API_BASE_URL", "http://localhost:8000/api").rstrip("/")
+    api_base = os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api").rstrip("/")
     api_base_url = api_base[:-4] if api_base.endswith("/api") else api_base
 
     for job in jobs:
@@ -404,28 +452,60 @@ async def run_matching_for_candidate(
         # (60 min) cannot fire while the pipeline is still running.  The orchestrator
         # transitions the record to ANALYZED (below threshold) or QUEUED (gate passed)
         # once tailoring and cover-letter generation are complete.
+        #
+        # (candidate_id, job_id) is UNIQUE — a retried job (FAILED with a transient
+        # reason, or a re-scored ANALYZED) already has a record. Reuse and reset it
+        # instead of inserting a duplicate, which raises IntegrityError and kills
+        # the whole matching run.
         logger.info(f"[Matching] about to create FOUND record for job={job.id}")
         t_queued = time.time()
-        app_record = Application(
-            candidate_id=candidate_id,
-            job_id=job.id,
-            status="FOUND",
-            resume_id=base_resume.id
-        )
-        session.add(app_record)
-        await session.commit()
-        await session.refresh(app_record)
-        app_id = app_record.id
-
         from app.models.application_history import ApplicationHistory
-        initial_history = ApplicationHistory(
-            application_id=app_id,
-            from_status=None,
-            to_status="FOUND",
-            meta_data={"info": "Application created; pending AI evaluation and tailoring"}
+
+        existing_stmt = select(Application).where(
+            Application.candidate_id == candidate_id,
+            Application.job_id == job.id,
         )
-        session.add(initial_history)
-        await session.commit()
+        app_record = (await session.execute(existing_stmt)).scalars().first()
+
+        if app_record is not None:
+            prev_status = app_record.status
+            app_record.status = "FOUND"
+            app_record.error_message = None
+            app_record.failure_reason = None
+            app_record.retry_count = 0
+            app_record.resume_id = base_resume.id
+            session.add(app_record)
+            await session.commit()
+            await session.refresh(app_record)
+            app_id = app_record.id
+            session.add(ApplicationHistory(
+                application_id=app_id,
+                from_status=prev_status,
+                to_status="FOUND",
+                meta_data={"info": f"Application re-selected for retry (was {prev_status})"}
+            ))
+            await session.commit()
+            logger.info(f"[Matching] Reusing existing app {app_id} (was {prev_status}) for retry")
+        else:
+            app_record = Application(
+                candidate_id=candidate_id,
+                job_id=job.id,
+                status="FOUND",
+                resume_id=base_resume.id
+            )
+            session.add(app_record)
+            await session.commit()
+            await session.refresh(app_record)
+            app_id = app_record.id
+
+            initial_history = ApplicationHistory(
+                application_id=app_id,
+                from_status=None,
+                to_status="FOUND",
+                meta_data={"info": "Application created; pending AI evaluation and tailoring"}
+            )
+            session.add(initial_history)
+            await session.commit()
 
         logger.info(f"[Matching] FOUND record and initial history created app_id={app_id} in {time.time()-t_queued:.2f}s")
 

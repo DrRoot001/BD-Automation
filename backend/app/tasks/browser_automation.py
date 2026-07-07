@@ -19,37 +19,61 @@ logger = logging.getLogger(__name__)
 # Internal helper
 # ---------------------------------------------------------------------------
 
-async def publish_event(event_name: str, payload: dict) -> None:
-    """
-    Publish payload to Redis.
-    To be fully integrated with both Module 4 specifications and the main backend,
-    this publishes to both f"event:{clean_name}" and f"events:{clean_name}" channels.
-    """
+def _make_redis_client():
+    """Build a Redis client from env, with TLS if needed."""
     redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     kwargs = {}
     if "rediss://" in redis_url:
         import ssl as _ssl
         kwargs["ssl_cert_reqs"] = _ssl.CERT_NONE
-    redis_client = aioredis.from_url(redis_url, **kwargs)
-    try:
-        clean_name = event_name
-        if clean_name.startswith("event:"):
-            clean_name = clean_name[len("event:"):]
-        elif clean_name.startswith("events:"):
-            clean_name = clean_name[len("events:"):]
+    return aioredis.from_url(redis_url, **kwargs)
 
-        # 1. Publish to the event:clean_name channel (plain payload)
-        await redis_client.publish(f"event:{clean_name}", json.dumps(payload))
 
-        # 2. Publish to the events:clean_name channel (wrapped payload)
-        wrapped = {
-            "event": clean_name,
-            "data": payload,
-            "timestamp": datetime.datetime.utcnow().isoformat()
-        }
-        await redis_client.publish(f"events:{clean_name}", json.dumps(wrapped))
-    finally:
-        await redis_client.aclose()
+# Module-level client reused across publish_event calls within a task execution.
+# Created lazily; closed at the end of execute_application via _close_redis_client().
+_redis_client: Optional[aioredis.Redis] = None
+
+
+def _get_redis_client() -> aioredis.Redis:
+    global _redis_client
+    if _redis_client is None:
+        _redis_client = _make_redis_client()
+    return _redis_client
+
+
+async def _close_redis_client() -> None:
+    global _redis_client
+    if _redis_client is not None:
+        try:
+            await _redis_client.aclose()
+        except Exception:
+            pass
+        _redis_client = None
+
+
+async def publish_event(event_name: str, payload: dict) -> None:
+    """Publish payload to Redis on both event: and events: channels.
+
+    Reuses the module-level client across calls within a task execution to avoid
+    opening a new TLS connection on every status update during a browser run.
+    """
+    client = _get_redis_client()
+    clean_name = event_name
+    if clean_name.startswith("event:"):
+        clean_name = clean_name[len("event:"):]
+    elif clean_name.startswith("events:"):
+        clean_name = clean_name[len("events:"):]
+
+    plain = json.dumps(payload)
+    wrapped = json.dumps({
+        "event": clean_name,
+        "data": payload,
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+    })
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.publish(f"event:{clean_name}", plain)
+        pipe.publish(f"events:{clean_name}", wrapped)
+        await pipe.execute()
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +165,14 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         cand_id = app_data["candidate_id"]
         job_id  = app_data["job_id"]
 
-        cand_resp = await client.get(f"{api_base}/candidates/{cand_id}")
+        # Fetch candidate and job in parallel — saves one full network RTT
+        cand_resp, job_resp = await asyncio.gather(
+            client.get(f"{api_base}/candidates/{cand_id}"),
+            client.get(f"{api_base}/jobs/{job_id}"),
+        )
         cand_resp.raise_for_status()
-        cand_data = cand_resp.json()
-
-        job_resp = await client.get(f"{api_base}/jobs/{job_id}")
         job_resp.raise_for_status()
+        cand_data = cand_resp.json()
         job_data = job_resp.json()
 
         # ── Resolve resume_url ──
@@ -324,9 +350,13 @@ def execute_application(self, package_dict: dict):
     Main application execution task.
     """
     try:
-        result: ApplicationResult = asyncio.run(
-            hydrate_and_execute(package_dict, retry_count=self.request.retries)
-        )
+        async def _run():
+            try:
+                return await hydrate_and_execute(package_dict, retry_count=self.request.retries)
+            finally:
+                await _close_redis_client()
+
+        result: ApplicationResult = asyncio.run(_run())
         if result.status == "RATE_LIMITED":
             raise self.retry(countdown=600)
         elif result.status == "BLOCKED":
@@ -380,6 +410,15 @@ def execute_application(self, package_dict: dict):
                     retry_eligible=False,
                     failure_reason="EMAIL_VERIFICATION",
                 ))
+                return result.dict()
+            # FORM_COMPLETED means the submit was CLICKED but no confirmation
+            # marker was found. Re-running would double-submit; leave the row
+            # for the watchdog, which promotes fired-submit rows to SUBMITTED.
+            if result.status == "FORM_COMPLETED":
+                logger.warning(
+                    f"[M4] FORM_COMPLETED (submit clicked, unconfirmed) for "
+                    f"{package_dict.get('application_id')} — not retrying (would double-submit)"
+                )
                 return result.dict()
             raise Exception(f"Execution failed: {result.error_message}")
             
@@ -530,7 +569,23 @@ def retry_failed_application(package_dict: dict):
 
     Dispatches execute_application with a 5-minute countdown so that
     transient failures have time to recover before the next attempt.
+    Terminal failure reasons (bot detection, expired jobs, login walls, etc.)
+    are not retried — they will fail again immediately and waste a worker slot.
     """
+    _terminal_reasons = {
+        "BOT_DETECTED", "ROBOTS_BLOCKED", "JOB_EXPIRED",
+        "LOGIN_REQUIRED", "MAX_RETRIES_EXCEEDED",
+        "SPAM_FLAGGED", "ALREADY_APPLIED", "QUALIFICATION_MISMATCH",
+        # Submit already fired — re-executing would double-submit.
+        "EMAIL_VERIFICATION",
+    }
+    failure_reason = (package_dict.get("failure_reason") or "").upper()
+    if failure_reason in _terminal_reasons:
+        logger.info(
+            f"[RetryTask] Skipping retry for application {package_dict.get('application_id')} "
+            f"— terminal failure reason: {failure_reason}"
+        )
+        return
     execute_application.apply_async(args=[package_dict], countdown=300)
 
 

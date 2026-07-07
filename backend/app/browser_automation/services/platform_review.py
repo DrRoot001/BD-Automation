@@ -47,6 +47,13 @@ _SKIP_PATTERNS = [
     "iCIMS requires an account",
     "Dice requires an account",
     "DICE_EMAIL",
+    # Candidate-level or self-inflicted outcomes — the ATS behaved correctly:
+    # "already applied" duplicate rejections come from OUR retry of a job that
+    # actually submitted, and a missing Gmail connection is a candidate-setup
+    # gap. Neither says anything about the platform's health.
+    "SPAM_FLAGGED",
+    "already applied",
+    "GMAIL_NOT_CONNECTED",
 ]
 
 # How many platform-relevant failures within the rolling window trigger a flag.
@@ -54,6 +61,59 @@ _PLATFORM_FLAG_THRESHOLD = 5
 
 # Rolling window for counting recent failures (hours).
 _FAILURE_WINDOW_HOURS = 24
+
+
+def _canonical_spam_key(platform: str) -> str:
+    """Canonicalize a platform value (bare slug OR host) to the same known ATS
+    slug on BOTH the read and write side of the SPAM backoff, so the key an
+    armed cooldown is stored under always matches the key the pre-flight gate
+    reads back.
+
+    The failure/success paths in executor arm the backoff under the resolved
+    INNER ATS name (e.g. 'greenhouse'/'lever') for wrapper aggregators like
+    RemoteRocketship, while the pre-flight gate only knows the raw wrapper
+    value (e.g. 'remoterocketship') or a host. Substring-matching the
+    normalized value against the full known-slug universe (adapters.hints
+    keys — same set the registry routes on) collapses both to one canonical
+    slug. Falls back to the normalized value when nothing matches, mirroring
+    the get_platform_hints() contract.
+    """
+    key = (platform or "").lower().strip()
+    if not key:
+        return key
+    try:
+        from ..adapters.hints import _HINTS
+        known_slugs = _HINTS.keys()
+    except Exception:
+        return key
+    if key in known_slugs:
+        return key
+    normalized = key.replace("-", "").replace("_", "").replace(".", "")
+    # Most specific first so e.g. 'smartapply' wins before any looser match.
+    for slug in known_slugs:
+        if slug == "generic":
+            continue
+        if slug in key or slug in normalized:
+            return slug
+    return key
+
+
+def _spam_backoff_base_s() -> int:
+    """Base backoff (seconds) after the FIRST SPAM_FLAGGED anti-bot rejection.
+    Overridable via SPAM_BACKOFF_BASE_S. Defaults to 300s (5 min)."""
+    try:
+        return max(1, int(os.getenv("SPAM_BACKOFF_BASE_S", "300")))
+    except (TypeError, ValueError):
+        return 300
+
+
+def _spam_backoff_max_s() -> int:
+    """Cap (seconds) on the exponential SPAM backoff. Overridable via
+    SPAM_BACKOFF_MAX_S. Defaults to 14400s (4h)."""
+    try:
+        return max(1, int(os.getenv("SPAM_BACKOFF_MAX_S", "14400")))
+    except (TypeError, ValueError):
+        return 14400
 
 
 def get_platform_reviews() -> dict:
@@ -159,3 +219,107 @@ def is_platform_flagged(platform: str) -> bool:
         return False
 
     return True
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Phase 5.3 — per-platform exponential backoff after SPAM_FLAGGED.
+#
+# A SPAM_FLAGGED result is an ATS anti-bot rejection (not a generic fault), so
+# it is deliberately NOT in _SKIP_PATTERNS and NOT folded into the 5-failure
+# breaker. Instead, each SPAM_FLAGGED arms a growing cooldown so we stop
+# hammering a host that just told us it thinks we're a bot. Backoff state lives
+# in the SAME platform_reviews.json under a per-platform "spam_backoff" object:
+#   {"count": N, "until": "<ISO-8601 utcnow + delay>"}
+# delay = base * 2**(count-1), capped at the max. A successful application (or
+# an expired cooldown that is then re-armed) resets count to 1.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def record_spam_backoff(platform: str):
+    """Arm/extend the exponential SPAM backoff for a platform after an anti-bot
+    rejection. Increments count and pushes "until" = utcnow + delay."""
+    platform = _canonical_spam_key(platform)
+    if not platform:
+        return
+
+    reviews = get_platform_reviews()
+    entry = reviews.get(platform)
+    if not isinstance(entry, dict):
+        entry = {"needs_review": False, "failures": []}
+
+    backoff = entry.get("spam_backoff") or {}
+    prev_count = 0
+    try:
+        prev_count = int(backoff.get("count", 0))
+    except (TypeError, ValueError):
+        prev_count = 0
+
+    # If the previous cooldown already elapsed, treat this as a fresh strike so
+    # a platform that recovered isn't punished with a stale exponent.
+    until_raw = backoff.get("until")
+    if prev_count > 0 and until_raw:
+        try:
+            if datetime.utcnow() >= datetime.fromisoformat(until_raw):
+                prev_count = 0
+        except Exception:
+            prev_count = 0
+
+    count = prev_count + 1
+    base = _spam_backoff_base_s()
+    cap = _spam_backoff_max_s()
+    # Guard the shift so a runaway count can't overflow before the min() clamps.
+    delay = base * (2 ** min(count - 1, 30))
+    delay = min(delay, cap)
+
+    until = datetime.utcnow() + timedelta(seconds=delay)
+    entry["spam_backoff"] = {"count": count, "until": until.isoformat()}
+    reviews[platform] = entry
+    save_platform_reviews(reviews)
+
+    logger.warning(
+        f"[PlatformReview] SPAM_FLAGGED backoff #{count} for '{platform}': "
+        f"holding for {delay}s (until {until.isoformat()}, base={base}s, cap={cap}s)"
+    )
+
+
+def get_spam_backoff_remaining(platform: str) -> int:
+    """Return remaining SPAM backoff for a platform in whole seconds, or 0 if
+    none is active (or it has elapsed)."""
+    platform = _canonical_spam_key(platform)
+    if not platform:
+        return 0
+
+    reviews = get_platform_reviews()
+    entry = reviews.get(platform, {})
+    backoff = entry.get("spam_backoff") if isinstance(entry, dict) else None
+    if not backoff:
+        return 0
+
+    until_raw = backoff.get("until")
+    if not until_raw:
+        return 0
+    try:
+        until = datetime.fromisoformat(until_raw)
+    except Exception:
+        return 0
+
+    remaining = (until - datetime.utcnow()).total_seconds()
+    if remaining <= 0:
+        return 0
+    return int(remaining)
+
+
+def reset_spam_backoff(platform: str):
+    """Clear any SPAM backoff for a platform (e.g. after a successful apply)."""
+    platform = _canonical_spam_key(platform)
+    if not platform:
+        return
+
+    reviews = get_platform_reviews()
+    entry = reviews.get(platform)
+    if not isinstance(entry, dict) or "spam_backoff" not in entry:
+        return
+
+    entry.pop("spam_backoff", None)
+    reviews[platform] = entry
+    save_platform_reviews(reviews)
+    logger.info(f"[PlatformReview] Cleared SPAM backoff for '{platform}'")

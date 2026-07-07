@@ -1,0 +1,26 @@
+# =============================================================================
+# BD-Automator Backend — Dev / Test Only Dependencies
+# =============================================================================
+# Install separately: pip install -r requirements-dev.txt
+# =============================================================================
+-r requirements.txt
+
+# ── Testing ───────────────────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pytest-mock>=3.12.0
+httpx>=0.27.0          # also used for TestClient
+
+# ── Type Checking ─────────────────────────────────────────────────────────────
+mypy>=1.9.0
+types-python-dateutil>=2.9.0
+types-requests>=2.31.0
+
+# ── Code Quality ──────────────────────────────────────────────────────────────
+ruff>=0.4.0
+black>=24.0.0
+isort>=5.13.0
+
+# ── Jupyter (optional local exploration) ─────────────────────────────────────
+jupyterlab>=4.0.0
+ipykernel>=6.0.0

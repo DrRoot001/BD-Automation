@@ -36,6 +36,14 @@ class FailureReason(str, Enum):
     # Form was submitted to the ATS but the post-submit email-verification code
     # could not be completed (Gmail not connected / code didn't arrive in time).
     EMAIL_VERIFICATION = "EMAIL_VERIFICATION"
+    # ATS requires an account login we don't have credentials for.
+    LOGIN_REQUIRED = "LOGIN_REQUIRED"
+    # ATS rejected the submission as spam / flagged automation post-submit.
+    SPAM_FLAGGED = "SPAM_FLAGGED"
+    # ATS reports the candidate already applied to this job — never retry.
+    ALREADY_APPLIED = "ALREADY_APPLIED"
+    # Verification code needed but the candidate has no Gmail connection.
+    GMAIL_NOT_CONNECTED = "GMAIL_NOT_CONNECTED"
 
 class StatusUpdateRequest(BaseModel):
     status: ApplicationStatus
@@ -63,6 +71,7 @@ class ApplicationResponse(BaseModel):
     candidate_id: UUID
     job_id: UUID
     resume_id: Optional[UUID] = None
+    resume_url: Optional[str] = None
     cover_letter_url: Optional[str] = None
     status: ApplicationStatus
     fit_score: Optional[float] = None

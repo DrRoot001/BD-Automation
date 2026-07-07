@@ -117,3 +117,18 @@ tsconfig.tsbuildinfo
 **/tsconfig.tsbuildinfo
 debug_*.py
 test_e2e_evidence.json
+
+# FlareSolverr — downloaded runtime (bundled Chrome + exe, >500MB, files exceed
+# GitHub's 100MB limit). Machine-local; never commit. Configured via FLARESOLVERR_URL.
+backend/flaresolverr/
+backend/flaresolverr_windows_x64.zip
+
+# Local runtime scratch / diagnostics (machine-local, not source)
+backend/tmp/
+/tmp/
+/data/
+.claude/
+diag_*.py
+*_diag_*.png
+lever_*.png
+*.bak_before_*

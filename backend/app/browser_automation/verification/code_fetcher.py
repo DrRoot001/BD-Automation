@@ -66,6 +66,14 @@ _CODE_CUE_RE = re.compile(
 _CODE_MIXED_RE = re.compile(r"\b(?=[A-Za-z0-9]*[A-Za-z])(?=[A-Za-z0-9]*\d)([A-Za-z0-9]{5,10})\b")
 _CODE_DIGITS_RE = re.compile(r"\b(\d{6,8})\b")
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
+# Explicit-instruction format used by Greenhouse/Vercel/Anthropic:
+#   "…paste this code into the security code field on your application: ORfBCZBT"
+# The code ALWAYS follows the colon. This is the only extractor that catches an
+# ALL-LETTER code (e.g. "ORfBCZBT"): a digit-less code is invisible to the mixed
+# regex, and the generic cue regex grabs the intervening noise word ("field")
+# instead of the token after the colon. Bounded to a single line so "code" can't
+# bridge to an unrelated colon.
+_CODE_COLON_RE = re.compile(r"\bcode\b[^:\n]{0,80}:\s*\*?\s*([A-Za-z0-9]{5,12})\b", re.I)
 
 # Common English words 5-10 chars that show up RIGHT AFTER cue phrases like
 # "enter the code field below:" — the cue regex would otherwise capture them
@@ -149,31 +157,37 @@ def _pick_code(text: str) -> Optional[str]:
     """
     if not text:
         return None
-    # 1. Mixed alphanumeric token — return the FIRST one that isn't a year.
+
+    # REJECT all-letter tokens that look like English words — these are almost
+    # always noise from phrases like "enter the code field below" (the literal
+    # bug observed against a Greenhouse/Reddit run where the word "field" was
+    # typed into the OTP boxes). Real all-letter codes ("XZQPLMN") aren't in the
+    # blocklist.
+    def _looks_like_code(tok: str) -> bool:
+        if _YEAR_RE.match(tok):
+            return False
+        if tok.isalpha() and tok.lower() in _ENGLISH_NOISE:
+            return False
+        return True
+
+    # 1. Explicit "code … : TOKEN" instruction — the strongest signal, and the
+    #    ONLY path that catches all-letter codes (e.g. Greenhouse "ORfBCZBT").
+    for m in _CODE_COLON_RE.finditer(text):
+        tok = m.group(1)
+        if _looks_like_code(tok):
+            return tok
+    # 2. Mixed alphanumeric token — return the FIRST one that isn't a year.
     for m in _CODE_MIXED_RE.finditer(text):
         tok = m.group(1)
         if not _YEAR_RE.match(tok):
             return tok
-    # 2. Cue-anchored. Require a colon/space-delimited token after the cue;
+    # 3. Cue-anchored. Require a colon/space-delimited token after the cue;
     #    prefer the LAST hit (the code usually follows the final phrase).
-    #    REJECT all-letter tokens that look like English words — these are
-    #    almost always noise from phrases like "enter the code field below"
-    #    (the literal bug observed against a Greenhouse/Reddit run where the
-    #    word "field" was typed into the OTP boxes).
-    def _looks_like_code(tok: str) -> bool:
-        if _YEAR_RE.match(tok):
-            return False
-        # All-letter token AND in the noise blocklist → reject. Real all-letter
-        # codes are rare; the few we've seen are like "XZQPLMN" (random caps)
-        # which won't be in the blocklist.
-        if tok.isalpha() and tok.lower() in _ENGLISH_NOISE:
-            return False
-        return True
     cue_hits = [m.group(1) for m in _CODE_CUE_RE.finditer(text)
                 if _looks_like_code(m.group(1))]
     if cue_hits:
         return cue_hits[-1]
-    # 3. Pure-digit fallback (6–8 digits, excluding years).
+    # 4. Pure-digit fallback (6–8 digits, excluding years).
     for m in _CODE_DIGITS_RE.finditer(text):
         if not _YEAR_RE.match(m.group(1)):
             return m.group(1)
@@ -366,7 +380,10 @@ async def fill_code(page, frame, shape: CodeInputShape, code: str) -> bool:
     sel = shape.selectors[0]
     try:
         loc = ctx.locator(sel).first
-        await loc.click(timeout=2000)
+        try:
+            await loc.click(timeout=1000)
+        except Exception:
+            pass
         committed = await loc.evaluate(
             """(el, v) => {
                 try {
@@ -496,9 +513,15 @@ def _gmail_search_code_sync(
     refresh_token: str,
     after_epoch: int,
     max_results: int = 8,
+    sender_hint: str = "",
 ) -> Optional[str]:
     """Blocking Gmail call — list recent inbox messages and return the first
     one whose content looks like an ATS verification code.
+
+    `sender_hint` (e.g. "greenhouse", "ashby") restricts matches to messages
+    whose From/Subject contains it. Without this, two concurrent browser runs
+    for the same candidate steal each other's codes — observed live: an Ashby
+    run filled the Greenhouse code belonging to a parallel Vercel run.
 
     Wrapped by `_fetch_code_async` so the AgentLoop can await it.
     """
@@ -509,7 +532,11 @@ def _gmail_search_code_sync(
     # `after:` accepts a unix timestamp in seconds. We pad by 60s to catch
     # mail-server clock skew.
     after_q = max(0, after_epoch - 60)
-    q = f"in:inbox is:unread newer_than:1h after:{after_q}"
+    # NOTE: intentionally NOT filtering `in:inbox` or `is:unread`. ATS verification
+    # emails often land in Updates, Promotions, or Spam tabs, or may be read by a
+    # candidate's mail client. The after:{submit-60s} + newer_than:1h window scopes
+    # results to THIS submission.
+    q = f"newer_than:1h after:{after_q}"
     try:
         listing = service.users().messages().list(
             userId="me", q=q, maxResults=max_results,
@@ -522,14 +549,34 @@ def _gmail_search_code_sync(
         logger.warning(f"[verify] gmail list failed: {exc}")
         return None
     ids = [m["id"] for m in (listing.get("messages") or [])]
+    
+    # Pass 1: If sender_hint provided, prefer messages matching sender_hint
+    candidate_messages = []
     for mid in ids:
         try:
             msg = service.users().messages().get(
                 userId="me", id=mid, format="full",
             ).execute()
+            candidate_messages.append(msg)
         except Exception as exc:
             logger.debug(f"[verify] gmail get {mid} failed: {exc}")
             continue
+
+    if sender_hint:
+        for msg in candidate_messages:
+            headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
+            blob = ((headers.get("From") or "") + " " + (headers.get("Subject") or "")).lower()
+            if sender_hint.lower() in blob and _is_likely_verification(headers, msg.get("snippet") or ""):
+                code = _extract_code_from_message(msg)
+                if code:
+                    logger.info(
+                        f"[verify] Gmail code {code!r} from sender={headers.get('From')!r} "
+                        f"subject={headers.get('Subject')!r} (hint={sender_hint!r})"
+                    )
+                    return code
+
+    # Pass 2: Fallback — evaluate all candidate messages without sender_hint restriction
+    for msg in candidate_messages:
         headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
         if not _is_likely_verification(headers, msg.get("snippet") or ""):
             continue
@@ -537,7 +584,7 @@ def _gmail_search_code_sync(
         if code:
             logger.info(
                 f"[verify] Gmail code {code!r} from sender={headers.get('From')!r} "
-                f"subject={headers.get('Subject')!r}"
+                f"subject={headers.get('Subject')!r} (fallback match)"
             )
             return code
     return None
@@ -548,6 +595,7 @@ async def _fetch_code_async(
     after_epoch: int,
     timeout_s: float = 90.0,
     poll_interval_s: float = 6.0,
+    sender_hint: str = "",
 ) -> Optional[str]:
     """Poll Gmail until a code arrives or `timeout_s` elapses."""
     started = time.monotonic()
@@ -556,7 +604,7 @@ async def _fetch_code_async(
         attempts += 1
         loop = asyncio.get_event_loop()
         code = await loop.run_in_executor(
-            None, _gmail_search_code_sync, refresh_token, after_epoch
+            None, _gmail_search_code_sync, refresh_token, after_epoch, 8, sender_hint
         )
         if code:
             return code
@@ -572,12 +620,26 @@ async def _fetch_code_async(
 # Public entry point — call from the AgentLoop
 # ──────────────────────────────────────────────────────────────────────────
 
+def _default_code_timeout() -> float:
+    """OTP polling budget in seconds. `VERIFY_CODE_TIMEOUT_S` env overrides the
+    90s default — some ATSes take 120s+ to deliver the email, and a too-tight
+    timeout aborts the apply on a false negative."""
+    try:
+        return float(os.getenv("VERIFY_CODE_TIMEOUT_S", "90"))
+    except (TypeError, ValueError):
+        return 90.0
+
+
 async def fetch_verification_code(
     candidate_id: str,
     after_epoch: int,
-    timeout_s: float = 90.0,
+    timeout_s: Optional[float] = None,
+    sender_hint: str = "",
 ) -> Optional[str]:
     """Get the latest ATS verification code for this candidate.
+
+    `sender_hint` scopes the search to one ATS (e.g. "greenhouse", "ashby") so
+    concurrent runs for the same candidate don't steal each other's codes.
 
     Returns None when:
       - candidate_id missing
@@ -588,6 +650,8 @@ async def fetch_verification_code(
     """
     if not candidate_id:
         return None
+    if timeout_s is None:
+        timeout_s = _default_code_timeout()
     try:
         refresh_token = await _load_refresh_token(candidate_id)
     except RuntimeError as exc:
@@ -606,12 +670,210 @@ async def fetch_verification_code(
         )
         return None
     try:
-        return await _fetch_code_async(refresh_token, after_epoch, timeout_s=timeout_s)
+        return await _fetch_code_async(
+            refresh_token, after_epoch, timeout_s=timeout_s, sender_hint=sender_hint
+        )
     except Exception as exc:
         if "GMAIL_AUTH_FAILED" in str(exc):
             raise
         logger.warning(f"[verify] fetch_verification_code failed: {exc}")
         return None
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Magic-LINK fetch (passwordless login, e.g. Built In)
+#
+# Some portals authenticate via a one-time login LINK emailed to the candidate
+# (no OTP code). This fetches the newest such link from Gmail. Reuses the same
+# OAuth plumbing as the code fetcher (_make_creds / _load_refresh_token).
+# ──────────────────────────────────────────────────────────────────────────
+
+_HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
+_URL_RE = re.compile(r'https?://[^\s"\'<>)]+', re.I)
+
+
+def _extract_links(msg: dict) -> List[str]:
+    """Return every http(s) URL found in the message (href attrs first, then
+    bare URLs in the visible text), de-duplicated, order-preserving."""
+    bodies = _collect_bodies(msg.get("payload", {}))
+    links: List[str] = []
+    for b in bodies:
+        # href="..." in HTML parts (before we strip tags).
+        for m in _HREF_RE.finditer(b):
+            links.append(m.group(1))
+        # bare URLs anywhere.
+        for m in _URL_RE.finditer(b):
+            links.append(m.group(0))
+    # De-dupe, keep order.
+    return list(dict.fromkeys(links))
+
+
+_ASSET_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico",
+                     ".css", ".woff", ".woff2", ".ttf", ".dtd")
+
+
+def _unwrap_tracking_link(u: str) -> Optional[str]:
+    """Extract the real target from a click-tracking wrapper URL.
+
+    Handles both wrapper shapes seen in transactional mail:
+      - query-param (sendgrid/mailgun style): ?url=https%3A%2F%2F…
+      - path-embedded (AWS SES awstrack.me):  /L0/https:%2F%2Fhost%2Fpath/1/…
+        (the target's own slashes stay %2F-encoded, so it survives as a single
+        path segment).
+    Returns None when `u` is not a recognizable wrapper.
+    """
+    from urllib.parse import urlparse, parse_qs, unquote
+    try:
+        p = urlparse(u)
+    except Exception:
+        return None
+    for key in ("url", "target", "u", "redirect", "link"):
+        for val in parse_qs(p.query or "").get(key, []):
+            dec = unquote(val)
+            if dec.lower().startswith("http"):
+                return dec
+    for seg in (p.path or "").split("/"):
+        low = seg.lower()
+        if low.startswith("https:%2f%2f") or low.startswith("http:%2f%2f"):
+            return unquote(seg)
+    return None
+
+
+def _pick_login_link(links: List[str], host_hint: str, path_hints: Tuple[str, ...]) -> Optional[str]:
+    """Choose the best login/magic link from a message's links.
+
+    Tracking wrappers are unwrapped FIRST so ranking is judged on the real
+    target (BuiltIn's SES mail hides the login URL inside an awstrack.me path
+    segment while the email's logo images sit directly on builtin.com — naive
+    host matching returns a PNG). Asset URLs are never candidates.
+
+    Priority:
+      1. Target whose host contains `host_hint` AND whose path/query matches a
+         login-ish `path_hint` (login/verify/magic/token/auth/confirm/signin).
+      2. First non-asset target whose host contains `host_hint`.
+    Returns None if nothing plausible is found.
+    """
+    from urllib.parse import urlparse
+    host_hint = (host_hint or "").lower()
+    best_host_match: Optional[str] = None
+    for u in links:
+        target = _unwrap_tracking_link(u) or u
+        try:
+            p = urlparse(target)
+        except Exception:
+            continue
+        if (p.path or "").lower().endswith(_ASSET_EXTENSIONS):
+            continue
+        host = (p.hostname or "").lower()
+        if not (host_hint and host_hint in host):
+            continue
+        blob = ((p.path or "") + "?" + (p.query or "")).lower()
+        if any(h in blob for h in path_hints):
+            return target  # priority 1
+        if best_host_match is None:
+            best_host_match = target
+    return best_host_match
+
+
+def _gmail_search_link_sync(
+    refresh_token: str,
+    after_epoch: int,
+    sender_hint: str,
+    host_hint: str,
+    path_hints: Tuple[str, ...],
+    max_results: int = 8,
+) -> Optional[str]:
+    """Blocking Gmail call — find the newest recent message from `sender_hint`
+    and return its best login link."""
+    from googleapiclient.discovery import build
+    creds = _make_creds(refresh_token)
+    service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+    after_q = max(0, after_epoch - 60)
+    # Scope to the sender when we have one — magic-link mail is transactional.
+    q = f"newer_than:1h after:{after_q}"
+    if sender_hint:
+        q = f"from:{sender_hint} {q}"
+    try:
+        # includeSpamTrash: transactional login mail from a new sender lands in
+        # spam often enough that missing it silently blocks the whole login.
+        listing = service.users().messages().list(
+            userId="me", q=q, maxResults=max_results, includeSpamTrash=True,
+        ).execute()
+    except Exception as exc:
+        err_msg = str(exc).lower()
+        if "invalid_grant" in err_msg or "unauthorized" in err_msg or "invalid client" in err_msg:
+            logger.error(f"[verify] Gmail token invalid or expired: {exc}")
+            raise RuntimeError(f"GMAIL_AUTH_FAILED: {exc}")
+        logger.warning(f"[verify] gmail link-list failed: {exc}")
+        return None
+    ids = [m["id"] for m in (listing.get("messages") or [])]
+    for mid in ids:
+        try:
+            msg = service.users().messages().get(
+                userId="me", id=mid, format="full",
+            ).execute()
+        except Exception as exc:
+            logger.debug(f"[verify] gmail get {mid} failed: {exc}")
+            continue
+        headers = {h["name"]: h["value"] for h in (msg.get("payload", {}).get("headers") or [])}
+        link = _pick_login_link(_extract_links(msg), host_hint, path_hints)
+        if link:
+            logger.info(
+                f"[verify] Gmail magic-link found from sender={headers.get('From')!r} "
+                f"subject={headers.get('Subject')!r} → {link[:80]}…"
+            )
+            return link
+    return None
+
+
+async def fetch_magic_link(
+    candidate_id: str,
+    after_epoch: int,
+    sender_hint: str = "",
+    host_hint: str = "",
+    path_hints: Tuple[str, ...] = ("login", "signin", "sign-in", "verify", "magic",
+                                    "token", "auth", "confirm", "activate"),
+    timeout_s: float = 120.0,
+    poll_interval_s: float = 6.0,
+) -> Optional[str]:
+    """Poll Gmail for a passwordless one-time login LINK and return the URL.
+
+    Mirrors fetch_verification_code but extracts a URL instead of an OTP.
+      - sender_hint: e.g. "builtin.com" (narrows the Gmail search).
+      - host_hint:   e.g. "builtin.com" (the host the real link should point at).
+    Returns None on any failure (no Gmail token, timeout, etc.) so the caller
+    can degrade gracefully.
+    """
+    if not candidate_id:
+        return None
+    try:
+        refresh_token = await _load_refresh_token(candidate_id)
+    except RuntimeError as exc:
+        logger.warning(f"[verify] transient token-load failure ({exc}) — retry next poll")
+        return None
+    if not refresh_token:
+        logger.info(f"[verify] candidate {candidate_id[:8]} has no google_refresh_token; skipping magic-link fetch")
+        return None
+    started = time.monotonic()
+    attempts = 0
+    while time.monotonic() - started < timeout_s:
+        attempts += 1
+        loop = asyncio.get_event_loop()
+        try:
+            link = await loop.run_in_executor(
+                None, _gmail_search_link_sync, refresh_token, after_epoch,
+                sender_hint, host_hint, path_hints,
+            )
+        except Exception as exc:
+            if "GMAIL_AUTH_FAILED" in str(exc):
+                raise
+            logger.warning(f"[verify] fetch_magic_link failed: {exc}")
+            return None
+        if link:
+            return link
+        await asyncio.sleep(poll_interval_s)
+    logger.warning(f"[verify] Gmail magic-link polling timed out after {timeout_s:.0f}s ({attempts} attempt(s))")
+    return None
 
 
 async def _load_refresh_token(candidate_id: str) -> Optional[str]:
@@ -620,6 +882,7 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
         from sqlalchemy import select
         from app.database import task_session
         from app.models.candidate import Candidate
+        from app.services.crypto import decrypt_token
     except Exception as exc:
         logger.warning(f"[verify] cannot import DB session: {exc}")
         return None
@@ -634,9 +897,10 @@ async def _load_refresh_token(candidate_id: str) -> Optional[str]:
             row = (
                 await s.execute(select(Candidate).where(Candidate.id == candidate_id))
             ).scalar_one_or_none()
-            if not row:
+            if not row or not row.google_refresh_token:
                 return None
-            return row.google_refresh_token or None
+            decrypted = decrypt_token(row.google_refresh_token)
+            return decrypted or None
     except Exception as exc:
         # IMPORTANT: a query failure (closed event loop, transient DB drop, pool
         # exhaustion) is NOT the same as "no token". Raise a distinct sentinel
