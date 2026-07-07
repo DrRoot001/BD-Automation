@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
-import { formatDistanceToNow, resolveFileUrl } from '../utils'
+import { formatDistanceToNow, resolveFileUrl, formatJobUrl } from '../utils'
 import { useRouter } from 'next/navigation'
 import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
@@ -231,7 +231,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                   <td className="px-3 py-3 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
                     {!isCompleted(app.status) && !isInFlight(app.status) && app.job_url ? (
                       <a
-                        href={app.job_url}
+                        href={formatJobUrl(app.job_url)}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-xs text-danger font-semibold hover:underline"
@@ -242,7 +242,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                       </a>
                     ) : app.job_url ? (
                       <a
-                        href={app.job_url}
+                        href={formatJobUrl(app.job_url)}
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center gap-1 text-xs text-accent hover:underline"

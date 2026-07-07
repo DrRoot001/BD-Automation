@@ -6,6 +6,7 @@ import { useApplicationHistory } from '@/hooks/useApplicationHistory'
 import { useJob } from '@/hooks/useJob'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
+import { formatJobUrl } from '@/components/utils'
 import { FAILURE_INFO } from '@/lib/failureReasons'
 
 const COMPLETED_STATUSES = [
@@ -120,7 +121,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                   </span>
                   {application.failure_reason !== 'JOB_EXPIRED' && application.job_url && (
                     <a
-                      href={application.job_url}
+                      href={formatJobUrl(application.job_url)}
                       target="_blank"
                       rel="noreferrer"
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-danger hover:bg-danger/90 px-3 py-1.5 rounded-lg w-max transition-colors mt-1 shadow-sm"
@@ -186,7 +187,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                 )}
                 
                 {application.job_url && (
-                  <a href={application.job_url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">
+                  <a href={formatJobUrl(application.job_url)} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">
                     <div className="flex items-center gap-3">
                       <div className="p-2 bg-purple-500/10 text-purple-400 rounded-md">
                         <ExternalLink className="w-4 h-4" />
