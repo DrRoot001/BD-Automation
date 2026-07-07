@@ -1,0 +1,18 @@
+{
+  "select location": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Select location",
+    "last_seen": 1783440922,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "tap to select job title": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Tap to select job title",
+    "last_seen": 1783441322,
+    "source": "agent_loop",
+    "value": "ServiceNow ITSM Developer"
+  }
+}

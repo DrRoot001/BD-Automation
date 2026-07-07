@@ -1007,6 +1007,14 @@
     "source": "screening",
     "value": "Yes"
   },
+  "tap to select job title": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Tap to select job title",
+    "last_seen": 1783441322,
+    "source": "agent_loop",
+    "value": "ServiceNow ITSM Developer"
+  },
   "this role is a hands-on backend software engineering position requiring producti": {
     "count": 2,
     "field_type": "text",

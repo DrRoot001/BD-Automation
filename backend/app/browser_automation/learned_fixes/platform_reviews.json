@@ -334,6 +334,14 @@
       {
         "timestamp": "2026-07-07T10:24:39.853942",
         "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-07T16:20:30.357575",
+        "error": "Error 8 connecting to wired-troll-155323.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-07T16:23:13.673093",
+        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
       }
     ]
   },

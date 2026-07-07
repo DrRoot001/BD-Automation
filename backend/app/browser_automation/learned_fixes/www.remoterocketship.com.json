@@ -1,7 +1,7 @@
 {
   "_meta": {
     "ats": "www.remoterocketship.com",
-    "last_updated": 1782856850
+    "last_updated": 1783441450
   },
   "how_did_you_hear_about_this_job": [
     "input[name='job_application[source_id]']",
@@ -11,6 +11,8 @@
     "input[type='file'][name='resume']"
   ],
   "submit": [
+    "button:has-text(\"I'm Ready\")",
+    "button:has-text(\"Next\")",
     "a:has-text(\"Apply now\")"
   ]
 }
