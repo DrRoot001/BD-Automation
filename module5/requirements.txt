@@ -1,0 +1,24 @@
+# =============================================================================
+# Module 5 — Email Scanning & Interview Detection
+# =============================================================================
+# Requires: Google OAuth connected per-candidate (google_refresh_token in DB)
+# =============================================================================
+
+# ── Google APIs (Gmail) ───────────────────────────────────────────────────────
+google-api-python-client>=2.150.0
+google-auth>=2.30.0
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.2.0
+httplib2>=0.22.0
+
+# ── Database ──────────────────────────────────────────────────────────────────
+SQLAlchemy>=2.0.30
+asyncpg>=0.29.0
+
+# ── Data Validation ───────────────────────────────────────────────────────────
+pydantic>=2.6.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+structlog>=24.1.0
+cryptography>=42.0.0

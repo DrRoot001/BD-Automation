@@ -7,6 +7,14 @@
     "source": "agent_loop",
     "value": "4"
   },
+  "address": {
+    "count": 1,
+    "field_type": "text",
+    "label": "*Address",
+    "last_seen": 1783115262,
+    "source": "screening",
+    "value": "Not provided"
+  },
   "addresssvgs not supported by this browser": {
     "count": 1,
     "field_type": "text",
@@ -80,11 +88,11 @@
     "value": "US"
   },
   "country": {
-    "count": 1,
-    "field_type": "select",
-    "label": "Country",
-    "last_seen": 1782735138,
-    "source": "screening",
+    "count": 2,
+    "field_type": "text",
+    "label": "country",
+    "last_seen": 1783115078,
+    "source": "agent_loop",
     "value": "United States"
   },
   "current company / employer": {
@@ -160,10 +168,10 @@
     "value": "Senior AI Automation Engineer"
   },
   "how would you describe your english fluency": {
-    "count": 8,
+    "count": 13,
     "field_type": "radio",
     "label": "*How would you describe your English Fluency?",
-    "last_seen": 1783099333,
+    "last_seen": 1783371340,
     "source": "screening",
     "value": "Fluent"
   },
@@ -207,6 +215,14 @@
     "source": "llm:0.90",
     "value": "linkedin.com/in/ammar-hanif"
   },
+  "linkedin or professional website": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn or Professional Website:",
+    "last_seen": 1783115031,
+    "source": "agent_loop",
+    "value": "linkedin.com/in/ammar-hanif"
+  },
   "linkedin profile": {
     "count": 1,
     "field_type": "text",
@@ -216,10 +232,10 @@
     "value": "Not provided"
   },
   "location": {
-    "count": 4,
+    "count": 5,
     "field_type": "text",
     "label": "Location",
-    "last_seen": 1783099223,
+    "last_seen": 1783115065,
     "source": "agent_loop",
     "value": "United States"
   },
@@ -272,26 +288,26 @@
     "value": "M. Ammar Hanif"
   },
   "please identify your race": {
-    "count": 7,
+    "count": 8,
     "field_type": "text",
     "label": "Please identify your race",
-    "last_seen": 1783102812,
+    "last_seen": 1783115098,
     "source": "agent_loop",
     "value": "Asian"
   },
   "please specify your current visa or work authorization status (e.g., u.s. citizen, h-1b, f-1 opt, green card holder, l-2 ead, etc.)": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
-    "label": "*Please specify your current visa or work authorization status (e.g., U.S. Citizen, H-1B, F-1 OPT, Green Card Holder, L-2 EAD, etc.):",
-    "last_seen": 1783088083,
-    "source": "screening",
-    "value": "Visa"
+    "label": "Please specify your current visa or work authorization status (e.g., U.S. Citizen, H-1B, F-1 OPT, Green Card Holder, L-2 EAD, etc.):",
+    "last_seen": 1783115158,
+    "source": "agent_loop",
+    "value": "US Citizen"
   },
   "postcode": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "postcode",
-    "last_seen": 1783087952,
+    "last_seen": 1783115067,
     "source": "agent_loop",
     "value": "94105"
   },
@@ -304,12 +320,12 @@
     "value": "M."
   },
   "preferred name": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
-    "label": "*Preferred Name",
-    "last_seen": 1783088081,
-    "source": "rules",
-    "value": "M. Ammar Hanif"
+    "label": "Preferred Name",
+    "last_seen": 1783115085,
+    "source": "agent_loop",
+    "value": "M. Ammar"
   },
   "preferred pronouns": {
     "count": 1,
@@ -334,6 +350,14 @@
     "last_seen": 1783099287,
     "source": "agent_loop",
     "value": "Asian (Not Hispanic or Latino)"
+  },
+  "search for jobs or keywords": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Search for jobs or keywords",
+    "last_seen": 1783115518,
+    "source": "agent_loop",
+    "value": "HR AI/ML Engineer II"
   },
   "security input 1": {
     "count": 1,
@@ -440,20 +464,20 @@
     "value": "Not provided"
   },
   "what is your desired salary range for this role, including base and any variable": {
-    "count": 4,
+    "count": 5,
     "field_type": "text",
     "label": "What is your desired salary range for this role, including base and any variable",
-    "last_seen": 1783099238,
+    "last_seen": 1783115080,
     "source": "agent_loop",
-    "value": "$180,000 - $200,000"
+    "value": "$180,000 - $220,000"
   },
   "why did you decide to apply to this role at clickup": {
-    "count": 4,
+    "count": 5,
     "field_type": "text",
     "label": "Why did you decide to apply to this role at ClickUp?",
-    "last_seen": 1783099265,
+    "last_seen": 1783115107,
     "source": "agent_loop",
-    "value": "I am excited to apply for the Senior Data Engineer role at ClickUp. My experience as a Senior AI Automation Engineer at Mavericks United, where I led the architecture and delivery of AI-powered systems and managed a team of 7 engineers, aligns well with the leadership and technical requirements of this position. I have a strong background in data engineering, cloud platforms like AWS and Snowflake, and building scalable data solutions, which I believe would be valuable in enhancing ClickUp's data platform and AI workloads."
+    "value": "I am excited by the opportunity to leverage my expertise in AI automation and data engineering to contribute to ClickUp's mission. My experience in architecting production-grade SaaS platforms and leading cross-functional teams aligns well with the Staff Data Engineer role, especially in leading architecture and initiatives for data platforms including AI workloads."
   },
   "why scale ai": {
     "count": 1,

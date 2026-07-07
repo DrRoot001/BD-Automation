@@ -131,7 +131,7 @@
     ],
     "spam_backoff": {
       "count": 1,
-      "until": "2026-07-03T11:09:01.012122"
+      "until": "2026-07-03T21:51:22.835443"
     }
   },
   "https://job-boards.greenhouse.io/vercel/jobs/5704320004": {
@@ -264,6 +264,19 @@
       {
         "timestamp": "2026-07-06T14:05:45.127878",
         "error": "BLOCKED: vision-agent flagged page state: The page is blocked by a reCAPTCHA challenge, preventing further interaction."
+      }
+    ]
+  },
+  "workday": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-03T21:47:06.016737",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-03T21:56:08.482072",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
       }
     ]
   }

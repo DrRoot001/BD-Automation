@@ -1,0 +1,43 @@
+# =============================================================================
+# Module 3 — Resume Tailoring, Scoring & Orchestration
+# =============================================================================
+# Handles: PDF parsing, LLM scoring, resume tailoring, cover letter generation,
+# application package orchestration, ATS scoring.
+# All deps are also listed in backend/requirements.txt for the unified install.
+# =============================================================================
+
+# ── PDF / Document Processing ─────────────────────────────────────────────────
+pdfplumber>=0.10.0
+pypdf>=4.0.0
+pypdfium2>=4.30.0
+pdfminer.six>=20231228
+python-docx>=1.1.0
+reportlab>=4.0.0
+xhtml2pdf>=0.2.13
+pillow>=10.0.0
+lxml>=5.0.0
+
+# ── LLM / AI ──────────────────────────────────────────────────────────────────
+google-generativeai>=0.8.0
+anthropic>=0.40.0
+groq>=1.0.0
+
+# ── Text Processing / NLP ─────────────────────────────────────────────────────
+nltk>=3.8.0
+scikit-learn>=1.4.0
+numpy>=1.26.0
+regex>=2024.0.0
+
+# ── Data Validation ───────────────────────────────────────────────────────────
+pydantic>=2.6.0
+
+# ── Templating ────────────────────────────────────────────────────────────────
+Jinja2>=3.1.0
+
+# ── HTTP ──────────────────────────────────────────────────────────────────────
+httpx>=0.27.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+structlog>=24.1.0

@@ -144,7 +144,7 @@ async def _already_applied_job_ids(client: httpx.AsyncClient, candidate_id: str)
     return set()
 
 
-async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
+async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = None) -> Dict[str, Any]:
     queued: List[str] = []
     skipped: int = 0
 
@@ -162,6 +162,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
+            "bd_user_id": bd_user_id,
             "step": "fetching_jobs",
             "message": "Fetching available jobs from database..."
         })
@@ -172,6 +173,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
+            "bd_user_id": bd_user_id,
             "step": "matching",
             "message": f"Matching candidate profile against {len(jobs)} available jobs..."
         })
@@ -193,6 +195,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
         if not scored:
             publish_event_sync("pipeline.progress", {
                 "candidate_id": candidate_id,
+                "bd_user_id": bd_user_id,
                 "step": "no_matches",
                 "message": "No jobs found above the match score threshold."
             })
@@ -200,6 +203,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
+            "bd_user_id": bd_user_id,
             "step": "matches_found",
             "message": f"Found {len(scored)} suitable jobs. Triggering AI matching and application pipeline..."
         })
@@ -224,6 +228,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
                     active = result.get("active_count", 0)
                     publish_event_sync("pipeline.progress", {
                         "candidate_id": candidate_id,
+                        "bd_user_id": bd_user_id,
                         "step": "limit_reached",
                         "message": f"Application limit reached ({active} job(s) already pending/queued)."
                     })
@@ -245,6 +250,7 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
 
                 publish_event_sync("pipeline.progress", {
                     "candidate_id": candidate_id,
+                    "bd_user_id": bd_user_id,
                     "step": "done",
                     "message": f"Processed {len(enqueued_ids)} new jobs{skip_msg}."
                 })
@@ -261,17 +267,22 @@ async def _run(candidate_id: str, max_apps: int) -> Dict[str, Any]:
     queue="queue:job_processing",
     max_retries=1,
 )
-def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None):
+def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None):
     """Score every open job against the candidate's CV, queue top matches into M4.
 
     Args:
         candidate_id: the candidate to source for.
         max_apps: cap on number of applications (defaults to MAX_APPLICATIONS_PER_RUN env).
+        bd_user_id: supabase_user_id of the BD user who triggered this run.
+                    Used to scope WebSocket pipeline.progress events to only that user.
     """
-    logger.info(f"[Celery] Starting dynamic-apply for candidate={candidate_id} max_apps={max_apps}")
+    logger.info(
+        f"[Celery] Starting dynamic-apply for candidate={candidate_id} "
+        f"max_apps={max_apps} triggered_by_user={bd_user_id}"
+    )
 
     try:
-        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN))
+        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN, bd_user_id))
         logger.info(f"[Celery] Dynamic-apply completed for candidate={candidate_id}: {result}")
         return result
     except Exception as e:
@@ -279,6 +290,7 @@ def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None):
         try:
             publish_event_sync("pipeline.progress", {
                 "candidate_id": candidate_id,
+                "bd_user_id": bd_user_id,
                 "step": "error",
                 "message": f"Pipeline failed: {e}"
             })

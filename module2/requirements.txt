@@ -1,0 +1,28 @@
+# =============================================================================
+# Module 2 — Job Scraping / Discovery Dependencies
+# =============================================================================
+# Python adapters for Greenhouse, Lever, Indeed, RSS, etc.
+# Node.js scraper dependencies are in module2/scraper/package.json
+# Install Node deps: cd module2/scraper && npm install
+# =============================================================================
+
+# ── HTTP / Async ──────────────────────────────────────────────────────────────
+httpx>=0.27.0
+aiohttp>=3.9.0
+requests>=2.31.0
+
+# ── HTML Parsing ──────────────────────────────────────────────────────────────
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+soupsieve>=2.5.0
+
+# ── Data Validation ───────────────────────────────────────────────────────────
+pydantic>=2.6.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0
+tenacity>=8.2.0
+feedparser>=6.0.0
+
+# ── Embedding Generation (for job vectors) ────────────────────────────────────
+numpy>=1.26.0

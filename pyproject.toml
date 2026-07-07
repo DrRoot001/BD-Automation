@@ -3,15 +3,39 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "bd-automator-backend"
+name = "bd-automator"
 version = "1.0.0"
-description = "BD Automator Backend APIs and Modules"
+description = "BD Automator — AI-powered job application pipeline (Modules 2-5 + Backend)"
+requires-python = ">=3.11"
 authors = [
-    {name = "Sabih", email = "sabih@example.com"},
+    {name = "BD Automator Team"},
 ]
+
+# All runtime deps are managed via backend/requirements.txt.
+# This pyproject.toml only controls package discovery for editable installs.
 dependencies = []
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["module2*", "module3*", "module4*", "module5*"]
-exclude = ["tests*", "docs*"]
+include = ["module2*", "module3*", "module4*", "module5*", "backend*"]
+exclude = ["tests*", "docs*", "*.venv*", "venv*"]
+
+# ── Pytest config ─────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = [
+    "backend/tests",
+    "module4/tasks",
+]
+
+# ── Ruff (linting / formatting) ───────────────────────────────────────────────
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]  # long lines handled separately
+
+# ── Mypy ──────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true

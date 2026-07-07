@@ -17,7 +17,15 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+# Python: try the well-known system path first, fall back to PATH lookup
+_PREFERRED_PYTHON="/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+if [ -f "$_PREFERRED_PYTHON" ]; then
+  PYTHON="$_PREFERRED_PYTHON"
+else
+  PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+fi
+
+# Node: try the nvm path first, then fall back to system PATH
 NODE_BIN="$HOME/.nvm/versions/node/v20.19.5/bin"
 
 BACKEND_PORT=8000
@@ -53,10 +61,13 @@ echo -e "${BOLD}BD Automator — Development Stack${RESET}"
 echo -e "${DIM}────────────────────────────────────────────────${RESET}"
 echo ""
 
-if [ ! -f "$PYTHON" ]; then
-  err "Python not found at $PYTHON"
-  echo "    Set PYTHON= at the top of this script to your python3 path."
-  exit 1
+if [ -z "$PYTHON" ] || [ ! -f "$PYTHON" ]; then
+  # Final fallback: check system PATH
+  PYTHON="$(command -v python3 2>/dev/null || command -v python 2>/dev/null || true)"
+  if [ -z "$PYTHON" ]; then
+    err "Python not found. Install Python 3.12+ and ensure it is on your PATH."
+    exit 1
+  fi
 fi
 
 if [ ! -f "$ROOT/backend/.env" ]; then

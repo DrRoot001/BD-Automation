@@ -235,7 +235,13 @@ class ApplyRequest(BaseModel):
     max_apps: int = 10
 
 @router.post("/{candidate_id}/apply")
-async def trigger_apply(request: Request, candidate_id: str, request_body: ApplyRequest, db: AsyncSession = Depends(get_db)):
+async def trigger_apply(
+    request: Request,
+    candidate_id: str,
+    request_body: ApplyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     import logging as _bg_logging
     _bg_log = _bg_logging.getLogger("dynamic_apply.trigger")
 
@@ -249,11 +255,26 @@ async def trigger_apply(request: Request, candidate_id: str, request_body: Apply
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # Enforce ownership: BD users can only trigger apply for their own candidates
+    if current_user.role != UserRole.admin:
+        if candidate.user_id is None or str(candidate.user_id) != str(current_user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: this candidate is not assigned to your account."
+            )
+
+    # Pass the triggering user's supabase_user_id so Celery workers can scope
+    # WebSocket events to only the correct BD user's browser session.
+    bd_user_id = str(current_user.supabase_user_id) if current_user.supabase_user_id else None
+
     from app.tasks.dynamic_apply import dynamic_apply
 
     try:
-        dynamic_apply.apply_async(args=[candidate_id, request_body.max_apps])
-        _bg_log.info(f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} max_apps={request_body.max_apps}")
+        dynamic_apply.apply_async(args=[candidate_id, request_body.max_apps, bd_user_id])
+        _bg_log.info(
+            f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} "
+            f"max_apps={request_body.max_apps} triggered_by={current_user.email}"
+        )
     except Exception as e:
         _bg_log.error(f"[Apply] Failed to dispatch Celery task for candidate={candidate_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to start apply pipeline: {e}")

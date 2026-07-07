@@ -38,7 +38,7 @@ def get_http_client() -> AsyncClient:
             except Exception:
                 pass
         limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
-        _http_client = AsyncClient(limits=limits, timeout=10.0)
+        _http_client = AsyncClient(limits=limits, timeout=30.0)
         _http_client_loop = current_loop
     return _http_client
 
@@ -284,7 +284,7 @@ async def create_bd_user(
                 "email_confirm": True,
                 "user_metadata": {"full_name": user_name} if user_name else {},
             },
-            timeout=10.0,
+            timeout=30.0,
         )
 
     if resp.status_code not in (200, 201):
@@ -410,7 +410,7 @@ async def update_user(
                     "Content-Type": "application/json",
                 },
                 json=update_data,
-                timeout=10.0,
+                timeout=30.0,
             )
             if resp.status_code != 200:
                 raise HTTPException(status_code=resp.status_code, detail=f"Supabase update error: {resp.text}")
@@ -467,7 +467,7 @@ async def update_user_password(
             json={
                 "password": payload.password,
             },
-            timeout=10.0,
+            timeout=30.0,
         )
         if resp.status_code != 200:
             raise HTTPException(status_code=resp.status_code, detail=f"Supabase password update error: {resp.text}")
