@@ -1,0 +1,154 @@
+{
+  "are you legally authorized to work in the us (if you are a canadian citizen and eligible to work/travel on a tn visa, please select \"yes\")": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you legally authorized to work in the US? (If you are a Canadian citizen and eligible to work/travel on a TN visa, please select \"Yes\")",
+    "last_seen": 1783436216,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "are you willing to relocate if needed": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you willing to relocate if needed?",
+    "last_seen": 1783431905,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field1]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field1]",
+    "last_seen": 1783432045,
+    "source": "agent_loop",
+    "value": "With 11 years of experience as a Dynamics 365 Solution Architect, I have extensive expertise in architecting enterprise-wide Dynamics 365 ecosystems, including F&O, CRM, and Power Platform. My background aligns perfectly with the requirements for leading technical teams and building robust solutions for Conduent, leveraging Azure and Power Platform integration."
+  },
+  "cards[d41a73d9-92c2-41b9-a375-3a00d8c767c2][field3]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[d41a73d9-92c2-41b9-a375-3a00d8c767c2][field3]",
+    "last_seen": 1783436236,
+    "source": "agent_loop",
+    "value": "0% travel"
+  },
+  "confirm the ability to perform the requisite duties of the role with or without reasonable accommodations": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Confirm the ability to perform the requisite duties of the role with or without reasonable accommodations",
+    "last_seen": 1783432067,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "eeo[gender]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "eeo[gender]",
+    "last_seen": 1783436120,
+    "source": "agent_loop",
+    "value": "Male"
+  },
+  "eeo[race]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "eeo[race]",
+    "last_seen": 1783436241,
+    "source": "agent_loop",
+    "value": "Asian (Not Hispanic or Latino)"
+  },
+  "eeo[veteran]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "eeo[veteran]",
+    "last_seen": 1783436248,
+    "source": "agent_loop",
+    "value": "I am not a veteran"
+  },
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "email",
+    "last_seen": 1783436076,
+    "source": "agent_loop",
+    "value": "mark.anderson4543@gmail.com"
+  },
+  "expected salary": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Expected Salary",
+    "last_seen": 1783432002,
+    "source": "agent_loop",
+    "value": "150000"
+  },
+  "location": {
+    "count": 2,
+    "field_type": "text",
+    "label": "location",
+    "last_seen": 1783436200,
+    "source": "agent_loop",
+    "value": "US"
+  },
+  "name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "name",
+    "last_seen": 1783436015,
+    "source": "agent_loop",
+    "value": "Mark Anderson"
+  },
+  "org": {
+    "count": 1,
+    "field_type": "text",
+    "label": "org",
+    "last_seen": 1783436209,
+    "source": "agent_loop",
+    "value": "Dynamics 365 Help Inc."
+  },
+  "phone": {
+    "count": 2,
+    "field_type": "text",
+    "label": "phone",
+    "last_seen": 1783436391,
+    "source": "agent_loop",
+    "value": "+15122777059"
+  },
+  "type your response": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Type your response",
+    "last_seen": 1783432090,
+    "source": "agent_loop",
+    "value": "My 11 years of experience as a Dynamics 365 Solution Architect aligns perfectly with the requirements for leading technical teams and building robust solutions for Conduent, leveraging Azure and Power Platform integration."
+  },
+  "what % of travel are you open to": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What % of travel are you open to?",
+    "last_seen": 1783431899,
+    "source": "agent_loop",
+    "value": "10%"
+  },
+  "what gender do you identify as": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What gender do you identify as?",
+    "last_seen": 1783436312,
+    "source": "agent_loop",
+    "value": "Male"
+  },
+  "what is your age range": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What is your age range?",
+    "last_seen": 1783436255,
+    "source": "agent_loop",
+    "value": "30-39"
+  },
+  "will you now, or in the future, require sponsorship for employment visa status (e.g. h-1b visa status)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Will you now, or in the future, require sponsorship for employment visa status (e.g. H-1B visa status)?",
+    "last_seen": 1783436032,
+    "source": "agent_loop",
+    "value": "No"
+  }
+}

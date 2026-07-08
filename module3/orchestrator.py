@@ -264,19 +264,7 @@ async def orchestrate_application_package(
                 f"Combined: {match_result.combined_score}"
             )
 
-        # Check Gate Threshold
-        if not match_result.should_apply and not skip_gate:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 75. Transitioning status to ANALYZED and STOPPING.")
-            
-            # Transition to ANALYZED
-            update_payload = {
-                "status": "ANALYZED",
-                "fit_score": match_result.fit_score,
-                "ats_score": match_result.ats_score,
-                "combined_score": match_result.combined_score,
-                "metadata": {"reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 75.0", "explanation": match_result.reasoning}
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        # (Gate check moved to after tailoring)
             
             return {
                 "status": "ANALYZED",
@@ -308,6 +296,31 @@ async def orchestrate_application_package(
             prefetched_missing_keywords=match_result.missing_skills,
         )
         print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
+
+        # Check Gate Threshold on TAILORED score
+        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        if tailored_resume.ats_score_after < threshold_val and not skip_gate:
+            print(f"[ORCHESTRATOR] ats_score_after ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}. Transitioning status to ANALYZED and STOPPING.")
+            
+            # Transition to ANALYZED
+            update_payload = {
+                "status": "ANALYZED",
+                "fit_score": tailored_resume.ats_score_after,
+                "ats_score": tailored_resume.ats_score_after,
+                "combined_score": tailored_resume.ats_score_after,
+                "metadata": {"reason": f"Tailored ATS score ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}", "explanation": "Failed even after tailoring"}
+            }
+            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+            
+            return {
+                "status": "ANALYZED",
+                "application_id": app_id,
+                "match_result": match_result.model_dump(mode="json"),
+                "tailored_resume_id": base_resume_id,
+                "resume_pdf_url": base_resume_file_url or (resume_data.file_url if resume_data else ""),
+                "cover_letter_url": None,
+                "screening_answers": {}
+            }
 
         # Upload Tailored Resume to Supabase
         candidate_name = candidate.get("name") or candidate_id
@@ -576,35 +589,7 @@ async def prepare_package_for_live_application(
         match_result = await score_job_fit(candidate, resume_data, job)
         print(f"[ORCHESTRATOR] Scores calculated - Fit: {match_result.fit_score} | ATS: {match_result.ats_score} | Combined: {match_result.combined_score}")
         
-        # Check Gate Threshold
-        if not match_result.should_apply and not skip_gate:
-            print(f"[ORCHESTRATOR] combined_score ({match_result.combined_score}) is below gate threshold of 75. Transitioning status to ANALYZED and STOPPING.")
-            
-            # Transition to ANALYZED
-            update_payload = {
-                "status": "ANALYZED",
-                "fit_score": match_result.fit_score,
-                "ats_score": match_result.ats_score,
-                "combined_score": match_result.combined_score,
-                "metadata": {"reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 75.0", "explanation": match_result.reasoning}
-            }
-            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
-            
-            return {
-                "should_apply": False,
-                "reason": f"Combined score ({match_result.combined_score}) is below gate threshold of 75: {match_result.reasoning}"
-            }
-
-        # Transition application to QUEUED
-        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'QUEUED'...")
-        update_payload = {
-            "status": "QUEUED",
-            "fit_score": match_result.fit_score,
-            "ats_score": match_result.ats_score,
-            "combined_score": match_result.combined_score,
-            "metadata": {"explanation": match_result.reasoning}
-        }
-        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+        # (Gate check and QUEUED transition moved to after tailoring)
 
         # Calculate next version
         next_version = 2
@@ -625,6 +610,38 @@ async def prepare_package_for_live_application(
             prefetched_ats_score=match_result.ats_score,
             prefetched_missing_keywords=match_result.missing_skills,
         )
+        print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
+
+        # Check Gate Threshold on TAILORED score
+        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        if tailored_resume.ats_score_after < threshold_val and not skip_gate:
+            print(f"[ORCHESTRATOR] ats_score_after ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}. Transitioning status to ANALYZED and STOPPING.")
+            
+            # Transition to ANALYZED
+            update_payload = {
+                "status": "ANALYZED",
+                "fit_score": tailored_resume.ats_score_after,
+                "ats_score": tailored_resume.ats_score_after,
+                "combined_score": tailored_resume.ats_score_after,
+                "metadata": {"reason": f"Tailored ATS score ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}", "explanation": "Failed even after tailoring"}
+            }
+            await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
+            
+            return {
+                "should_apply": False,
+                "reason": f"Tailored ATS score ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}."
+            }
+
+        # Transition application to QUEUED
+        print("[ORCHESTRATOR] Combined score matches threshold. Transitioning status to 'QUEUED'...")
+        update_payload = {
+            "status": "QUEUED",
+            "fit_score": tailored_resume.ats_score_after,
+            "ats_score": tailored_resume.ats_score_after,
+            "combined_score": tailored_resume.ats_score_after,
+            "metadata": {"explanation": "Passed threshold after tailoring."}
+        }
+        await client.patch(f"/api/applications/{app_id}/status", json=update_payload)
         
         # Upload Tailored Resume to Supabase
         candidate_name = candidate.get("name") or candidate_id
