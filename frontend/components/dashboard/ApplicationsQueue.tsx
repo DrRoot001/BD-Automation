@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
@@ -65,38 +65,46 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
   const [page, setPage] = useState(0)
   const [pipelineState, setPipelineState] = useState<{ step: string; message: string; ts: Date } | null>(null)
 
+  // Coalesce WebSocket-driven refetches. During an active pipeline run these
+  // events (pipeline.progress / application.created / application.status_changed)
+  // stream in rapidly; invalidating on each one fired a burst of concurrent,
+  // identical /dashboard/applications refetches. Debounce so a burst collapses
+  // into a single refetch of the (expensive) applications + kpis queries.
+  const invalidateTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleRefetch = () => {
+    if (invalidateTimer.current) clearTimeout(invalidateTimer.current)
+    invalidateTimer.current = setTimeout(() => {
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      queryClient.invalidateQueries({ queryKey: ['kpis'] })
+    }, 1000)
+  }
+  useEffect(() => () => {
+    if (invalidateTimer.current) clearTimeout(invalidateTimer.current)
+  }, [])
+
   useWebSocket((evt) => {
     if (evt.event === 'pipeline.progress') {
       const step = String(evt.data?.step)
       const message = String(evt.data?.message)
-      
+
       // Only show progress for our candidate's pipeline
       const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (evtCandidateId && candidateId && evtCandidateId !== candidateId) return
-      
+
       setPipelineState({ step, message, ts: new Date() })
-      
+
       // If it's a terminal step for the background matcher, hide the status after a delay
       if (step === 'matches_found' || step === 'no_matches' || step === 'done') {
         if (step !== 'matches_found') {
           setTimeout(() => setPipelineState(null), 5000)
         }
-        queryClient.invalidateQueries({ queryKey: ['applications'] })
-        queryClient.invalidateQueries({ queryKey: ['kpis'] })
+        scheduleRefetch()
       }
-    } else if (evt.event === 'application.created') {
+    } else if (evt.event === 'application.created' || evt.event === 'application.status_changed') {
       // Only refetch if the event is for our candidate
       const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (!evtCandidateId || !candidateId || evtCandidateId === candidateId) {
-        queryClient.invalidateQueries({ queryKey: ['applications'] })
-        queryClient.invalidateQueries({ queryKey: ['kpis'] })
-      }
-    } else if (evt.event === 'application.status_changed') {
-      // Only refetch if the event is for our candidate
-      const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
-      if (!evtCandidateId || !candidateId || evtCandidateId === candidateId) {
-        queryClient.invalidateQueries({ queryKey: ['applications'] })
-        queryClient.invalidateQueries({ queryKey: ['kpis'] })
+        scheduleRefetch()
       }
     }
   })
@@ -105,6 +113,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
     queryKey: ['applications', candidateId, page],
     queryFn: () => api.getApplications({ limit: PAGE_SIZE, offset: page * PAGE_SIZE, candidateId }),
     refetchInterval: 30_000,
+    staleTime: 10_000,
   })
 
   const all = data ?? []

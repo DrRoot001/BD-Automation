@@ -70,6 +70,7 @@ Copy `backend/.env.example` to `backend/.env` and fill in:
 - `GEMINI_API_KEY` — primary LLM (Gemini is the default for all AI tasks)
 - `ANTHROPIC_API_KEY` — fallback LLM for browser agent loop
 - `M1_API_BASE_URL` — URL Celery workers use to call FastAPI (default `http://localhost:8000/api`)
+- `APPLY_SCORE_THRESHOLD` — Gate threshold for application score. Score >= APPLY_SCORE_THRESHOLD will be tailored and queued for auto-apply (default `75`).
 
 The `.env` is loaded by `backend/app/config.py` via `pydantic-settings` and also via `load_dotenv` so `os.getenv()` calls in modules 3–5 work correctly.
 

@@ -1215,6 +1215,14 @@
     "source": "rules",
     "value": "Yes"
   },
+  "work authorization": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Work Authorization",
+    "last_seen": 1783543021,
+    "source": "agent_loop",
+    "value": "US Citizen"
+  },
   "years of experience": {
     "count": 1,
     "field_type": "select",

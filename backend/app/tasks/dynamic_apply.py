@@ -30,7 +30,6 @@ def _api_base() -> str:
     return os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api")
 
 MAX_APPLICATIONS_PER_RUN = int(os.getenv("M4_MAX_APPS_PER_RUN", "10"))
-SCORE_FLOOR = float(os.getenv("M4_DYNAMIC_SCORE_FLOOR", "0.25"))
 
 
 _WORD_RE = re.compile(r"[A-Za-z0-9\+\-\#\.]{2,}")
@@ -43,11 +42,13 @@ def _tokens(s: str) -> Set[str]:
 
 
 def _score_job(candidate_keywords: Set[str], job: Dict[str, Any]) -> float:
-    """Cheap relevance score between candidate tech_stack and a job's skills/title/description.
+    """Cheap token-overlap signal between candidate keywords and a job.
 
-    We don't need a perfect score — we just need to order jobs so the top-N are
-    plausibly aligned with the candidate. M3 will do the deep scoring after
-    application creation; this is a coarse pre-filter to avoid spam.
+    NOTE: this ratio divides by the candidate's full keyword count, so it
+    under-scores specialists (a niche role overlaps on few keywords). It is NOT
+    used for ranking or as a score floor anymore — job selection is driven by
+    pgvector semantic distance in /jobs/for-matching. This is kept only as a
+    zero-overlap garbage guard for the no-embedding fallback path.
     """
     if not candidate_keywords:
         return 0.0
@@ -185,35 +186,44 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
 
         already = await _already_applied_job_ids(client, candidate_id)
 
-        scored = []
+        # /jobs/for-matching already hard-filters to the stack-relevant set
+        # (cosine_distance < threshold) and returns jobs closest-first by
+        # semantic similarity to the candidate's resume. Preserve that order —
+        # do NOT re-rank by raw token overlap. That token ratio divides by the
+        # candidate's full keyword count and so penalises specialists: a pure
+        # ServiceNow role overlaps on one keyword out of ~30 and loses to a
+        # generic full-stack listing, which is exactly the off-stack-queueing
+        # bug we're fixing. The `_score_job() <= 0` check is only a garbage
+        # guard for candidates whose resume has no embedding (endpoint then
+        # falls back to newest-first with no relevance filter).
+        selected: List[Dict[str, Any]] = []
         for job in jobs:
             jid = str(job.get("id") or job.get("job_id") or "")
             if not jid or jid in already:
                 continue
-            score = _score_job(keywords, job)
-            if score < SCORE_FLOOR:
+            if _score_job(keywords, job) <= 0.0:
                 continue
-            scored.append((score, job))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        scored = scored[:max_apps]
+            selected.append(job)
+            if len(selected) >= max_apps:
+                break
 
-        if not scored:
+        if not selected:
             publish_event_sync("pipeline.progress", {
                 "candidate_id": candidate_id,
                 "bd_user_id": bd_user_id,
                 "step": "no_matches",
-                "message": "No jobs found above the match score threshold."
+                "message": "No stack-relevant jobs found for this candidate's resume."
             })
-            return {"queued": [], "skipped": len(jobs), "error": "no_matches_above_floor"}
+            return {"queued": [], "skipped": len(jobs), "error": "no_stack_relevant_jobs"}
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
             "bd_user_id": bd_user_id,
             "step": "matches_found",
-            "message": f"Found {len(scored)} suitable jobs. Triggering AI matching and application pipeline..."
+            "message": f"Found {len(selected)} stack-relevant jobs. Triggering AI matching and application pipeline..."
         })
 
-        target_job_ids = [str(job.get("id") or job.get("job_id")) for score, job in scored]
+        target_job_ids = [str(job.get("id") or job.get("job_id")) for job in selected]
         
         from app.database import task_session
         from app.services.matching import run_matching_for_candidate

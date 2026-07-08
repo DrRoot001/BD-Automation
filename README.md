@@ -117,6 +117,7 @@ cp backend/.env.example backend/.env
 > SUPABASE_ADMIN_USER_ID=...
 > GEMINI_API_KEY=...
 > ENCRYPTION_KEY=<generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())">
+> APPLY_SCORE_THRESHOLD=75  # Set to lower (e.g. 45) to allow lower matching jobs to auto-apply
 > ```
 
 ---

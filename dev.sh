@@ -234,16 +234,29 @@ PIDS+=($!)
 stream_log "EMAIL " "$C_BEAT" "$LOG_DIR/celery-email-worker.log"
 
 # ── 4. Celery beat — scheduled pipelines ─────────────────────────────────────
+#
+# Beat must run on EXACTLY ONE machine. When several dev laptops share the same
+# Redis/DB, every beat instance independently fires the schedule — so the
+# Gemini-backed scraper (and the email/sweep/matching tasks) would run N times
+# per cycle, wasting tokens. Default OFF; the designated machine runs:
+#     RUN_BEAT=1 ./dev.sh
+# and, to also enable the 24h scraper on that machine, set ENABLE_AUTO_SCRAPE=1
+# in its backend/.env (see app/config.py).
 
-log "Starting Celery beat scheduler ..."
-(
-  cd "$ROOT/backend"
-  "$PYTHON" -m celery \
-    -A app.celery_app beat \
-    --loglevel=info
-) > "$LOG_DIR/celery-beat.log" 2>&1 &
-PIDS+=($!)
-stream_log "BEAT  " "$C_BEAT" "$LOG_DIR/celery-beat.log"
+if [ "${RUN_BEAT:-0}" = "1" ]; then
+  log "Starting Celery beat scheduler (RUN_BEAT=1) ..."
+  (
+    cd "$ROOT/backend"
+    "$PYTHON" -m celery \
+      -A app.celery_app beat \
+      --loglevel=info
+  ) > "$LOG_DIR/celery-beat.log" 2>&1 &
+  PIDS+=($!)
+  stream_log "BEAT  " "$C_BEAT" "$LOG_DIR/celery-beat.log"
+else
+  info "Celery beat NOT started (RUN_BEAT!=1) — no scheduled scraping/tasks on this machine."
+  info "Run 'RUN_BEAT=1 ./dev.sh' on exactly ONE machine to own the schedule."
+fi
 
 # Short pause so workers register before frontend starts
 sleep 1

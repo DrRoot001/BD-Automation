@@ -268,9 +268,17 @@ async def create_jobs(
 
     for job in created:
         await db.refresh(job)
-        if job.embedding is None:
-            from app.tasks.embedding_generation import generate_job_embedding
-            generate_job_embedding.delay(str(job.id))
+
+    # Embed the whole insert in ONE batched task rather than firing a
+    # fire-and-forget task per job. The per-job flood opened a fresh pooled
+    # connection + a single-text Gemini call (~14s) for every job, saturating the
+    # Supabase pooler's session-mode client limit and starving concurrent API
+    # requests (dashboard endpoints were timing out at 10s). embed_jobs_batch
+    # groups the texts (50/Gemini call) and only touches embedding-null rows.
+    new_ids = [str(job.id) for job in created if job.embedding is None]
+    if new_ids:
+        from app.tasks.embedding_generation import embed_jobs_batch
+        embed_jobs_batch.delay(new_ids)
 
     await _append_jobs_to_json_log(created)
 
@@ -331,12 +339,20 @@ async def get_jobs_for_matching(
     candidate_id: Optional[str] = None,
     time_filter: Optional[str] = None,
     source: Optional[str] = None,
+    max_distance: Optional[float] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Lightweight endpoint for the keyword matching pipeline.
     Explicitly defers 'description' and 'embedding' to reduce Pydantic serialization
     overhead and improve fetch performance (e.g. from 17s to <1s for 100 jobs).
+
+    When a candidate_id is supplied and their base resume has an embedding, jobs
+    are hard-filtered to the stack-relevant set (cosine_distance < threshold) and
+    returned closest-first — same criterion as the daily beat matcher. This keeps
+    the manual "Run Now" path from selecting off-stack jobs (e.g. generic
+    full-stack roles for a ServiceNow specialist). Override the threshold with
+    max_distance; defaults to settings.job_matching_max_distance (0.35).
     """
     from sqlalchemy import select, or_, and_
     from sqlalchemy.orm import defer
@@ -389,6 +405,9 @@ async def get_jobs_for_matching(
             stmt = stmt.where(Job.created_at >= now - timedelta(days=30))
     
     if resume_embedding is not None:
+        from app.config import get_settings
+        threshold = max_distance if max_distance is not None else get_settings().job_matching_max_distance
+        stmt = stmt.where(Job.embedding.cosine_distance(resume_embedding) < threshold)
         stmt = stmt.order_by(Job.embedding.cosine_distance(resume_embedding).asc())
     else:
         stmt = stmt.order_by(Job.created_at.desc())
