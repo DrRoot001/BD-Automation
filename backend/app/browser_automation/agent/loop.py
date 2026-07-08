@@ -4725,17 +4725,36 @@ class AgentLoop:
             if await self._solve_turnstile_flaresolverr(page, ctx, flaresolverr_url):
                 return True
 
-        # ── CapSolver.com API fallback (IP-independent) ──────────────────────
+        # ── Universal token solver via the configured CAPTCHA_PROVIDER ───────
+        # Route Turnstile to CaptchaService (Anti-Captcha by default). It extracts
+        # the 0x-prefixed Turnstile sitekey, solves via TurnstileTaskProxyless, and
+        # injects the token itself — and clean-fails when the sitekey is malformed
+        # (e.g. an hCaptcha UUID grabbed by a false-positive detection), so an
+        # hCaptcha-only form no longer burns a bogus "invalid websiteKey" call.
+        try:
+            from ..captcha import CaptchaService
+            _prov = os.getenv("CAPTCHA_PROVIDER", "anticaptcha").lower()
+            if _prov in ("anticaptcha", "capsolver"):
+                _sol = await CaptchaService(provider=_prov).solve(page, "turnstile", max_attempts=1)
+                if getattr(_sol, "success", False):
+                    logger.info(
+                        f"[AgentLoop] Turnstile solved via configured provider "
+                        f"{_prov!r} — submit gate cleared"
+                    )
+                    return True
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] Turnstile configured-provider solve failed (non-fatal): {exc}")
+
+        # ── CapSolver.com direct fallback (secondary; IP-independent) ────────
         key = os.getenv("CAPSOLVER_API_KEY", "").strip()
         if key and not key.lower().startswith("your_"):
             if await self._solve_turnstile_capsolver(page, ctx, key):
                 return True
         logger.warning(
             "[AgentLoop] Turnstile NOT settled. The managed token never populated "
-            "(common on datacenter IPs) and no usable CAPSOLVER_API_KEY is set. "
-            "Set CAPSOLVER_API_KEY (Turnstile-capable) or PROXY_URL (residential) "
-            "to clear the final-submit gate. NOTE: the Whisper 'capsolver' only "
-            "solves reCAPTCHA — it cannot solve Turnstile."
+            "(common on datacenter IPs) and the configured captcha provider could "
+            "not mint a token (managed-mode Turnstile is often proxyless-unsolvable). "
+            "A residential PROXY_URL is the reliable fix for these boards."
         )
         return False
 
@@ -4790,7 +4809,10 @@ class AgentLoop:
             meta = await ctx.evaluate(
                 """() => {
                     let sk = '';
-                    const d = document.querySelector('.cf-turnstile[data-sitekey],[data-sitekey]');
+                    // Turnstile-SPECIFIC markers only — never a bare [data-sitekey],
+                    // which also matches the hCaptcha widget and yields its UUID
+                    // (CapSolver then rejects it as 'invalid websiteKey').
+                    const d = document.querySelector('.cf-turnstile[data-sitekey]');
                     if (d) sk = d.getAttribute('data-sitekey') || '';
                     if (!sk) {
                         const ifr = document.querySelector("iframe[src*='challenges.cloudflare.com']");
@@ -4801,8 +4823,14 @@ class AgentLoop:
             )
             sitekey = (meta or {}).get("sitekey") or ""
             url = (meta or {}).get("url") or page.url
-            if not sitekey:
-                logger.warning("[AgentLoop] CapSolver: Turnstile sitekey not found on page")
+            # Cloudflare Turnstile keys are always '0x…'-prefixed. A non-0x value
+            # means we grabbed the wrong widget (e.g. hCaptcha) — bail before the
+            # provider rejects it and burns a paid round-trip.
+            if not sitekey or not sitekey.startswith("0x"):
+                logger.warning(
+                    f"[AgentLoop] CapSolver: no valid Turnstile sitekey on page "
+                    f"(got {sitekey!r}); skipping (likely hCaptcha, not Turnstile)"
+                )
                 return False
             async with httpx.AsyncClient(timeout=30) as c:
                 for task_attempt in range(2):
@@ -6941,6 +6969,66 @@ class AgentLoop:
                                     "another 3s before invoking AgentV."
                                 )
                             _hc_value = _v  # keep last-seen (None or "")
+
+                        # ── PRIMARY solver: configured token provider (Anti-Captcha) ──
+                        # Per operator request, try the paid/reliable solver FIRST.
+                        # Anti-Captcha's HCaptchaTaskProxyless mints a token off the
+                        # page sitekey; we inject it into Lever's custom
+                        # #hcaptchaResponseInput. On success _hc_value is set, so the
+                        # AgentV (Gemini vision) block below auto-skips and serves as
+                        # the FALLBACK. Skipped when the invisible poll already
+                        # produced a token, or when no funded token provider is set.
+                        if _hc_value is not None and not _hc_value:
+                            _prov = os.getenv("CAPTCHA_PROVIDER", "anticaptcha").lower().strip()
+                            if _prov in ("anticaptcha", "2captcha", "nopecha"):
+                                try:
+                                    _site_key = await page.evaluate(
+                                        """() => {
+                                            const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey]');
+                                            if (el) return el.getAttribute('data-sitekey');
+                                            const ifr = document.querySelector("iframe[src*='hcaptcha']");
+                                            if (ifr) { const m = ifr.src.match(/sitekey=([0-9a-f-]+)/i); if (m) return m[1]; }
+                                            return null;
+                                        }"""
+                                    )
+                                except Exception:
+                                    _site_key = None
+                                if _site_key:
+                                    logger.info(
+                                        f"[AgentLoop] Lever: trying configured token provider "
+                                        f"{_prov!r} FIRST for hCaptcha (sitekey={_site_key})."
+                                    )
+                                    try:
+                                        from ..captcha.service import CaptchaService
+                                        _sol = await CaptchaService(provider=_prov).solve_hcaptcha(
+                                            _site_key, page.url
+                                        )
+                                        if getattr(_sol, "success", False) and getattr(_sol, "token", None):
+                                            await page.evaluate(
+                                                """(token) => {
+                                                    const el = document.getElementById('hcaptchaResponseInput');
+                                                    if (el) { el.value = token; el.dispatchEvent(new Event('change', {bubbles: true})); }
+                                                    const ta = document.querySelector("textarea[name='h-captcha-response'], textarea[name='g-recaptcha-response']");
+                                                    if (ta) { ta.value = token; }
+                                                }""",
+                                                _sol.token,
+                                            )
+                                            _hc_value = _sol.token
+                                            logger.info(
+                                                f"[AgentLoop] Lever: {_prov!r} solved hCaptcha FIRST "
+                                                "— token injected; AgentV fallback not needed."
+                                            )
+                                        else:
+                                            logger.info(
+                                                f"[AgentLoop] Lever: {_prov!r} did not yield a token; "
+                                                "falling back to AgentV (Gemini vision)."
+                                            )
+                                    except Exception as _cap_exc:
+                                        logger.warning(
+                                            f"[AgentLoop] Lever: configured-provider hCaptcha solve "
+                                            f"raised (non-fatal): {_cap_exc} — falling back to AgentV."
+                                        )
+
                         if _hc_value is not None and not _hc_value and _lever_agentv is not None:
                             # Attempt 1: hcaptcha-challenger's AgentV, listener
                             # already attached pre-click above. It intercepts
@@ -7087,28 +7175,90 @@ class AgentLoop:
                                             break
                         if _hc_value is not None and not _hc_value:
                             # No token from AgentV (hcaptcha-challenger) or from
-                            # Lever's own invisible resolution. We deliberately do
-                            # NOT fall back to a paid token farm here:
-                            #   • CapSolver's account returns "We don't support
-                            #     this service" for hCaptcha (confirmed live), so
-                            #     the global CAPTCHA_PROVIDER can't help.
-                            #   • NopeCHA needs NOPECHA_API_KEY, which isn't
-                            #     configured — the old CaptchaService(provider=
-                            #     "nopecha") fallback just burned 3 failing
-                            #     attempts + log noise on every submit and never
-                            #     produced a token.
-                            # hcaptcha-challenger (AgentV, Gemini-vision) is the
-                            # only integrated hCaptcha solver that actually runs.
-                            # When it can't produce a token, the reliable fix is a
-                            # residential PROXY_URL (Lever's invisible hCaptcha then
-                            # passes with no challenge) or a NOPECHA_API_KEY — not
-                            # another keyless farm call. Report submit-not-completed.
+                            # Lever's own invisible resolution. Before bailing, try
+                            # the CONFIGURED token provider as a last resort. This
+                            # used to be a hard-coded CaptchaService(provider=
+                            # "nopecha") that always failed with no key; now we read
+                            # CAPTCHA_PROVIDER. Anti-Captcha DOES support hCaptcha
+                            # (HCaptchaTaskProxyless) — with a funded key it can
+                            # produce a token. CapSolver does NOT support hCaptcha
+                            # (returns "We don't support this service"), so it is
+                            # excluded here. The returned token is injected into
+                            # Lever's custom #hcaptchaResponseInput (not the standard
+                            # h-captcha-response textarea), then the click loop below
+                            # fires the hidden submit button.
+                            _prov = os.getenv("CAPTCHA_PROVIDER", "").lower().strip()
+                            if _prov in ("anticaptcha", "2captcha", "nopecha"):
+                                try:
+                                    _site_key = await page.evaluate(
+                                        """() => {
+                                            const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey]');
+                                            if (el) return el.getAttribute('data-sitekey');
+                                            const ifr = document.querySelector("iframe[src*='hcaptcha']");
+                                            if (ifr) {
+                                                const m = ifr.src.match(/sitekey=([0-9a-f-]+)/i);
+                                                if (m) return m[1];
+                                            }
+                                            return null;
+                                        }"""
+                                    )
+                                except Exception:
+                                    _site_key = None
+                                if _site_key:
+                                    logger.info(
+                                        f"[AgentLoop] Lever: trying configured token "
+                                        f"provider {_prov!r} for hCaptcha (sitekey={_site_key})."
+                                    )
+                                    try:
+                                        from ..captcha.service import CaptchaService
+                                        _sol = await CaptchaService(provider=_prov).solve_hcaptcha(
+                                            _site_key, page.url
+                                        )
+                                        if getattr(_sol, "success", False) and getattr(_sol, "token", None):
+                                            await page.evaluate(
+                                                """(token) => {
+                                                    const el = document.getElementById('hcaptchaResponseInput');
+                                                    if (el) {
+                                                        el.value = token;
+                                                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                                                    }
+                                                    const ta = document.querySelector("textarea[name='h-captcha-response'], textarea[name='g-recaptcha-response']");
+                                                    if (ta) { ta.value = token; }
+                                                }""",
+                                                _sol.token,
+                                            )
+                                            _hc_value = _sol.token
+                                            logger.info(
+                                                f"[AgentLoop] Lever: {_prov!r} produced an "
+                                                "hCaptcha token — injected into #hcaptchaResponseInput."
+                                            )
+                                        else:
+                                            logger.warning(
+                                                f"[AgentLoop] Lever: {_prov!r} hCaptcha solve "
+                                                f"failed: {getattr(_sol, 'error', 'no token')}"
+                                            )
+                                    except Exception as _cap_exc:
+                                        logger.warning(
+                                            f"[AgentLoop] Lever: configured provider hCaptcha "
+                                            f"solve raised (non-fatal): {_cap_exc}"
+                                        )
+                        if _hc_value is not None and not _hc_value:
+                            # Still no token — from AgentV (hcaptcha-challenger),
+                            # Lever's own invisible resolution, OR the configured
+                            # token provider. hcaptcha-challenger (AgentV,
+                            # Gemini-vision) and Anti-Captcha are the integrated
+                            # solvers that actually run; when neither yields a
+                            # token, the most reliable fix is a residential
+                            # PROXY_URL (Lever's invisible hCaptcha then passes with
+                            # no challenge). Report submit-not-completed.
                             logger.warning(
-                                "[AgentLoop] Lever: hCaptcha token not obtained "
-                                "(AgentV / invisible resolution did not yield one, and "
-                                "no configured token solver supports Lever hCaptcha). "
-                                "Submission did NOT go through this attempt. Set a "
-                                "residential PROXY_URL or NOPECHA_API_KEY to clear this gate."
+                                "[AgentLoop] Lever: hCaptcha token not captured via the "
+                                "solver path (AgentV / invisible resolution / configured "
+                                "provider). NOTE: Lever's own onSuccess callback may still "
+                                "have fired the form POST independently — the /thanks "
+                                "navigation check below is authoritative for success. If "
+                                "it did NOT submit, set a residential PROXY_URL or ensure "
+                                "the configured CAPTCHA_PROVIDER key is funded."
                             )
                             ok = False
                             action.ok = False

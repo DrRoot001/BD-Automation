@@ -38,6 +38,7 @@ _SENDER_HINTS = (
     "myworkday.com",
     "lever.co",
     "ashbyhq.com",
+    "talent.com",
     "no-reply",
     "noreply",
     "verification",

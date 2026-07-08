@@ -39,6 +39,14 @@
     "source": "llm:0.40",
     "value": "Yes"
   },
+  "are you a fan of sports, fantasy sports, and/or sportsbooks if so, briefly shar": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you a fan of sports, fantasy sports, and/or sportsbooks? If so, briefly shar",
+    "last_seen": 1783533598,
+    "source": "agent_loop",
+    "value": "While I appreciate the analytical depth and data-driven insights in fantasy sports and sportsbooks, my primary interest lies in applying data science and AI to optimize platform performance and user experience, rather than personal participation."
+  },
   "are you a veteran or active member of the united states armed forces": {
     "count": 11,
     "field_type": "text",
@@ -534,6 +542,14 @@
     "last_seen": 1782051437,
     "source": "llm:0.95",
     "value": "Yes"
+  },
+  "do you have professional data science experience working across a daily fantasy": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have professional Data Science experience working across a Daily Fantasy",
+    "last_seen": 1783533651,
+    "source": "agent_loop",
+    "value": "While I do not have direct experience with Daily Fantasy Sports or Sportsbook products, my background as a Lead Data & AI Automation Engineer and Data Engineer has provided me with extensive experience in designing scalable data pipelines, building robust monitoring systems, and leveraging AI for process automation and analytical solutions. This experience is highly relevant to managing risk and liability through data-driven insights and predictive modeling, which I believe is crucial for a DFS product."
   },
   "do you incorporate ai into your daily work": {
     "count": 8,
@@ -1118,6 +1134,14 @@
     "last_seen": 1782918001,
     "source": "agent_loop",
     "value": "$120,000 - $150,000"
+  },
+  "what specifically interests you about working at sleeper": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What specifically interests you about working at Sleeper?",
+    "last_seen": 1783533625,
+    "source": "agent_loop",
+    "value": "I am particularly interested in Sleeper's focus on applying data science and AI to drive decisions in risk and trading. My experience in designing and implementing scalable data pipelines, building and deploying ML models, and establishing robust monitoring systems aligns well with the full model lifecycle ownership mentioned in the job description. I am eager to leverage my expertise in Python, SQL, and cloud platforms to contribute to Sleeper's innovative data-driven approach."
   },
   "when is the earliest you would want to start working with us": {
     "count": 1,

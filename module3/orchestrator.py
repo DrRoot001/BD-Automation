@@ -264,17 +264,10 @@ async def orchestrate_application_package(
                 f"Combined: {match_result.combined_score}"
             )
 
-        # (Gate check moved to after tailoring)
-            
-            return {
-                "status": "ANALYZED",
-                "application_id": app_id,
-                "match_result": match_result.model_dump(mode="json"),
-                "tailored_resume_id": base_resume_id,
-                "resume_pdf_url": base_resume_file_url or (resume_data.file_url if resume_data else ""),
-                "cover_letter_url": None,
-                "screening_answers": {}
-            }
+        # (Gate check moved to AFTER tailoring — see the ats_score_after gate below.
+        #  A stray `return {"status": "ANALYZED"}` used to sit here, indented inside
+        #  the else branch, which made every score-computed application bail out
+        #  before tailoring/gating/QUEUED. Removed so the flow proceeds to tailoring.)
 
         # Query existing resumes for this candidate to calculate next version number
         all_resumes_resp = await client.get(f"/api/resumes/{candidate_id}")

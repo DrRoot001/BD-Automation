@@ -31,6 +31,14 @@
     "source": "rules",
     "value": "US"
   },
+  "are you a fan of sports, fantasy sports, and/or sportsbooks if so, briefly shar": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you a fan of sports, fantasy sports, and/or sportsbooks? If so, briefly shar",
+    "last_seen": 1783533598,
+    "source": "agent_loop",
+    "value": "While I appreciate the analytical depth and data-driven insights in fantasy sports and sportsbooks, my primary interest lies in applying data science and AI to optimize platform performance and user experience, rather than personal participation."
+  },
   "are you currently bound by any agreements with a current or former employer that": {
     "count": 4,
     "field_type": "text",
@@ -160,20 +168,20 @@
     "value": "United States (+1)"
   },
   "current company / employer": {
-    "count": 7,
+    "count": 8,
     "field_type": "text",
-    "label": "Current Company",
-    "last_seen": 1782503894,
+    "label": "What is your most recent company?",
+    "last_seen": 1783533845,
     "source": "agent_loop",
-    "value": "Confidential"
+    "value": "Mavericks United"
   },
   "current job title": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
-    "label": "Current Title",
-    "last_seen": 1782503743,
+    "label": "What is your most recent job title?",
+    "last_seen": 1783533863,
     "source": "agent_loop",
-    "value": "Senior Data Engineer"
+    "value": "Lead Data & AI Automation Engineer"
   },
   "current location no location found. try entering a different locationloading": {
     "count": 1,
@@ -199,13 +207,21 @@
     "source": "agent_loop",
     "value": "No"
   },
-  "email": {
+  "do you have professional data science experience working across a daily fantasy": {
     "count": 1,
     "field_type": "text",
-    "label": "Email",
-    "last_seen": 1782503705,
+    "label": "Do you have professional Data Science experience working across a Daily Fantasy",
+    "last_seen": 1783533651,
     "source": "agent_loop",
-    "value": "chammar310@gmail.com"
+    "value": "While I do not have direct experience with Daily Fantasy Sports or Sportsbook products, my background as a Lead Data & AI Automation Engineer and Data Engineer has provided me with extensive experience in designing scalable data pipelines, building robust monitoring systems, and leveraging AI for process automation and analytical solutions. This experience is highly relevant to managing risk and liability through data-driven insights and predictive modeling, which I believe is crucial for a DFS product."
+  },
+  "email": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1783533775,
+    "source": "agent_loop",
+    "value": "sabih0364@gmail.com"
   },
   "email✱": {
     "count": 1,
@@ -392,10 +408,10 @@
     "value": "M."
   },
   "location": {
-    "count": 5,
+    "count": 6,
     "field_type": "text",
     "label": "Location",
-    "last_seen": 1783115065,
+    "last_seen": 1783534157,
     "source": "agent_loop",
     "value": "United States"
   },
@@ -408,10 +424,10 @@
     "value": "San Francisco"
   },
   "name": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "Name",
-    "last_seen": 1782744734,
+    "last_seen": 1783533761,
     "source": "agent_loop",
     "value": "M. Ammar Hanif"
   },
@@ -432,10 +448,10 @@
     "value": "AmmarHanif@123"
   },
   "phone": {
-    "count": 9,
+    "count": 10,
     "field_type": "text",
     "label": "Phone",
-    "last_seen": 1782503907,
+    "last_seen": 1783533788,
     "source": "agent_loop",
     "value": "+15855844775"
   },
@@ -478,6 +494,14 @@
     "last_seen": 1783088077,
     "source": "rules",
     "value": "M. Ammar Hanif"
+  },
+  "please add your linkedin profile": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Please add your LinkedIn profile",
+    "last_seen": 1783533998,
+    "source": "screening",
+    "value": "Not provided"
   },
   "please identify your race": {
     "count": 8,
@@ -680,12 +704,12 @@
     "value": "AmmarHanif@123"
   },
   "website": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "Website",
-    "last_seen": 1782735126,
-    "source": "screening",
-    "value": "Not provided"
+    "last_seen": 1783533803,
+    "source": "agent_loop",
+    "value": "N/A"
   },
   "what is your desired salary range for this role, including base and any variable": {
     "count": 5,
@@ -694,6 +718,14 @@
     "last_seen": 1783115080,
     "source": "agent_loop",
     "value": "$180,000 - $220,000"
+  },
+  "what specifically interests you about working at sleeper": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What specifically interests you about working at Sleeper?",
+    "last_seen": 1783533625,
+    "source": "agent_loop",
+    "value": "I am particularly interested in Sleeper's focus on applying data science and AI to drive decisions in risk and trading. My experience in designing and implementing scalable data pipelines, building and deploying ML models, and establishing robust monitoring systems aligns well with the full model lifecycle ownership mentioned in the job description. I am eager to leverage my expertise in Python, SQL, and cloud platforms to contribute to Sleeper's innovative data-driven approach."
   },
   "why did you decide to apply to this role at clickup": {
     "count": 5,

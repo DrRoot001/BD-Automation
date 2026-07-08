@@ -548,7 +548,7 @@ class DiceAdapter(BasePlatformAdapter):
         if not (has_recaptcha or has_hcaptcha):
             return False
 
-        captcha_type = "hcaptcha" if has_hcaptcha else "recaptcha"
+        captcha_type = "hcaptcha" if has_hcaptcha else "recaptcha_v2"
         logger.info(f"[Dice] Login captcha detected ({captcha_type}); attempting solve")
         try:
             from ..captcha import CaptchaService
