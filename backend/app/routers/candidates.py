@@ -1,5 +1,5 @@
 import uuid
-from typing import List
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
@@ -234,6 +234,8 @@ async def list_candidate_applications(
 
 class ApplyRequest(BaseModel):
     max_apps: int = 10
+    time_filter: Optional[str] = None
+    platform: Optional[str] = None
 
 @router.post("/{candidate_id}/apply")
 async def trigger_apply(
@@ -281,10 +283,14 @@ async def trigger_apply(
     from app.tasks.dynamic_apply import dynamic_apply
 
     try:
-        dynamic_apply.apply_async(args=[candidate_id, request_body.max_apps, bd_user_id])
+        dynamic_apply.apply_async(
+            args=[candidate_id, request_body.max_apps, bd_user_id],
+            kwargs={"time_filter": request_body.time_filter, "platform": request_body.platform}
+        )
         _bg_log.info(
             f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} "
-            f"max_apps={request_body.max_apps} triggered_by={current_user.email}"
+            f"max_apps={request_body.max_apps} time_filter={request_body.time_filter} "
+            f"platform={request_body.platform} triggered_by={current_user.email}"
         )
     except Exception as e:
         _bg_log.error(f"[Apply] Failed to dispatch Celery task for candidate={candidate_id}: {e}")

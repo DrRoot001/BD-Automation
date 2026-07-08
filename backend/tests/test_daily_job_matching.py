@@ -21,7 +21,7 @@ from app.services.matching import run_matching_for_candidate
 @pytest.mark.asyncio
 @patch("app.services.matching.score_job_fit")
 @patch("app.services.matching.orchestrate_application_package")
-@patch("app.services.matching.execute_application")
+@patch("app.services.matching.execute_application", create=True)
 async def test_run_matching_no_base_resume(mock_execute, mock_prep, mock_score):
     # Test candidate with no base resume is handled gracefully
     db_session = AsyncMock()
@@ -38,7 +38,7 @@ async def test_run_matching_no_base_resume(mock_execute, mock_prep, mock_score):
 @pytest.mark.asyncio
 @patch("app.services.matching.score_job_fit")
 @patch("app.services.matching.orchestrate_application_package")
-@patch("app.services.matching.execute_application")
+@patch("app.services.matching.execute_application", create=True)
 async def test_run_matching_happy_path(mock_execute, mock_prep, mock_score):
     db_session = AsyncMock()
     cand_id = uuid.uuid4()
@@ -99,6 +99,7 @@ async def test_run_matching_happy_path(mock_execute, mock_prep, mock_score):
         mock_apps_result,    # get_active_application_count (manual_limit path)
         mock_apps_result,    # Fetch all apps (skipped_jobs)
         mock_jobs_result,    # Jobs query
+        mock_apps_result,    # existing_stmt query (returns empty/None)
     ]
     
     # Mock score_job_fit
@@ -136,7 +137,7 @@ async def test_run_matching_happy_path(mock_execute, mock_prep, mock_score):
 @pytest.mark.asyncio
 @patch("app.services.matching.score_job_fit")
 @patch("app.services.matching.orchestrate_application_package")
-@patch("app.services.matching.execute_application")
+@patch("app.services.matching.execute_application", create=True)
 async def test_run_matching_lookback_windows(mock_execute, mock_prep, mock_score):
     from datetime import datetime, timezone
     

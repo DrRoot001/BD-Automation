@@ -442,6 +442,40 @@ class ApplicationExecutor:
         def _elapsed() -> float:
             return time.monotonic() - start_time
 
+        async def _captcha_unsupported_terminal(detail: str) -> ApplicationResult:
+            """Clean terminal for a captcha the provider reported as genuinely
+            unsolvable (CaptchaService returns error='CAPTCHA_UNSUPPORTED: ...',
+            e.g. Turnstile managed-mode on a datacenter IP). Resolves to status
+            BLOCKED WITHOUT a hard crash/traceback and WITHOUT burning a Celery
+            retry (the task layer treats a BLOCKED *result* as terminal). The
+            browser is torn down by execute()'s finally, not here."""
+            msg = (detail or "").strip()
+            # Callers may pass "CAPTCHA_UNSUPPORTED: ...", a defensively
+            # "BLOCKED: CAPTCHA_UNSUPPORTED: ..."-prefixed loop error, or a bare
+            # detail. Normalize to a single clean "CAPTCHA_UNSUPPORTED: ...".
+            idx = msg.find("CAPTCHA_UNSUPPORTED")
+            if idx > 0:
+                msg = msg[idx:]
+            if not msg.startswith("CAPTCHA_UNSUPPORTED"):
+                msg = f"CAPTCHA_UNSUPPORTED: {msg}" if msg else "CAPTCHA_UNSUPPORTED"
+            logger.error(f"[M4] {msg} — resolving to clean BLOCKED terminal (no retry)")
+            shot: Optional[str] = None
+            try:
+                if page and not page.is_closed():
+                    shot = await capture_and_store_screenshot(page, package.application_id)
+            except Exception:
+                pass
+            _cleanup_temp(_temp_resume, _temp_cover)
+            return ApplicationResult(
+                application_id=package.application_id,
+                status="BLOCKED",
+                screenshot_url=shot,
+                error_message=msg[:500],
+                execution_time_seconds=_elapsed(),
+                retry_count=retry_count,
+                platform_response={"failure_reason": "CAPTCHA_UNSUPPORTED"},
+            )
+
         try:
             # Check platform review status
             from .platform_review import (
@@ -788,6 +822,16 @@ class ApplicationExecutor:
                                 if state.kind == "BLOCKED":
                                     raise RuntimeError(f"BLOCKED: vision-agent flagged page state after {captcha_type} solve: {state.reason}")
                             else:
+                                # A genuinely unsolvable captcha (e.g. Turnstile
+                                # managed-mode on a datacenter IP) is reported by
+                                # CaptchaService as error='CAPTCHA_UNSUPPORTED: ...'.
+                                # Resolve to a CLEAN BLOCKED terminal instead of
+                                # raising (which would log a traceback and, worse,
+                                # look like a transient failure). Other solve
+                                # failures keep the original raise.
+                                _solve_err = (getattr(solution, "error", None) or "")
+                                if _solve_err.startswith("CAPTCHA_UNSUPPORTED"):
+                                    return await _captcha_unsupported_terminal(_solve_err)
                                 raise RuntimeError(f"BLOCKED: {captcha_type} solve failed.")
                         else:
                             raise RuntimeError(f"BLOCKED: vision-agent flagged page state: {state.reason}")
@@ -918,6 +962,20 @@ class ApplicationExecutor:
                         f"[M4] AgentLoop finished: status={loop_result.status} "
                         f"steps={loop_result.steps_taken} error={loop_result.error!r}"
                     )
+
+                    # ── Captcha genuinely unsolvable → clean BLOCKED terminal ──
+                    # The loop surfaces CAPTCHA_UNSUPPORTED (e.g. Turnstile
+                    # managed-mode on a datacenter IP) via loop_result.error.
+                    # Return a CLEAN terminal WITHOUT a traceback and WITHOUT the
+                    # scripted fallback (which would just re-hit the same wall).
+                    # BLOCKED status is terminal in the task layer → no retry.
+                    # Guarded on NOT _submit_fired so a genuinely-submitted form
+                    # (the captcha path aborts pre-submit, so this is defensive)
+                    # is never masked as BLOCKED — that would lose the submit
+                    # record and risk a duplicate application on any re-run.
+                    if (loop_result.error and "CAPTCHA_UNSUPPORTED" in loop_result.error
+                            and not getattr(agent_loop, "_submit_fired", False)):
+                        return await _captcha_unsupported_terminal(loop_result.error)
 
                     if loop_result.status == "SUBMITTED":
                         _agent_submitted = True
@@ -1246,6 +1304,12 @@ class ApplicationExecutor:
                         captcha_svc = CaptchaService(provider=provider)
                         solution = await captcha_svc.solve(page, form.captcha_type)
                         if not solution.success:
+                            # Genuinely unsolvable (CAPTCHA_UNSUPPORTED) → clean
+                            # BLOCKED terminal, no traceback, no retry. Other
+                            # solve failures keep the CAPTCHA_FAILED path below.
+                            _solve_err = (getattr(solution, "error", None) or "")
+                            if _solve_err.startswith("CAPTCHA_UNSUPPORTED"):
+                                return await _captcha_unsupported_terminal(_solve_err)
                             status = "CAPTCHA_FAILED"
                             error_message = f"BLOCKED: Captcha solving exhausted all attempts: {form.captcha_type}"
                             screenshot_path = await capture_and_store_screenshot(page, package.application_id)
@@ -1590,3 +1654,18 @@ class ApplicationExecutor:
             )
         finally:
             _cleanup_temp(_temp_resume, _temp_cover)
+            # ── Browser lifecycle teardown (fixes the Chrome/driver/redis leak) ──
+            # destroy_context() (called on every path above) only closes the
+            # CONTEXT. The underlying Chrome process, the node driver, and the
+            # redis connection live on the manager and leak once per run without
+            # this — under Celery concurrency that exhausts RAM/FDs. close() is
+            # idempotent and exception-safe; wrap it here too so a teardown
+            # failure is logged but NEVER masks/overwrites the run's real result
+            # or raises out of finally. This is correct end-of-run cleanup and
+            # does NOT violate the "never close mid-run" guardrail (that rule is
+            # about the AgentLoop action space, which has no close action).
+            if context_mgr is not None:
+                try:
+                    await context_mgr.close()
+                except Exception as close_exc:
+                    logger.warning(f"[M4] context_mgr.close() failed (non-fatal): {close_exc}")

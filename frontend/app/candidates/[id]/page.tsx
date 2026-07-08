@@ -57,6 +57,27 @@ export default function CandidateDetailPage() {
   const [progressLogs, setProgressLogs] = useState<{ timestamp: string; message: string }[]>([])
   const processedLogsRef = useRef<Set<string>>(new Set())
 
+  const [past24Only, setPast24Only] = useState(false)
+  const [selectedPlatform, setSelectedPlatform] = useState('')
+
+  // Fetch platforms dynamically with standard fallbacks
+  const { data: platforms = ['greenhouse', 'lever', 'dice', 'indeed', 'remoteok', 'jobicy', 'remoterocketship'] } = useQuery({
+    queryKey: ['platforms'],
+    queryFn: () => api.getPlatforms().catch(() => ['greenhouse', 'lever', 'dice', 'indeed', 'remoteok', 'jobicy', 'remoterocketship']),
+  })
+
+  // Fetch count of available jobs matching the filters
+  const { data: availableJobsData, isLoading: countLoading } = useQuery({
+    queryKey: ['available-jobs-count', id, past24Only, selectedPlatform],
+    queryFn: () => api.getJobsCount({
+      candidateId: id as string,
+      timeFilter: past24Only ? '24h' : undefined,
+      source: selectedPlatform || undefined
+    }),
+    staleTime: 10 * 1000,
+  })
+  const availableJobsCount = availableJobsData?.total_count ?? 0
+
   useWebSocket((evt) => {
     if (evt.event === 'pipeline.progress' && evt.data) {
       const candidateId = evt.data?.candidate_id || evt.data?.candidateId
@@ -204,7 +225,12 @@ export default function CandidateDetailPage() {
     setProgressLogs([])
     processedLogsRef.current.clear()
     try {
-      await api.triggerApply(id as string, maxApps)
+      await api.triggerApply(
+        id as string, 
+        maxApps,
+        past24Only ? '24h' : undefined,
+        selectedPlatform || undefined
+      )
       toast.success(`Auto-Apply started for up to ${maxApps} applications.`)
     } catch (e: unknown) {
       const errorObj = e as { message?: string }
@@ -313,8 +339,8 @@ export default function CandidateDetailPage() {
       {/* Auto Apply Panel */}
       {showAutoApply && (
         <div className="card p-5 bg-bg-card border border-bg-border rounded-xl shadow-sm animate-fade-in flex flex-col gap-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="max-w-xl">
+          <div className="flex flex-col gap-4">
+            <div>
               <h2 className="text-sm font-semibold text-text-primary mb-1 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-accent" />
                 Trigger Job Search & Apply
@@ -323,7 +349,26 @@ export default function CandidateDetailPage() {
                 Run the background pipeline to discover jobs and auto-submit applications for this candidate.
               </p>
             </div>
-            <div className="flex items-end gap-3 shrink-0">
+            
+            <div className="flex flex-col sm:flex-row items-end gap-3 flex-wrap border-t border-bg-border pt-4">
+              {/* Select Platform */}
+              <div className="w-48">
+                <label className="input-label text-xs">Select Platform</label>
+                <select
+                  value={selectedPlatform}
+                  onChange={(e) => setSelectedPlatform(e.target.value)}
+                  className="input capitalize"
+                >
+                  <option value="">All Platforms</option>
+                  {platforms.map((plat) => (
+                    <option key={plat} value={plat}>
+                      {plat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Max Applications */}
               <div className="w-36">
                 <label className="input-label text-xs">Max Applications</label>
                 <input
@@ -340,10 +385,25 @@ export default function CandidateDetailPage() {
                 />
                 {maxAppsError && <p className="text-danger text-[11px] mt-1">{maxAppsError}</p>}
               </div>
+
+              {/* Past 24 Hours Checkbox */}
+              <div className="flex items-center h-[38px] px-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-text-primary select-none">
+                  <input
+                    type="checkbox"
+                    checked={past24Only}
+                    onChange={(e) => setPast24Only(e.target.checked)}
+                    className="rounded border-bg-border bg-bg-secondary text-accent focus:ring-accent w-4 h-4 cursor-pointer"
+                  />
+                  <span>Past 24 Hours Only</span>
+                </label>
+              </div>
+
+              {/* Run Button */}
               <button
                 onClick={triggerApply}
                 disabled={isApplying || !!maxAppsError}
-                className="btn-primary h-[38px] min-w-[110px]"
+                className="btn-primary h-[38px] min-w-[110px] sm:ml-auto"
               >
                 {isApplying ? (
                   <>
@@ -354,6 +414,21 @@ export default function CandidateDetailPage() {
                   'Run Now'
                 )}
               </button>
+            </div>
+
+            {/* Available Jobs Count */}
+            <div className="text-xs text-text-muted mt-1 bg-bg-secondary border border-bg-border/60 rounded-lg p-2.5 flex items-center justify-between">
+              <span>Matching Jobs status:</span>
+              {countLoading ? (
+                <span className="flex items-center gap-1.5 font-medium text-text-secondary">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                  Calculating available jobs...
+                </span>
+              ) : (
+                <span className="font-semibold text-text-primary">
+                  {availableJobsCount} available {availableJobsCount === 1 ? 'job' : 'jobs'} to apply
+                </span>
+              )}
             </div>
           </div>
 

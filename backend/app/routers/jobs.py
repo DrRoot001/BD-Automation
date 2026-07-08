@@ -329,6 +329,8 @@ async def get_jobs_for_matching(
     skip: int = 0,
     limit: int = 100,
     candidate_id: Optional[str] = None,
+    time_filter: Optional[str] = None,
+    source: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
@@ -370,6 +372,21 @@ async def get_jobs_for_matching(
             logger.error(f"Error fetching resume embedding for candidate {candidate_id}: {e}")
 
     stmt = select(Job).options(defer(Job.embedding), defer(Job.description)).where(~exclusions)
+    
+    if source:
+        stmt = stmt.where(Job.source.ilike(f"%{source}%"))
+        
+    if time_filter:
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        if time_filter == '24h':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=1))
+        elif time_filter == '3d':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=3))
+        elif time_filter == '7d':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=7))
+        elif time_filter == '30d':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=30))
     
     if resume_embedding is not None:
         stmt = stmt.order_by(Job.embedding.cosine_distance(resume_embedding).asc())
@@ -484,8 +501,18 @@ async def get_jobs(
         )
         return result.scalars().all()
 
+@router.get("/platforms", response_model=List[str])
+async def get_job_platforms(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    stmt = select(Job.source).distinct().where(Job.source != None, Job.source != 'manual', Job.source != '')
+    result = await db.execute(stmt)
+    platforms = [row[0] for row in result.fetchall() if row[0]]
+    return platforms
+
+
 @router.get("/count")
 async def get_jobs_count(
+    candidate_id: Optional[str] = None,
     search: Optional[str] = None,
     source: Optional[str] = None,
     job_type: Optional[str] = None,
@@ -494,6 +521,7 @@ async def get_jobs_count(
 ):
     from sqlalchemy import select, func, or_, and_
     from datetime import datetime, timezone, timedelta
+    from uuid import UUID
     exclusions = or_(
         Job.source == 'manual',
         Job.source_url.is_(None),
@@ -526,7 +554,28 @@ async def get_jobs_count(
                 query = query.where(Job.created_at >= now - timedelta(days=30))
         return query
 
-    query = select(func.count(Job.id)).where(~exclusions)
+    candidate_uuid = None
+    if candidate_id:
+        try:
+            candidate_uuid = UUID(candidate_id)
+        except ValueError:
+            pass
+
+    if candidate_uuid:
+        from app.models.application import Application
+        
+        # 1. Fetch job IDs candidate has already applied to
+        applied_result = await db.execute(
+            select(Application.job_id).where(Application.candidate_id == candidate_uuid)
+        )
+        applied_job_ids = [row[0] for row in applied_result.fetchall() if row[0] is not None]
+        
+        query = select(func.count(Job.id)).where(Job.is_duplicate == False, ~exclusions)
+        if applied_job_ids:
+            query = query.where(Job.id.notin_(applied_job_ids))
+    else:
+        query = select(func.count(Job.id)).where(~exclusions)
+        
     query = apply_job_filters(query)
     result = await db.execute(query)
     return {"total_count": result.scalar()}

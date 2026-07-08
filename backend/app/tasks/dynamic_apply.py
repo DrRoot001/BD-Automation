@@ -69,12 +69,17 @@ async def _fetch_candidate(client: httpx.AsyncClient, candidate_id: str) -> Opti
     return r.json()
 
 
-async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: int = 500) -> List[Dict[str, Any]]:
+async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: int = 500, time_filter: Optional[str] = None, platform: Optional[str] = None) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     skip = 0
     page_size = 100
     while skip < limit:
-        r = await client.get(f"{_api_base()}/jobs/for-matching", params={"skip": skip, "limit": page_size, "candidate_id": candidate_id})
+        params = {"skip": skip, "limit": page_size, "candidate_id": candidate_id}
+        if time_filter:
+            params["time_filter"] = time_filter
+        if platform:
+            params["source"] = platform
+        r = await client.get(f"{_api_base()}/jobs/for-matching", params=params)
         if r.status_code != 200:
             logger.error(f"[Dynamic] Failed to fetch jobs: HTTP {r.status_code} — {r.text}")
             raise RuntimeError(f"Failed to fetch jobs from API: HTTP {r.status_code}")
@@ -144,7 +149,7 @@ async def _already_applied_job_ids(client: httpx.AsyncClient, candidate_id: str)
     return set()
 
 
-async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = None) -> Dict[str, Any]:
+async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = None, time_filter: Optional[str] = None, platform: Optional[str] = None) -> Dict[str, Any]:
     queued: List[str] = []
     skipped: int = 0
 
@@ -167,7 +172,7 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
             "message": "Fetching available jobs from database..."
         })
 
-        jobs = await _fetch_open_jobs(client, candidate_id)
+        jobs = await _fetch_open_jobs(client, candidate_id, time_filter=time_filter, platform=platform)
         if not jobs:
             return {"queued": [], "skipped": 0, "error": "no_jobs"}
 
@@ -267,7 +272,7 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
     queue="queue:job_processing",
     max_retries=1,
 )
-def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None):
+def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None, time_filter: Optional[str] = None, platform: Optional[str] = None):
     """Score every open job against the candidate's CV, queue top matches into M4.
 
     Args:
@@ -275,14 +280,17 @@ def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_us
         max_apps: cap on number of applications (defaults to MAX_APPLICATIONS_PER_RUN env).
         bd_user_id: supabase_user_id of the BD user who triggered this run.
                     Used to scope WebSocket pipeline.progress events to only that user.
+        time_filter: filter jobs by scrape time (e.g. '24h').
+        platform: filter jobs by platform (source).
     """
     logger.info(
         f"[Celery] Starting dynamic-apply for candidate={candidate_id} "
-        f"max_apps={max_apps} triggered_by_user={bd_user_id}"
+        f"max_apps={max_apps} triggered_by_user={bd_user_id} "
+        f"time_filter={time_filter} platform={platform}"
     )
 
     try:
-        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN, bd_user_id))
+        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN, bd_user_id, time_filter, platform))
         logger.info(f"[Celery] Dynamic-apply completed for candidate={candidate_id}: {result}")
         return result
     except Exception as e:

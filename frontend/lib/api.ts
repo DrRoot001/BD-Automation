@@ -284,8 +284,9 @@ export const api = {
   mergeUsers: (sourceUserId: string, targetUserId: string) =>
     postJSON<{ message: string }>('/auth/admin/users/merge', { source_user_id: sourceUserId, target_user_id: targetUserId }),
 
-  getJobsCount: (params?: { search?: string; source?: string; jobType?: string; timeFilter?: string }) => {
+  getJobsCount: (params?: { candidateId?: string; search?: string; source?: string; jobType?: string; timeFilter?: string }) => {
     const qs = new URLSearchParams()
+    if (params?.candidateId) qs.set('candidate_id', params.candidateId)
     if (params?.search) qs.set('search', params.search)
     if (params?.source) qs.set('source', params.source)
     if (params?.jobType) qs.set('job_type', params.jobType)
@@ -370,8 +371,12 @@ export const api = {
   updateCandidate: (id: string, data: Record<string, unknown>) =>
     putJSON<Candidate>(`/candidates/${id}`, data),
 
-  triggerApply: (candidateId: string, maxApps: number) =>
-    postJSON<ApplyTriggerResponse>(`/candidates/${candidateId}/apply`, { max_apps: maxApps }),
+  triggerApply: (candidateId: string, maxApps: number, timeFilter?: string, platform?: string) =>
+    postJSON<ApplyTriggerResponse>(`/candidates/${candidateId}/apply`, {
+      max_apps: maxApps,
+      time_filter: timeFilter,
+      platform: platform
+    }),
 
   getGoogleAuthUrl: (candidateId: string) =>
     fetchJSON<{ auth_url: string; is_mock: boolean }>(`/candidates/${candidateId}/google/auth-url`),
@@ -390,4 +395,7 @@ export const api = {
 
   getDiscoveryStatus: () =>
     fetchJSON<DiscoveryStatusResponse>('/jobs/discover/status'),
+
+  getPlatforms: () =>
+    fetchJSON<string[]>('/jobs/platforms'),
 }
