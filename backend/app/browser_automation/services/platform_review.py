@@ -1,8 +1,8 @@
 import json
 import logging
 import os
-from pathlib import Path
 from datetime import datetime, timedelta
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,11 @@ _SKIP_PATTERNS = [
     "Apply button not found",
     "Apply now button not found",
     "Workday Apply button not found",
+    # Talent.com "Quick Apply link not found" is job-specific (the posting is expired,
+    # region-gated, or the job is not a Quick-Apply listing) — NOT a platform outage.
+    # Without this exclusion, 5 expired/non-QA jobs lock out ALL talent.com for 24h.
+    "Quick Apply link not found",
+    "Talent.com Quick Apply link not found",
     # Missing credentials for account-walled ATSes — operator config gap, not a
     # platform outage. Charging this to the platform would lock out Workday/
     # iCIMS/Dice the moment we hit 5 jobs without creds configured.

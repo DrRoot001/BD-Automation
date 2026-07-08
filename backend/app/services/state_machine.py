@@ -1,13 +1,11 @@
-from fastapi import HTTPException
-from app.schemas.application import ApplicationStatus
 
 VALID_TRANSITIONS: dict[str, list[str]] = {
-    "FOUND":               ["ANALYZED", "QUEUED", "FAILED"],
+    "FOUND":               ["ANALYZED", "QUEUED", "FAILED", "BLOCKED"],
     "ANALYZED":            ["MATCHED", "APPLICATION_STARTED", "FAILED"],
     "MATCHED":             ["RESUME_UPDATED", "APPLICATION_STARTED", "QUEUED", "FAILED"],
     "RESUME_UPDATED":      ["COVER_LETTER_CREATED", "FORM_COMPLETED", "APPLICATION_STARTED", "QUEUED", "FAILED"],
     "COVER_LETTER_CREATED":["QUEUED", "FAILED"],
-    "QUEUED":              ["APPLICATION_STARTED", "FORM_COMPLETED", "SUBMITTED", "FAILED", "ANALYZED"],
+    "QUEUED":              ["APPLICATION_STARTED", "FORM_COMPLETED", "SUBMITTED", "FAILED", "ANALYZED", "BLOCKED"],
     "APPLICATION_STARTED": ["FORM_COMPLETED", "QUEUED", "ANALYZED", "SUBMITTED", "FAILED", "BLOCKED"],
     "FORM_COMPLETED":      ["SUBMITTED", "QUEUED", "FAILED"],
     "SUBMITTED":           ["CONFIRMED", "REJECTED", "GHOSTED"],
@@ -36,11 +34,12 @@ def validate_transition(current: str, target: str) -> bool:
 
 
 import logging
-from datetime import datetime, timezone, timedelta
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta, timezone
+
 from app.models.application import Application
 from app.models.application_history import ApplicationHistory
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -60,10 +59,10 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
     transient 404s.  Job expiry is now handled opportunistically by the browser
     automation layer when it actually tries to load the page.
     """
-    from sqlalchemy import func, or_, text
+    from sqlalchemy import text
 
     now = datetime.now(timezone.utc)
-    
+
     # 1. Fetch stuck apps and their latest history timestamp in a single grouped query
     stmt = text("""
         SELECT a.id, a.status, COALESCE(MAX(h.created_at), a.created_at) as last_updated
@@ -95,13 +94,16 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             # This prevents stale QUEUED jobs from appearing as "limit reached".
             threshold_min = 15
         else:
-            threshold_min = 30
-            
+            # APPLICATION_STARTED / FORM_COMPLETED: reduce to 20 min so stuck browser
+            # sessions don't block worker slots for a full 30 minutes. The 30 min threshold
+            # was causing live workers to appear "full" even though the browser had crashed.
+            threshold_min = 20
+
         time_limit = now - timedelta(minutes=threshold_min)
-        
+
         if last_updated < time_limit:
             stuck_ids_and_statuses.append((app_id, status, last_updated))
-            
+
     if not stuck_ids_and_statuses:
         return
 
@@ -184,7 +186,7 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             )
         except Exception as ev_err:
             logger.error(f"[Watchdog] failed to publish status changed event for {app.id}: {ev_err}")
-            
+
     if stuck_count > 0:
         await session.commit()
         logger.info(f"[Watchdog] Successfully recovered {stuck_count} stuck applications.")

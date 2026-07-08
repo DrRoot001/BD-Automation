@@ -1,21 +1,21 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from typing import List
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
+from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.resume import Resume
-from app.models.application import Application
+from app.models.user import User, UserRole
+from app.routers.auth import get_current_user
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
 from app.schemas.resume import ResumeResponse
-
-from app.routers.auth import get_current_user
-from app.models.user import User, UserRole
-from app.services.crypto import encrypt_token, decrypt_token
-from app.middleware.rate_limit import limiter
+from app.services.crypto import encrypt_token
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
@@ -29,7 +29,7 @@ async def list_candidates(
     query = select(Candidate).order_by(Candidate.created_at.desc())
     if current_user.role != UserRole.admin:
         query = query.where(Candidate.user_id == current_user.id)
-        
+
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     return result.scalars().all()
@@ -87,7 +87,7 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
     db_candidate = result.scalar_one_or_none()
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     update_data = candidate_update.model_dump(exclude_unset=True)
 
     if "email" in update_data and update_data["email"]:
@@ -107,7 +107,7 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
 
     for key, value in update_data.items():
         setattr(db_candidate, key, value)
-        
+
     try:
         await db.commit()
         await db.refresh(db_candidate)
@@ -138,6 +138,7 @@ async def upload_candidate_resume(
 
     # Upload directly to Supabase "resume" bucket (no local saving)
     import tempfile
+
     from module3.utils.storage import upload_file_to_supabase as _upload
 
     content = await file.read()
@@ -255,6 +256,16 @@ async def trigger_apply(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # Enforce that the candidate has a base resume
+    resume_stmt = select(Resume).where(Resume.candidate_id == candidate_uuid, Resume.is_base == True)
+    resume_result = await db.execute(resume_stmt)
+    base_resume = resume_result.scalars().first()
+    if not base_resume:
+        raise HTTPException(
+            status_code=400,
+            detail="Candidate has no base resume. Please upload a resume first."
+        )
+
     # Enforce ownership: BD users can only trigger apply for their own candidates
     if current_user.role != UserRole.admin:
         if candidate.user_id is None or str(candidate.user_id) != str(current_user.id):
@@ -281,8 +292,9 @@ async def trigger_apply(
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
 
-from app.config import get_settings
 import httpx
+
+from app.config import get_settings
 
 settings = get_settings()
 
@@ -299,14 +311,14 @@ async def get_google_auth_url(candidate_id: str, db: AsyncSession = Depends(get_
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     client_id = settings.google_client_id
     if not client_id:
         return {
             "auth_url": "",
             "is_mock": True
         }
-        
+
     from urllib.parse import urlencode
     params = {
         "client_id": client_id,
@@ -333,10 +345,10 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
     db_candidate = result.scalar_one_or_none()
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     client_id = settings.google_client_id
     client_secret = settings.google_client_secret
-    
+
     if not client_id or not client_secret:
         # Store mock token (plaintext is fine for development mock)
         db_candidate.google_refresh_token = encrypt_token(f"mock_refresh_token_for_{candidate_id}")
@@ -346,7 +358,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
             await db.rollback()
             raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
         return {"status": "success", "message": "Simulated Google OAuth connected successfully", "mock": True}
-        
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -363,7 +375,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
                 status_code=400,
                 detail=f"Failed to exchange Google authorization code: {resp.text}"
             )
-        
+
         token_data = resp.json()
         refresh_token = token_data.get("refresh_token")
         if not refresh_token:
@@ -371,7 +383,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
                 status_code=400,
                 detail="No refresh token returned by Google. Try removing access and connecting again."
             )
-            
+
         db_candidate.google_refresh_token = encrypt_token(refresh_token)
         try:
             await db.commit()
@@ -384,25 +396,27 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
 @router.post("/{candidate_id}/google/disconnect")
 async def disconnect_google(candidate_id: str, db: AsyncSession = Depends(get_db)):
     from uuid import UUID
+
     from fastapi import HTTPException
+
     from app.models.candidate import Candidate
-    
+
     try:
         cand_uuid = UUID(candidate_id) if isinstance(candidate_id, str) else candidate_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid candidate UUID")
-        
+
     db_candidate = await db.get(Candidate, cand_uuid)
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     db_candidate.google_refresh_token = None
     try:
         await db.commit()
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-        
+
     return {"status": "success", "message": "Google OAuth disconnected successfully"}
 
 
@@ -415,17 +429,18 @@ async def run_matching_endpoint(
     current_user: User = Depends(get_current_user)
 ):
     from uuid import UUID
+
     from app.services.matching import run_matching_for_candidate
-    
+
     try:
         cand_uuid = UUID(candidate_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid candidate UUID")
-        
+
     candidate = await db.get(Candidate, cand_uuid)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     try:
         result = await run_matching_for_candidate(cand_uuid, db)
         if "error" in result:

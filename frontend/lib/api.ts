@@ -1,8 +1,18 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api'
 
+async function handleResponseError(res: Response, path: string): Promise<never> {
+  try {
+    const errData = await res.json()
+    if (errData && errData.detail) {
+      throw new Error(errData.detail)
+    }
+  } catch {}
+  throw new Error(`API error ${res.status}: ${path}`)
+}
+
 async function fetchJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`)
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -12,7 +22,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -22,7 +32,7 @@ async function patchJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -32,7 +42,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -40,7 +50,7 @@ async function deleteJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'DELETE',
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 

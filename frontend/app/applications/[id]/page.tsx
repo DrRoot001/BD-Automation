@@ -6,7 +6,7 @@ import Link from 'next/link'
 import { api, type ApplicationHistoryEntry } from '@/lib/api'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
-import { resolveFileUrl } from '@/components/utils'
+import { resolveFileUrl, formatJobUrl } from '@/components/utils'
 import { FAILURE_INFO } from '@/lib/failureReasons'
 import { ExternalLink, AlertCircle, ArrowLeft, FileText, Camera } from 'lucide-react'
 
@@ -79,14 +79,14 @@ export default function ApplicationDetailPage() {
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
             <h1 className="page-title">
-              {job?.canonical_url || job?.source_url ? (
+              {formatJobUrl(job?.canonical_url) || formatJobUrl(job?.source_url) ? (
                 <a 
-                  href={job.canonical_url || job.source_url} 
+                  href={formatJobUrl(job?.canonical_url) || formatJobUrl(job?.source_url)} 
                   target="_blank" 
                   rel="noopener noreferrer" 
                   className="hover:text-accent hover:underline inline-flex items-center gap-2"
                 >
-                  {job.title}
+                  {job?.title}
                   <ExternalLink className="w-4 h-4 text-text-muted" />
                 </a>
               ) : (
@@ -132,9 +132,9 @@ export default function ApplicationDetailPage() {
               <div className="col-span-2">
                 <div className="text-text-muted mb-1 text-xs font-medium">Job Posting Link</div>
                 <div>
-                  {job?.canonical_url || job?.source_url ? (
+                  {formatJobUrl(job?.canonical_url) || formatJobUrl(job?.source_url) ? (
                     <a 
-                      href={job.canonical_url || job.source_url} 
+                      href={formatJobUrl(job?.canonical_url) || formatJobUrl(job?.source_url)} 
                       target="_blank" 
                       rel="noopener noreferrer" 
                       className="text-accent hover:underline inline-flex items-center gap-1 font-semibold text-xs"
@@ -163,9 +163,9 @@ export default function ApplicationDetailPage() {
                   </p>
                 </div>
               </div>
-              {job?.source_url && (
+              {formatJobUrl(job?.source_url) && (
                 <a
-                  href={job.source_url}
+                  href={formatJobUrl(job?.source_url)}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="btn-danger !py-2 !px-4 !text-xs"

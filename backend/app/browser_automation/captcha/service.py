@@ -1,13 +1,15 @@
-import os
-import base64
-import time
 import asyncio
-import random
+import base64
 import logging
+import os
+import random
+import time
+from typing import Optional
+
 import httpx
-from typing import Literal, Optional
-from playwright.async_api import Page
 from dotenv import load_dotenv
+from playwright.async_api import Page
+
 from .models import CaptchaSolution
 
 load_dotenv()
@@ -99,7 +101,7 @@ class CaptchaService:
                 raise RuntimeError(f"AntiCaptcha error: {body.get('errorDescription')}")
             if body.get("status") == "ready":
                 sol = body.get("solution", {})
-                return sol.get("gRecaptchaResponse") or sol.get("text") or ""
+                return sol.get("gRecaptchaResponse") or sol.get("token") or sol.get("text") or ""
         raise TimeoutError("AntiCaptcha: timed out waiting for solution")
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -337,41 +339,53 @@ class CaptchaService:
 
     async def solve_turnstile(self, page: Page, sitekey: str, action: str = "",
                               cdata: str = "") -> CaptchaSolution:
-        """Solve a Cloudflare Turnstile challenge via CapSolver and inject the token.
+        """Solve a Cloudflare Turnstile challenge via CapSolver or Anti-Captcha and inject the token.
 
-        Only CapSolver is wired up for Turnstile here (AntiTurnstileTaskProxyLess).
+        Both CapSolver and Anti-Captcha are supported for Turnstile.
         The token is injected IMMEDIATELY after solving because Turnstile tokens
         expire in ~120s — any delay between solve and submit risks a stale token.
         """
         start = time.monotonic()
-        if self.provider != "capsolver":
+        if self.provider not in ("capsolver", "anticaptcha"):
             logger.warning(
-                f"[CAPTCHA] Turnstile solving requires provider 'capsolver' "
+                f"[CAPTCHA] Turnstile solving requires provider 'capsolver' or 'anticaptcha' "
                 f"(current provider={self.provider!r}) — skipping"
             )
             return CaptchaSolution(captcha_type="turnstile", success=False,
                                    solve_time_seconds=0, cost_usd=0)
         try:
             async with httpx.AsyncClient(timeout=30) as client:
-                # CapSolver reads the challenge action/cData from metadata;
-                # "managed" is the safe default when the page doesn't set one.
-                metadata = {"action": action or "managed"}
-                if cdata:
-                    metadata["cdata"] = cdata
-                tid = await self._capsolver_submit(client, {
-                    "type": "AntiTurnstileTaskProxyLess",
-                    "websiteURL": page.url,
-                    "websiteKey": sitekey,
-                    "metadata": metadata,
-                })
-                token = await self._capsolver_poll_turnstile(client, tid)
+                if self.provider == "capsolver":
+                    # CapSolver reads the challenge action/cData from metadata;
+                    # "managed" is the safe default when the page doesn't set one.
+                    metadata = {"action": action or "managed"}
+                    if cdata:
+                        metadata["cdata"] = cdata
+                    tid = await self._capsolver_submit(client, {
+                        "type": "AntiTurnstileTaskProxyLess",
+                        "websiteURL": page.url,
+                        "websiteKey": sitekey,
+                        "metadata": metadata,
+                    })
+                    token = await self._capsolver_poll_turnstile(client, tid)
+                elif self.provider == "anticaptcha":
+                    task = {
+                        "type": "TurnstileTaskProxyless",
+                        "websiteURL": page.url,
+                        "websiteKey": sitekey,
+                        "action": action or "managed",
+                    }
+                    if cdata:
+                        task["cData"] = cdata
+                    tid = await self._anticaptcha_submit(client, task)
+                    token = await self._anticaptcha_poll(client, tid, polls=20)
         except Exception as exc:
-            logger.error(f"[CAPTCHA] solve_turnstile (capsolver) failed: {exc}")
+            logger.error(f"[CAPTCHA] solve_turnstile ({self.provider}) failed: {exc}")
             return CaptchaSolution(captcha_type="turnstile", success=False,
                                    solve_time_seconds=time.monotonic() - start, cost_usd=0)
 
         if not token:
-            logger.warning("[CAPTCHA] CapSolver returned an empty Turnstile token")
+            logger.warning(f"[CAPTCHA] {self.provider} returned an empty Turnstile token")
             return CaptchaSolution(captcha_type="turnstile", success=False,
                                    solve_time_seconds=time.monotonic() - start, cost_usd=0)
 
@@ -387,23 +401,27 @@ class CaptchaService:
 
     async def _inject_turnstile_token(self, page: Page, token: str) -> None:
         """Write the Turnstile token into every response input + invoke the widget callback."""
-        await page.evaluate("""(token) => {
-            // Turnstile writes its token into a hidden input named
-            // "cf-turnstile-response"; some pages render several widgets.
-            const els = document.querySelectorAll('[name="cf-turnstile-response"]');
-            els.forEach((el) => { el.value = token; });
-            // Some integrations reuse the reCAPTCHA-style hidden input name.
-            const gr = document.querySelector('input[name="g-recaptcha-response"]');
-            if (gr) gr.value = token;
-            // Best-effort: if the widget is scripted, hand the token to its callback.
-            try {
-                const container = document.querySelector('.cf-turnstile');
-                if (container) {
-                    const cb = container.getAttribute('data-callback');
-                    if (cb && typeof window[cb] === 'function') window[cb](token);
-                }
-            } catch (e) { /* callback wiring is best-effort */ }
-        }""", token)
+        for frame in page.frames:
+            try:
+                await frame.evaluate("""(token) => {
+                    // Turnstile writes its token into a hidden input named
+                    // "cf-turnstile-response"; some pages render several widgets.
+                    const els = document.querySelectorAll('[name="cf-turnstile-response"]');
+                    els.forEach((el) => { el.value = token; });
+                    // Some integrations reuse the reCAPTCHA-style hidden input name.
+                    const gr = document.querySelector('input[name="g-recaptcha-response"]');
+                    if (gr) gr.value = token;
+                    // Best-effort: if the widget is scripted, hand the token to its callback.
+                    try {
+                        const container = document.querySelector('.cf-turnstile');
+                        if (container) {
+                            const cb = container.getAttribute('data-callback');
+                            if (cb && typeof window[cb] === 'function') window[cb](token);
+                        }
+                    } catch (e) { /* callback wiring is best-effort */ }
+                }""", token)
+            except Exception:
+                pass
 
     async def _extract_turnstile_sitekey(self, page: Page) -> Optional[str]:
         """Locate the Cloudflare Turnstile sitekey on the current page.
@@ -414,36 +432,44 @@ class CaptchaService:
         or query). Returns None if no sitekey can be found.
         """
         try:
-            el = await page.query_selector(".cf-turnstile[data-sitekey]")
-            if el:
-                key = await el.get_attribute("data-sitekey")
-                if key:
-                    return key
+            # Check all frames for .cf-turnstile element or data-sitekey
+            for frame in page.frames:
+                try:
+                    el = await frame.query_selector(".cf-turnstile[data-sitekey]")
+                    if el:
+                        key = await el.get_attribute("data-sitekey")
+                        if key:
+                            return key
 
-            # Any element carrying a data-sitekey whose class mentions turnstile.
-            candidates = await page.query_selector_all("[data-sitekey]")
-            for cand in candidates:
-                cls = (await cand.get_attribute("class") or "").lower()
-                if "turnstile" in cls or "cf-" in cls:
-                    key = await cand.get_attribute("data-sitekey")
-                    if key:
-                        return key
+                    # Any element carrying a data-sitekey whose class mentions turnstile.
+                    candidates = await frame.query_selector_all("[data-sitekey]")
+                    for cand in candidates:
+                        cls = (await cand.get_attribute("class") or "").lower()
+                        if "turnstile" in cls or "cf-" in cls:
+                            key = await cand.get_attribute("data-sitekey")
+                            if key:
+                                return key
+                except Exception:
+                    pass
 
-            # Fallback: parse the sitekey out of the Cloudflare challenge iframe src.
-            iframe = await page.query_selector("iframe[src*='challenges.cloudflare.com']")
-            if iframe:
-                src = await iframe.get_attribute("src") or ""
-                import urllib.parse
-                parsed = urllib.parse.urlparse(src)
-                # Turnstile embeds the sitekey in the query (?sitekey=... / ?k=...)
-                qs = urllib.parse.parse_qs(parsed.query)
-                for param in ("sitekey", "k"):
-                    if qs.get(param):
-                        return qs[param][0]
-                # …or as a path segment like /turnstile/if/ov2/av0/rcv/<sitekey>/...
-                for seg in parsed.path.split("/"):
-                    if seg.startswith("0x"):  # Turnstile sitekeys start with 0x
-                        return seg
+            # Fallback: parse the sitekey out of the Cloudflare challenge iframe URL from any frame.
+            for frame in page.frames:
+                try:
+                    url = frame.url
+                    if "challenges.cloudflare.com" in url.lower():
+                        import urllib.parse
+                        parsed = urllib.parse.urlparse(url)
+                        # Turnstile embeds the sitekey in the query (?sitekey=... / ?k=...)
+                        qs = urllib.parse.parse_qs(parsed.query)
+                        for param in ("sitekey", "k"):
+                            if qs.get(param) and qs[param][0]:
+                                return qs[param][0]
+                        # …or as a path segment like /turnstile/if/ov2/av0/rcv/<sitekey>/...
+                        for seg in parsed.path.split("/"):
+                            if seg.startswith("0x"):  # Turnstile sitekeys start with 0x
+                                return seg
+                except Exception:
+                    pass
         except Exception as exc:
             logger.warning(f"[CAPTCHA] Turnstile sitekey extraction failed: {exc}")
         return None
@@ -456,12 +482,16 @@ class CaptchaService:
         callers fall back to the "managed" default.
         """
         try:
-            el = await page.query_selector(".cf-turnstile[data-sitekey]") \
-                or await page.query_selector(".cf-turnstile")
-            if el:
-                action = await el.get_attribute("data-action") or ""
-                cdata = await el.get_attribute("data-cdata") or ""
-                return action, cdata
+            for frame in page.frames:
+                try:
+                    el = await frame.query_selector(".cf-turnstile[data-sitekey]") \
+                        or await frame.query_selector(".cf-turnstile")
+                    if el:
+                        action = await el.get_attribute("data-action") or ""
+                        cdata = await el.get_attribute("data-cdata") or ""
+                        return action, cdata
+                except Exception:
+                    pass
         except Exception as exc:
             logger.warning(f"[CAPTCHA] Turnstile action extraction failed: {exc}")
         return "", ""
@@ -621,26 +651,27 @@ class CaptchaService:
         """Solve reCAPTCHA v3 using the freecaptcha library without an API key."""
         start = time.monotonic()
         anchor_url = await self._extract_v3_anchor_url(page)
-        
+
         if not anchor_url:
             logger.info("[CAPTCHA] reCAPTCHA v3 anchor URL not found on page; trusting auto-bypass")
             return CaptchaSolution(
                 captcha_type="recaptcha_v3", token="auto_bypassed",
                 success=True, solve_time_seconds=0, cost_usd=0
             )
-            
+
         logger.info("[CAPTCHA] Attempting reCAPTCHA v3 bypass with freecaptcha...")
         try:
-            import freecaptcha
             import asyncio
-            
+
+            import freecaptcha
+
             # freecaptcha uses requests/yarl synchronously, so run in executor
             token = await asyncio.get_event_loop().run_in_executor(
                 None,
                 freecaptcha.reCAPTCHAV3Solver.solve,
                 anchor_url,
             )
-            
+
             if token:
                 logger.info("[CAPTCHA] freecaptcha v3 token acquired!")
                 await self._inject_recaptcha_v3_token(page, token)
@@ -650,10 +681,10 @@ class CaptchaService:
                 )
             else:
                 logger.warning("[CAPTCHA] freecaptcha returned empty v3 token")
-                
+
         except Exception as exc:
             logger.warning(f"[CAPTCHA] freecaptcha v3 solve failed: {exc}")
-            
+
         # Graceful fallback: trust stealth auto-bypass
         logger.info("[CAPTCHA] Falling back to auto-bypass for reCAPTCHA v3")
         return CaptchaSolution(
@@ -745,6 +776,32 @@ class CaptchaService:
         if captcha_type == "recaptcha_v3":
             return await self.solve_recaptcha_v3(page)
 
+        # ── Priority Phase: anticaptcha first ──────────────────────────────────
+        # If the provider is anticaptcha and it has a valid API key, run it first
+        # as priority instead of fallback.
+        if self.provider == "anticaptcha" and self.api_key:
+            logger.info("[CAPTCHA] anticaptcha key detected and configured as priority. Solving via anticaptcha first.")
+            last: Optional[CaptchaSolution] = None
+            for attempt in range(1, max_attempts + 1):
+                logger.info(f"[CAPTCHA] Priority Attempt {attempt}/{max_attempts} | type={captcha_type} | provider=anticaptcha")
+                try:
+                    solution = await self._perform_single_solve(page, captcha_type)
+                    logger.info(f"[CAPTCHA] Priority Attempt {attempt} result: success={solution.success}, "
+                                f"time={solution.solve_time_seconds:.1f}s, cost=${solution.cost_usd:.4f}")
+                    if solution.success:
+                        return solution
+                    last = solution
+                except Exception as exc:
+                    logger.error(f"[CAPTCHA] Priority Attempt {attempt} raised exception: {exc}")
+
+                if attempt < max_attempts:
+                    jitter = random.uniform(2, 5)
+                    logger.info(f"[CAPTCHA] Refreshing captcha widget before retry (wait {jitter:.1f}s)...")
+                    await self._refresh_captcha_widget(page, captcha_type)
+                    await asyncio.sleep(jitter)
+
+            logger.warning("[CAPTCHA] anticaptcha priority solve failed or exhausted all attempts; falling back to default AI/Whisper solvers.")
+
         # ── Phase 0: try the in-process AI solver first ─────────────────────
         # This is "AI is the master" applied to captchas: before we pay a
         # third-party service, give Claude a shot at it. For reCAPTCHA v2 the
@@ -764,7 +821,7 @@ class CaptchaService:
                     # exposed to scripts; the DOM widget commits on its own.)
                     await self._inject_recaptcha_token(page, ai_sol.token)
                 return ai_sol
-            logger.info(f"[CAPTCHA] AI solver did not succeed; trying audio-challenge (Whisper)…")
+            logger.info("[CAPTCHA] AI solver did not succeed; trying audio-challenge (Whisper)…")
         except Exception as exc:
             logger.warning(f"[CAPTCHA] AI solver raised (non-fatal): {exc}")
 
@@ -775,7 +832,8 @@ class CaptchaService:
         if captcha_type == "recaptcha_v2":
             try:
                 from .audio_solver import (
-                    detect_recaptcha_v2, solve_recaptcha_v2_via_audio,
+                    detect_recaptcha_v2,
+                    solve_recaptcha_v2_via_audio,
                 )
                 if await detect_recaptcha_v2(page):
                     audio_res = await solve_recaptcha_v2_via_audio(page, max_retries=2)

@@ -1,6 +1,6 @@
 {
   "generic": {
-    "needs_review": false,
+    "needs_review": true,
     "failures": [
       {
         "timestamp": "2026-06-27T01:11:36.913603",
@@ -33,6 +33,46 @@
       {
         "timestamp": "2026-07-07T10:30:28.131728",
         "error": "Page.evaluate: Connection closed while reading from the driver"
+      },
+      {
+        "timestamp": "2026-07-07T21:12:23.008396",
+        "error": "BLOCKED: vision-agent flagged page state: Cloudflare security verification page, indicating the website is performing a bot check."
+      },
+      {
+        "timestamp": "2026-07-07T22:06:01.183910",
+        "error": "BLOCKED: vision-agent flagged page state: Cloudflare security verification page blocking access to the website content."
+      },
+      {
+        "timestamp": "2026-07-07T22:06:02.705241",
+        "error": "BLOCKED: vision-agent flagged page state: Cloudflare security challenge page, indicating a bot verification process is underway."
+      },
+      {
+        "timestamp": "2026-07-07T22:07:35.918974",
+        "error": "BLOCKED: vision-agent flagged page state: The page is displaying a Cloudflare security verification, indicating it's blocked by a WAF/captcha wall."
+      },
+      {
+        "timestamp": "2026-07-07T22:33:27.410998",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T22:35:43.490459",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T22:41:24.425990",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T22:58:47.657557",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T23:21:22.786869",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T23:23:21.271295",
+        "error": "BLOCKED: turnstile solve failed."
       }
     ]
   },
@@ -92,7 +132,7 @@
     ]
   },
   "www.dice.com": {
-    "needs_review": false,
+    "needs_review": true,
     "failures": [
       {
         "timestamp": "2026-06-27T16:38:15.235873",
@@ -101,6 +141,22 @@
       {
         "timestamp": "2026-07-07T14:46:21.147266",
         "error": "BLOCKED: Dice posting is external-apply only (no Easy Apply). This adapter only drives Dice Easy Apply postings."
+      },
+      {
+        "timestamp": "2026-07-07T18:07:53.014880",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-07T18:11:54.305630",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-07T18:13:49.697875",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-07T18:14:54.712676",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
       }
     ]
   },
@@ -305,43 +361,11 @@
     ]
   },
   "www.talent.com": {
-    "needs_review": true,
+    "needs_review": false,
     "failures": [
-      {
-        "timestamp": "2026-07-07T10:16:11.055533",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:20:00.731620",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:20:58.015025",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:22:04.339527",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:22:45.769606",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:24:04.127867",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:24:39.853942",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
       {
         "timestamp": "2026-07-07T16:20:30.357575",
         "error": "Error 8 connecting to wired-troll-155323.upstash.io:6379. nodename nor servname provided, or not known."
-      },
-      {
-        "timestamp": "2026-07-07T16:23:13.673093",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
       }
     ]
   },
@@ -351,6 +375,15 @@
       {
         "timestamp": "2026-07-07T10:21:42.292633",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      }
+    ]
+  },
+  "www.simplyhired.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-07T22:12:23.136018",
+        "error": "AgentLoop aborted: Cannot find application form or proceed with application on SimplyHired. Repeated attempts to click apply or navigate have led to a job search/sign-in page."
       }
     ]
   }

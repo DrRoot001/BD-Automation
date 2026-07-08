@@ -197,20 +197,41 @@ else
   echo -e "${C_INFO}  Backend health check timed out — it may still be starting. Continuing.${RESET}"
 fi
 
-# ── 3. Celery worker — all task modules ──────────────────────────────────────
+# ── 3. Celery workers — split to prevent email scans starving application tasks ──
+#
+# BEFORE: 1 worker with 6 slots handles ALL queues. When email_scan fires,
+#         7 tasks dispatch at once, monopolizing all 6 slots for 40-90s —
+#         no execute_application tasks can run during that window.
+#
+# AFTER:  2 separate workers with dedicated concurrency:
+#   - main-worker:  4 slots for job execution + discovery (never stolen by email scans)
+#   - email-worker: 3 slots for email/interview scans only
 
-log "Starting Celery worker (modules 2-5) ..."
+log "Starting Celery main worker (app execution, concurrency=4) ..."
 (
   cd "$ROOT/backend"
   "$PYTHON" -m celery \
     -A app.celery_app worker \
     --loglevel=info \
-    --concurrency=6 \
-    -n "worker@%h" \
-    -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution,queue:email_scan
+    --concurrency=4 \
+    -n "main-worker@%h" \
+    -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution
 ) > "$LOG_DIR/celery-worker.log" 2>&1 &
 PIDS+=($!)
 stream_log "WORKER" "$C_WORKER" "$LOG_DIR/celery-worker.log"
+
+log "Starting Celery email worker (email/interview scans, concurrency=3) ..."
+(
+  cd "$ROOT/backend"
+  "$PYTHON" -m celery \
+    -A app.celery_app worker \
+    --loglevel=info \
+    --concurrency=3 \
+    -n "email-worker@%h" \
+    -Q queue:email_scan
+) > "$LOG_DIR/celery-email-worker.log" 2>&1 &
+PIDS+=($!)
+stream_log "EMAIL " "$C_BEAT" "$LOG_DIR/celery-email-worker.log"
 
 # ── 4. Celery beat — scheduled pipelines ─────────────────────────────────────
 

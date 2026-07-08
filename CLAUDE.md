@@ -43,6 +43,22 @@ docker-compose up --build
 
 ---
 
+## First-Time Setup
+
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r backend/requirements.txt
+pip install -e .                    # makes module2/3/4/5 importable without manual PYTHONPATH
+playwright install chromium
+cd module2/scraper && npm install && cd ../..
+cd frontend && npm install && cd ..
+cp backend/.env.example backend/.env   # then fill in values, see below
+```
+
+For backend test/lint tooling (pytest, mypy, ruff, black, isort): `pip install -r backend/requirements-dev.txt`.
+
+---
+
 ## Environment Setup
 
 Copy `backend/.env.example` to `backend/.env` and fill in:
@@ -87,6 +103,16 @@ python backend/app/scripts/agent_e2e_local.py
 python backend/app/scripts/e2e_m1_to_m4_test.py
 ```
 
+`backend/app/scripts/` also holds many one-off diagnostic/repro scripts for the browser agent (`diag_*.py`, `agent_multi_ats_verify.py`, `bootstrap_dice_session.py`, `retry_failed_and_blocked.py`, etc.) — useful references when debugging a specific ATS platform, not part of the test suite.
+
+## Linting & Type Checking
+
+```bash
+ruff check .                        # from repo root; config in pyproject.toml (line-length 100, E/F/I/W)
+mypy backend/app                    # config in pyproject.toml
+cd frontend && npm run lint         # Next.js ESLint
+```
+
 ---
 
 ## Architecture
@@ -99,8 +125,11 @@ python backend/app/scripts/e2e_m1_to_m4_test.py
 - `backend/app/tasks/` — Celery tasks wiring the modules together: `dynamic_apply.py` (M2→M4 pipeline), `browser_automation.py`, `resume_generation.py`, `job_discovery.py`, `email_scan.py`, `daily_job_matching.py`.
 
 ### Module 2 — Job Discovery (`module2/`)
-- Scraper (`module2/scraper/scrape.js`) — Node.js/Playwright scraper that hits job boards.
-- Python side calls Node via subprocess or runs Python adapters. Output is normalized via `module2/normalization/schemas.py` into `NormalizedJob` objects stored in the DB.
+- `module2/run_scrape.py` — orchestrator: for each link in `module2/links.py`, runs the Node scraper as a subprocess, filters disallowed job types/clearance-required postings, maps results into `JobCreate` shape, and POSTs the batch to this same backend's `/api/jobs`. Invoked from `backend/app/tasks/job_discovery.py`.
+- `module2/scraper/scrape.js` — Node.js scraper (FetchFox/Gemini-assisted) that hits job boards; `module2/scraper/fields.js` defines the fields it extracts.
+- `module2/normalization/schemas.py` — normalizes scraped output into `NormalizedJob` objects.
+- `module2/embedding/` — generates embeddings for job matching (`generator.py`, `embedder.py`).
+- `module2/adapters/`, `module2/filtering/`, `module2/storage/` are currently empty stub packages (only `__init__.py`) — do not assume logic lives there. Platform-specific ATS adapters actually live in `backend/app/browser_automation/adapters/` (see Module 4).
 
 ### Module 3 — AI & Resume Intelligence (`module3/`)
 - `module3/orchestrator.py` — Main pipeline entrypoint imported by `POST /api/applications/prepare-package`. Runs: parse resume PDF → score fit → tailor resume → generate cover letter → answer screening questions → upload artifacts to Supabase storage.
@@ -110,18 +139,21 @@ python backend/app/scripts/e2e_m1_to_m4_test.py
 ### Module 4 — Browser Automation (`backend/app/browser_automation/`)
 - `agent/loop.py` — Vision-driven agentic loop: screenshot + scoped DOM → LLM decides ONE action → Playwright executes → repeat. Max steps enforced; stall detection via DOM-hash comparison.
 - `agent/page_agent.py` — Classifies the current page state (`FORM`, `LISTING`, `SUCCESS`, `BLOCKED`, `ERROR`, `UNKNOWN`) using Gemini vision before committing an action.
+- `adapters/` — one file per ATS/job board (`greenhouse.py`, `lever.py`, `workday.py`, `dice.py`, `linkedin.py`, `indeed.py`, `ziprecruiter.py`, `glassdoor.py`, `icims.py`, `ashby.py`, `himalayas.py`, `remoterocketship.py`, `talent.py`) plus `generic.py` as the fallback and `registry.py` to dispatch by domain.
 - `forms/` — Field detector, filler, AI resolver, LLM filler, form field memory.
-- `learned_fixes/` — JSON files per platform (e.g. `www.remoterocketship.com.json`) that cache winning selectors discovered by the agent so future runs skip LLM calls.
+- `captcha/service.py` — dispatches to whichever captcha provider is configured (`CAPTCHA_PROVIDER` env var: capsolver | 2captcha | anticaptcha | nopecha).
+- `learned_fixes/` — JSON files per platform (e.g. `workday.json`, `platform_reviews.json`) that cache winning selectors discovered by the agent so future runs skip LLM calls.
 - `llm/claude_client.py` — Anthropic client used by the agent loop; `llm/` also provides a `get_llm()` factory with `LLMUnavailable` fallback.
-- Celery task: `task:execute_application` (queue `queue:application_execution`, soft 50 min / hard 60 min limit).
+- Celery task: `task:execute_application` (queue `queue:application_execution`, soft 50 min / hard 60 min limit), defined in `backend/app/tasks/browser_automation.py`.
+- **`module4/` at the repo root is a legacy compatibility shim, not the real implementation** — every file in `module4/tasks/` (`celery_app.py`, `execute_application.py`, `event_consumer.py`) just re-exports from `backend/app/celery_app.py` / `backend/app/tasks/browser_automation.py`. This exists so two Celery apps don't double-register the same task name. Always edit the canonical `backend/app/` versions; changes to `module4/` files alone have no effect.
 
 ### Module 5 — Email Intelligence (`module5/`)
 - `module5/scanner.py` + `module5/gmail/` — Polls Gmail for interview invites on a 15-minute schedule. Updates `interview_tracking` table.
 
 ### Frontend (`frontend/`)
 - Next.js 14 App Router, TypeScript, Tailwind CSS, Recharts for analytics, TanStack Query for data fetching, Supabase JS for auth.
-- Pages under `frontend/app/`: `dashboard`, `candidates`, `jobs`, `applications`, `matches`, `automation`, `analytics`, `admin`.
-- API base configured via `NEXT_PUBLIC_API_BASE` env var (default `http://localhost:8000/api`).
+- Pages under `frontend/app/`: `login`, `candidates` (+ `new`, `[id]`, `oauth-callback`), `dashboard` (+ `applications`, `jobs`, `interviews`), `applications/[id]`, `admin` (+ `discovery`, `users`, `jobs`, `import`). `actions/` holds server actions.
+- API base configured via `NEXT_PUBLIC_API_BASE` env var (default `http://localhost:8000/api`); see `frontend/lib/api.ts`.
 
 ---
 

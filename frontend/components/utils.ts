@@ -35,8 +35,13 @@ export function resolveFileUrl(fileUrl: string | null | undefined): string | nul
 /** Format a job URL to ensure it has a scheme (http:// or https://) */
 export function formatJobUrl(url: string | null | undefined): string | undefined {
   if (!url) return undefined
-  if (url.startsWith('http://') || url.startsWith('https://')) return url
-  return `https://${url}`
+  const cleaned = url.trim()
+  if (cleaned.toLowerCase().includes('not found') || cleaned === '—' || cleaned === '') {
+    return undefined
+  }
+  if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) return cleaned
+  if (!cleaned.includes('.')) return undefined
+  return `https://${cleaned}`
 }
 
 

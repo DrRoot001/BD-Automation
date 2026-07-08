@@ -1,7 +1,7 @@
 {
   "_meta": {
     "ats": "workday",
-    "last_updated": 1783445558
+    "last_updated": 1783447976
   },
   "apply_button": [
     "[data-automation-id='adventureButton']"
