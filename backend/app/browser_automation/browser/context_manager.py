@@ -272,24 +272,59 @@ class BrowserContextManager:
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
-        # ── Persistent storage_state (cookies + localStorage) per platform ──
+        # ── Persistent storage_state (cookies + localStorage), PER CANDIDATE ──
         # Auth-walled ATSes (Dice, LinkedIn, Workday) bot-throttle repeated
-        # logins. Logging in ONCE and reusing the full storage_state avoids
-        # that. Path: env "<PLATFORM>_STORAGE_STATE" or backend/data/sessions/
-        # <platform>.json. When present we DON'T also restore redis cookies
-        # (storage_state already carries them).
+        # logins, so reusing a saved storage_state avoids re-login churn. This
+        # MUST be scoped per candidate: a single, candidate-agnostic file makes
+        # every candidate apply inside whatever account seeded it — the root
+        # cause of wrong-account submissions (e.g. one candidate's job submitted
+        # under the account that bootstrapped the shared file). The default path
+        # is therefore backend/data/sessions/<platform>/<candidate_id>.json.
+        # When a file IS used we DON'T also restore the redis blob below
+        # (storage_state already carries the cookies).
+        #
+        # "<PLATFORM>_STORAGE_STATE" is kept as an explicit operator override,
+        # but it is GLOBAL — applied to EVERY candidate — so it is only safe for
+        # single-account/testing setups. We warn loudly whenever it is used.
         storage_state_used = False
         try:
             from pathlib import Path as _Path
             backend_dir = _Path(__file__).resolve().parents[3]
-            storage_state_path = os.getenv(
-                f"{platform.upper()}_STORAGE_STATE",
-                str(backend_dir / "data" / "sessions" / f"{platform}.json"),
-            )
-            if storage_state_path and os.path.isfile(storage_state_path):
-                context_kwargs["storage_state"] = storage_state_path
+            sessions_dir = backend_dir / "data" / "sessions"
+
+            env_override = os.getenv(f"{platform.upper()}_STORAGE_STATE", "").strip()
+            per_candidate_path = sessions_dir / platform / f"{candidate_id}.json"
+
+            if env_override and os.path.isfile(env_override):
+                context_kwargs["storage_state"] = env_override
                 storage_state_used = True
-                logger.info(f"[Browser] Loaded storage_state for {platform} ← {storage_state_path}")
+                logger.warning(
+                    f"[Browser] Using GLOBAL {platform.upper()}_STORAGE_STATE override "
+                    f"← {env_override} — this session is applied to ALL candidates "
+                    f"(current candidate_id={candidate_id}); only safe for a "
+                    "single-account/testing setup, never multi-candidate."
+                )
+            elif per_candidate_path.is_file():
+                context_kwargs["storage_state"] = str(per_candidate_path)
+                storage_state_used = True
+                logger.info(
+                    f"[Browser] Loaded per-candidate storage_state for {platform} "
+                    f"← {per_candidate_path}"
+                )
+            else:
+                # Legacy candidate-agnostic file (backend/data/sessions/<platform>.json)
+                # is intentionally NOT loaded any more — it caused cross-candidate
+                # account bleed. Warn so operators who seeded it know why it no
+                # longer applies; the correct per-candidate redis session (or a
+                # fresh per-candidate login) governs instead.
+                legacy_shared = sessions_dir / f"{platform}.json"
+                if legacy_shared.is_file():
+                    logger.warning(
+                        f"[Browser] Ignoring legacy SHARED session file {legacy_shared} "
+                        f"— storage_state is now per-candidate. Delete it, or move it to "
+                        f"{per_candidate_path} for this candidate, or set "
+                        f"{platform.upper()}_STORAGE_STATE for an intentional single-account setup."
+                    )
         except Exception as exc:
             logger.debug(f"[Browser] storage_state load skipped: {exc}")
 

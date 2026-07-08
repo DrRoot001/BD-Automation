@@ -73,6 +73,10 @@
       {
         "timestamp": "2026-07-07T23:23:21.271295",
         "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-08T18:27:39.853807",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
       }
     ]
   },
@@ -204,11 +208,7 @@
         "timestamp": "2026-07-03T17:24:44.384853",
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=Could not clear email verification code screen)"
       }
-    ],
-    "spam_backoff": {
-      "count": 1,
-      "until": "2026-07-03T21:51:22.835443"
-    }
+    ]
   },
   "https://job-boards.greenhouse.io/vercel/jobs/5704320004": {
     "needs_review": false,
@@ -366,6 +366,10 @@
       {
         "timestamp": "2026-07-07T16:20:30.357575",
         "error": "Error 8 connecting to wired-troll-155323.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-08T18:31:08.222968",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/jobs?l=Summit&id=602338154174221431'"
       }
     ]
   },
@@ -384,6 +388,15 @@
       {
         "timestamp": "2026-07-07T22:12:23.136018",
         "error": "AgentLoop aborted: Cannot find application form or proceed with application on SimplyHired. Repeated attempts to click apply or navigate have led to a job search/sign-in page."
+      }
+    ]
+  },
+  "jobs.ashbyhq.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-08T18:06:38.968688",
+        "error": "cannot access local variable 'CaptchaService' where it is not associated with a value"
       }
     ]
   }

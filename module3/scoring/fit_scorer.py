@@ -57,4 +57,3 @@ async def score_job_fit(
         experience_match=ats_score_obj.experience_relevance,
         reasoning=f"ATS score is {ats_score}."
     )
-

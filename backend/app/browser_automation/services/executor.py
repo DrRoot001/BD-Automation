@@ -614,7 +614,12 @@ class ApplicationExecutor:
                 "glassdoor":    ("GLASSDOOR_EMAIL",     "GLASSDOOR_PASSWORD"),
                 "ziprecruiter": ("ZIPRECRUITER_EMAIL",  "ZIPRECRUITER_PASSWORD"),
             }
-            _plat_key = (package.platform or "").lower().strip()
+            # package.platform may arrive as a HOST ("www.dice.com") rather than
+            # the bare slug ("dice") the walled-creds map is keyed on, so a plain
+            # lookup misses and the fast LOGIN_REQUIRED skip never fires. Resolve
+            # to the canonical slug first (same helper the rate-limit/step-budget
+            # paths use).
+            _plat_key = _canonical_platform_key(package.platform, _walled_creds.keys())
             _creds = _walled_creds.get(_plat_key)
             if _creds:
                 u_env, p_env = _creds
@@ -1301,6 +1306,12 @@ class ApplicationExecutor:
                             retry_count=retry_count,
                         )
                     else:
+                        # Local import mirrors the BLOCKED-page branch above. Both
+                        # branches must import CaptchaService locally: because that
+                        # branch's `from ..captcha import CaptchaService` binds the
+                        # name as function-local, a bare reference here (when the
+                        # other branch didn't run) raised UnboundLocalError.
+                        from ..captcha import CaptchaService
                         captcha_svc = CaptchaService(provider=provider)
                         solution = await captcha_svc.solve(page, form.captcha_type)
                         if not solution.success:

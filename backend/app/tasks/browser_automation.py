@@ -29,26 +29,25 @@ def _make_redis_client():
     return aioredis.from_url(redis_url, **kwargs)
 
 
-# Module-level client reused across publish_event calls within a task execution.
-# Created lazily; closed at the end of execute_application via _close_redis_client().
-_redis_client: Optional[aioredis.Redis] = None
+import contextvars
 
+_redis_client_var = contextvars.ContextVar("_redis_client", default=None)
 
-def _get_redis_client() -> aioredis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = _make_redis_client()
-    return _redis_client
-
+def _get_redis_client():
+    client = _redis_client_var.get()
+    if client is None:
+        client = _make_redis_client()
+        _redis_client_var.set(client)
+    return client
 
 async def _close_redis_client() -> None:
-    global _redis_client
-    if _redis_client is not None:
+    client = _redis_client_var.get()
+    if client is not None:
         try:
-            await _redis_client.aclose()
+            await client.aclose()
         except Exception:
             pass
-        _redis_client = None
+        _redis_client_var.set(None)
 
 
 async def publish_event(event_name: str, payload: dict) -> None:

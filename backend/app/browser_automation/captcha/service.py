@@ -33,7 +33,7 @@ _OCILAR_BASE = "https://api.ocilar.com/v1"
 # and therefore burn timed-out attempts when the key is dead/zero-balance. The
 # balance/auth gate short-circuits these; "image" is excluded because it routes
 # to Ocilar OCR regardless of the configured provider.
-_PAID_TOKEN_TYPES = {"recaptcha_v2", "turnstile"}
+_PAID_TOKEN_TYPES = {"recaptcha_v2", "turnstile", "hcaptcha"}
 
 
 class CaptchaService:

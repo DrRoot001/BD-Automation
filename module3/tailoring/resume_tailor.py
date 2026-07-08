@@ -6,7 +6,7 @@ import json
 import asyncio
 import re
 import logging
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types as genai_types
@@ -50,18 +50,22 @@ You MUST follow these STRICT GUARDRAILS. Violating them is FORBIDDEN:
    - ABSOLUTELY NO MARKDOWN. Do not use asterisks (**), italics, or bolding anywhere inside the JSON text strings. The text must be clean and plain.
 
 2. HEADLINE & CONTACT INFO:
-   - HEADLINE: You MUST generate a professional headline (e.g., "Senior Machine Learning Engineer | Generative AI") under `basics.headline` that matches the Target Job Description.
+   - HEADLINE: Under `basics.headline`, use a clean, professional, single job title (such as the target job title or the candidate's original headline). DO NOT append multiple buzzwords, technology names, or list skills with pipes (e.g., do NOT output 'Title | Skill1 | Skill2'). Keep it as a single, standard professional title.
    - LOCATION: You MUST ensure the location reflects a USA residence. If it is outside the USA, change it to a suitable US tech hub.
    - LINKS: You MUST keep all original links (LinkedIn, GitHub, Portfolio) EXACTLY as they are.
 
 3. SUMMARY & SKILLS:
    - SUMMARY: Edit and rewrite the summary block to naturally weave in missing ATS keywords to guarantee a high score.
+     * Use a direct, professional, and human tone (e.g., first-person or third-person active voice, but keep it natural).
+     * Avoid generic AI words/phrases like "testament to", "leverage", "beacon", "passion for", "proven track record of", "delivering end-to-end solutions", "expertly", "utilizing", "showcasing", "fostering", "demonstrating a commitment to".
+     * Avoid dramatic, robotic cliches or flowery metaphors (e.g., "without breaking a sweat", "deep under the hood", "under the hood", "from the ground up").
+     * Keep it concise (3-4 sentences max), authentic, and focused on tangible engineering achievements, architecture design, and systems engineering.
    - SKILLS: You must retain all existing skill categories and their keywords. You may ADD missing ATS keywords to the skills section, but you must place them into the most appropriate category (e.g. programming languages under a languages category, database tools under databases, etc.). If no existing category is appropriate, you may create a new category.
 
 4. EXPERIENCE (STRICT NO-FABRICATION RULE):
    - COMPANIES & DATES: You MUST keep the exact company names and dates as listed in the original resume. DO NOT invent new companies.
    - PRESENT ROLE: You are permitted to change the TITLE of the most recent/present role to better align with the target job.
-   - BULLET POINTS: You MUST enhance the descriptions of both present and past roles using the STAR/XYZ method. For each work experience entry, you MUST output at most 4 concise, high-impact bullet points in the `bullets` list. Each bullet point should start with a strong action verb and naturally weave in missing keywords. Do NOT combine these into a single paragraph or string; they must remain separate items in `bullets`.
+   - BULLET POINTS: You MUST enhance the descriptions of both present and past roles using the STAR/XYZ method. For each work experience entry, you MUST output at most 4 concise, high-impact bullet points in the `bullets` list. Each bullet point should start with a strong action verb and naturally weave in missing keywords. Do NOT combine these into a single paragraph or string; they must remain separate items in `bullets`. Avoid AI-sounding transitions and buzzword stuffing.
 
 5. PROJECTS:
    - If projects are provided, enhance their descriptions and listed technologies so they heavily match the job description and requirements.
@@ -167,13 +171,20 @@ async def tailor_resume(
     elif job.title and "contract" in job.title.lower():
         is_contract = True
 
+    # If the job description is missing/empty/None/not-found, there is nothing to
+    # tailor against — pass the base resume through unchanged (no fabrication loop).
+    jd_missing = not (job.description and str(job.description).strip())
+    if jd_missing:
+        logger.info("[TAILOR] Job description is missing/empty — passing base resume through without tailoring.")
+
     max_loops = 2
     loop_count = 0
     final_resume_json = resume_json
 
     # Always run at least one iteration if it's a contract role,
     # otherwise run if the score is less than or equal to 75.0 (not greater than 75).
-    while (current_ats_score <= 75.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
+    # A missing job description short-circuits tailoring entirely (base resume passes through).
+    while (not jd_missing) and (current_ats_score <= 75.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
@@ -265,6 +276,10 @@ async def tailor_resume(
     pdf_experience = []
     for exp in final_resume_json.get("experience", []):
         date_str = exp.get("date", "")
+        if date_str is None or str(date_str).strip().lower() in ("none", "null", ""):
+            date_str = ""
+        else:
+            date_str = str(date_str).strip()
         parts = date_str.split("-")
         final_experience.append(ExperienceEntry(
             company=exp.get("company", "Company"),
@@ -279,7 +294,7 @@ async def tailor_resume(
             "company": exp.get("company", "Company"),
             "title": exp.get("title", "Position"),
             "location": exp.get("location", ""),
-            "date": exp.get("date", ""),
+            "date": date_str,
             "technologies_used": exp.get("technologies_used", []),
             "bullets": exp.get("bullets", [])
         })
@@ -288,6 +303,10 @@ async def tailor_resume(
     pdf_education = []
     for edu in final_resume_json.get("education", []):
         date_str = edu.get("date", "")
+        if date_str is None or str(date_str).strip().lower() in ("none", "null", ""):
+            date_str = ""
+        else:
+            date_str = str(date_str).strip()
         digits = re.findall(r'\d{4}', str(date_str))
         
         degree_str = edu.get("degree", "")
@@ -306,7 +325,7 @@ async def tailor_resume(
         pdf_education.append({
             "institution": edu.get("institution", "Institution"),
             "degree": f"{degree_str} in {field_str}" if field_str else degree_str,
-            "date": edu.get("date", "")
+            "date": date_str
         })
 
     basics = final_resume_json.get("basics", {})
