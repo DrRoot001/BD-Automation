@@ -2663,7 +2663,7 @@ def _format_history(actions: List[AgentAction], last_n: int = 12) -> str:
         elif a.kind == "navigate_url":
             lines.append(f"  [{a.step}] navigate_url url={a.url!r}{tag}")
         elif a.kind == "verify_page":
-            lines.append(f"  [{a.step}] verify_page ✓")
+            lines.append(f"  [{a.step}] verify_page OK")
         else:
             lines.append(f"  [{a.step}] {a.kind}  {a.reason or a.confirmation or ''}")
     return "\n".join(lines)

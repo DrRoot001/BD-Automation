@@ -441,7 +441,7 @@ async def generate_content_with_retry(
     temperature: float = 0.3,
     max_retries: int = 10,
     initial_delay: float = 5.0,
-    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
     response_mime_type: str = None,
     system_instruction: str = None
 ) -> Any:
