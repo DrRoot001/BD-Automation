@@ -225,10 +225,10 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "is below gate threshold of" in data["reason"]
+    assert "Combined score (55.0) is below gate threshold of 75" in data["reason"]
 
     # Assert gating works
-    mock_tailor_resume.assert_called_once()
+    mock_tailor_resume.assert_not_called()
     mock_gen_cover.assert_not_called()
     mock_answer_screening.assert_not_called()
 
