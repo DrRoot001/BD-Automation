@@ -177,7 +177,7 @@ Start-Svc 'BD-Celery-Beat' $Backend `
 
 # 4. Next.js frontend
 Start-Svc 'BD-Frontend' $Frontend `
-    "npm run dev -- -p $FrontendPort" | Out-Null
+    "npx next dev -p $FrontendPort" | Out-Null
 
 Write-Host ""
 Write-Host ("-" * 50) -ForegroundColor DarkGray

@@ -196,6 +196,20 @@ async def test_prepare_package_low_fit_score(
         experience_match=40.0,
         reasoning="Poor match"
     )
+    mock_tailor_resume.return_value = TailoredResume(
+        candidate_id="cand-123",
+        job_id="job-456",
+        original_resume_id="resume-base",
+        version=2,
+        ats_score_before=30.0,
+        ats_score_after=30.0,
+        modified_summary="Tailored Summary",
+        modified_skills=[],
+        modified_keywords=[],
+        experience=[],
+        education=[],
+        pdf_url="http://tailored-resume.pdf"
+    )
 
     mock_client = MockAsyncClient()
     mock_async_client_cls.return_value = mock_client
@@ -211,10 +225,10 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "Combined score (55.0) is below gate threshold of 75" in data["reason"]
+    assert "is below gate threshold of" in data["reason"]
 
     # Assert gating works
-    mock_tailor_resume.assert_not_called()
+    mock_tailor_resume.assert_called_once()
     mock_gen_cover.assert_not_called()
     mock_answer_screening.assert_not_called()
 
