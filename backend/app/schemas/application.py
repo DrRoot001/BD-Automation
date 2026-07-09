@@ -82,5 +82,6 @@ class ApplicationResponse(BaseModel):
     error_message: Optional[str] = None
     failure_reason: Optional[FailureReason] = None
     retry_count: Optional[int] = 0
+    paused: Optional[int] = 0
     created_at: datetime
     updated_at: Optional[datetime] = None

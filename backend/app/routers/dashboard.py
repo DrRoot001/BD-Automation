@@ -6,13 +6,13 @@ from typing import List, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.routers.auth import get_current_user
 from app.models.user import User, UserRole
+from app.routers.auth import get_current_user
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -36,6 +36,7 @@ class ApplicationSummary(BaseModel):
     company: str
     platform: str
     status: str
+    paused: bool = False
     fit_score: Optional[float] = None
     ats_score: Optional[float] = None
     # ATS score of the base resume vs the JD (before tailoring) and of the
@@ -56,6 +57,18 @@ class ApplicationSummary(BaseModel):
     candidate_name: Optional[str] = None
     bd_user_name: Optional[str] = None
     bd_user_email: Optional[str] = None
+
+    @field_validator('job_url', mode='before', check_fields=False)
+    @classmethod
+    def clean_job_url(cls, v):
+        if v is None:
+            return None
+        if not isinstance(v, str):
+            return v
+        cleaned = v.strip()
+        if 'not found' in cleaned.lower() or cleaned == '—' or cleaned == '':
+            return None
+        return cleaned
 
 
 class InterviewSummary(BaseModel):
@@ -201,12 +214,15 @@ async def get_applications(
 
     rows = await db.execute(text(f"""
         SELECT a.id, a.job_id, j.title, j.company, j.source AS platform,
-               a.status, a.fit_score, a.ats_score,
+               a.status, a.paused, a.fit_score, a.ats_score,
                a.submitted_at, a.created_at, a.error_message, a.failure_reason,
                r.file_url AS resume_url,
                r.is_base AS resume_is_base,
                a.cover_letter_url,
-               COALESCE(j.canonical_url, j.source_url) AS job_url,
+               COALESCE(
+                 CASE WHEN j.canonical_url IS NOT NULL AND LOWER(j.canonical_url) NOT IN ('(not found)', 'link not found', '') AND LOWER(j.canonical_url) NOT LIKE '%not found%' THEN j.canonical_url END,
+                 CASE WHEN j.source_url IS NOT NULL AND LOWER(j.source_url) NOT IN ('(not found)', 'link not found', '') AND LOWER(j.source_url) NOT LIKE '%not found%' THEN j.source_url END
+               ) AS job_url,
                c.name AS candidate_name,
                u.full_name AS bd_user_name,
                u.email AS bd_user_email,
@@ -241,6 +257,7 @@ async def get_applications(
             company=r.company or "",
             platform=r.platform or "",
             status=r.status or "",
+            paused=bool(r.paused),
             fit_score=float(r.fit_score) if r.fit_score is not None else None,
             ats_score=float(r.ats_score) if r.ats_score is not None else None,
             ats_score_before=float(r.ats_score_before) if r.ats_score_before is not None else None,
@@ -270,6 +287,7 @@ async def get_interviews(
 ):
     """List of interview records from the interview_tracking table."""
     from sqlalchemy import select
+
     from app.models.candidate import Candidate
     # Build candidate filter targeting 'it' (interview_tracking) alias
     if current_user.role == UserRole.admin:
@@ -333,7 +351,7 @@ async def get_interviews(
                     match = re.search(r"@([\w\-]+)\.", r.email_from)
                     if match:
                         company = match.group(1).capitalize()
-                        
+
         res.append(InterviewSummary(
             interview_id=str(r.id),
             company=company,

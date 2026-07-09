@@ -695,15 +695,18 @@ _SCOPED_OPTIONS_JS = r"""(s) => {
 # ─────────────────────────────────────────────────────────────────────────────
 
 _DOM_SNAPSHOT_JS = """() => {
-    // Bumped 25 → 50 → 80. Long Greenhouse forms (Vercel, Stripe, Coinbase)
-    // plus EEO/demographic sections can exceed 50 interactive elements; at
-    // cap=50 the tail was silently truncated so the AI never saw the last
-    // fields and clicked Submit prematurely. 80 covers essentially every real
-    // application form while keeping the serialized snapshot within budget
-    // (each entry is a compact object). If a form genuinely exceeds this the
-    // completeness gate below still counts the untruncated required set, so a
-    // premature submit is blocked rather than silently allowed.
-    const MAX_FIELDS = 80;
+    // Bumped 25 → 50 → 80 → 250. Long multi-section forms (Workday-style
+    // wizards, Greenhouse with a full EEO/demographic block, "select all that
+    // apply" grids) routinely exceed 80 interactive elements; at cap=80 the
+    // tail was silently truncated so required fields below the cap were never
+    // shown to the AI — the #1 logged failure ("required field could not be
+    // filled"). 250 covers essentially every real application form. Each entry
+    // is a compact object and the snapshot capture itself is throttled
+    // (screenshot skipped on unchanged DOM), so token cost stays bounded. If a
+    // form still exceeds this, the completeness gate below counts the
+    // untruncated required set, so a premature submit is blocked rather than
+    // silently allowed.
+    const MAX_FIELDS = 250;
     const MAX_ERRORS = 10;
 
     // Pass 1 — collect validation-error messages so the AI can see what the
@@ -1271,6 +1274,38 @@ _DOM_SNAPSHOT_JS = """() => {
                     + ' — use solve_captcha captcha_type="turnstile"',
             });
         }
+        // reCAPTCHA (v2 checkbox / invisible). The .g-recaptcha host div or the
+        // google.com/recaptcha anchor iframe is the tell. Surfaced as a
+        // first-class entry so the AI emits solve_captcha instead of wandering
+        // (the widget renders inside an unlabeled iframe the field-walk above
+        // can never see). Uses reCAPTCHA-specific markers so it never collides
+        // with the Turnstile detection (which shares the [data-sitekey] attr).
+        const rcEl = document.querySelector('.g-recaptcha, iframe[src*="recaptcha"]');
+        if (rcEl) {
+            let rcSitekey = null;
+            const rcHost = document.querySelector('.g-recaptcha[data-sitekey]');
+            if (rcHost) rcSitekey = rcHost.getAttribute('data-sitekey');
+            out.push({
+                sel: '.g-recaptcha', type: 'recaptcha_captcha', sitekey: rcSitekey,
+                label: 'Google reCAPTCHA widget'
+                    + (rcSitekey ? ' (sitekey=' + rcSitekey + ')' : '')
+                    + ' — use solve_captcha captcha_type="recaptcha_v2"',
+            });
+        }
+        // hCaptcha. The .h-captcha host div or the hcaptcha.com iframe is the
+        // tell. hCaptcha-specific markers, so no collision with Turnstile.
+        const hcEl = document.querySelector('.h-captcha, iframe[src*="hcaptcha"]');
+        if (hcEl) {
+            let hcSitekey = null;
+            const hcHost = document.querySelector('.h-captcha[data-sitekey]');
+            if (hcHost) hcSitekey = hcHost.getAttribute('data-sitekey');
+            out.push({
+                sel: '.h-captcha', type: 'hcaptcha_captcha', sitekey: hcSitekey,
+                label: 'hCaptcha widget'
+                    + (hcSitekey ? ' (sitekey=' + hcSitekey + ')' : '')
+                    + ' — use solve_captcha captcha_type="hcaptcha"',
+            });
+        }
     } catch (e) {}
 
     return { fields: out, errors: errorOut, formStatus: formStatus };
@@ -1344,6 +1379,34 @@ async def _dom_hash(ctx) -> str:
         return hashlib.sha1(data.encode()).hexdigest()[:16]
     except Exception:
         return ""
+
+
+def _required_fields_complete(dom: str) -> bool:
+    """True only when the DOM snapshot's FORM STATUS block reports EVERY
+    required field filled (i.e. rendered as "READY FOR SUBMIT").
+
+    Used to gate the heuristic auto-submit safety nets so they never file an
+    INCOMPLETE form. This reuses the exact filled/required counting the snapshot
+    already computes (see `_DOM_SNAPSHOT_JS` formStatus + `_dom_snapshot`
+    rendering) — the line looks like:
+
+        FORM STATUS: 12/12 required filled (100%) — READY FOR SUBMIT
+
+    Conservative by design: when no FORM STATUS block is present (no required
+    fields were detected, or the snapshot was unavailable) this returns False,
+    so an auto-submit net stays quiet and defers to the AI's own explicit
+    submit action (which is never gated by this). The AI's submit still goes
+    through the separate pre-submit completeness gate."""
+    if not dom:
+        return False
+    m = re.search(r"FORM STATUS:\s*(\d+)\s*/\s*(\d+)\s+required filled", dom)
+    if not m:
+        return False
+    try:
+        filled, total = int(m.group(1)), int(m.group(2))
+    except (TypeError, ValueError):
+        return False
+    return total > 0 and filled >= total
 
 
 # Consent-manager "accept" buttons handled by the per-turn overlay reflex.
@@ -1809,6 +1872,18 @@ async def _execute_action(
             await asyncio.sleep(2.0)
             return True
         else:
+            # A genuinely unsolvable captcha (CaptchaService reports
+            # error='CAPTCHA_UNSUPPORTED: ...', e.g. Turnstile managed-mode on a
+            # datacenter IP) will NEVER succeed on retry — spinning solve_captcha
+            # burns the whole loop budget for nothing. Flag it on the action so
+            # run() can abort cleanly to a BLOCKED terminal. Any OTHER solve
+            # failure keeps the existing behavior (return False → the AI/loop can
+            # legitimately retry, wait, or move on).
+            _cap_err = (getattr(solution, "error", None) or "")
+            if _cap_err.startswith("CAPTCHA_UNSUPPORTED"):
+                logger.error(f"[AgentLoop] captcha genuinely unsolvable — {_cap_err}")
+                action.raw["captcha_unsupported"] = _cap_err
+                return False
             logger.warning("[AgentLoop] CaptchaService failed to solve captcha")
             return False
 
@@ -4650,17 +4725,36 @@ class AgentLoop:
             if await self._solve_turnstile_flaresolverr(page, ctx, flaresolverr_url):
                 return True
 
-        # ── CapSolver.com API fallback (IP-independent) ──────────────────────
+        # ── Universal token solver via the configured CAPTCHA_PROVIDER ───────
+        # Route Turnstile to CaptchaService (Anti-Captcha by default). It extracts
+        # the 0x-prefixed Turnstile sitekey, solves via TurnstileTaskProxyless, and
+        # injects the token itself — and clean-fails when the sitekey is malformed
+        # (e.g. an hCaptcha UUID grabbed by a false-positive detection), so an
+        # hCaptcha-only form no longer burns a bogus "invalid websiteKey" call.
+        try:
+            from ..captcha import CaptchaService
+            _prov = os.getenv("CAPTCHA_PROVIDER", "anticaptcha").lower()
+            if _prov in ("anticaptcha", "capsolver"):
+                _sol = await CaptchaService(provider=_prov).solve(page, "turnstile", max_attempts=1)
+                if getattr(_sol, "success", False):
+                    logger.info(
+                        f"[AgentLoop] Turnstile solved via configured provider "
+                        f"{_prov!r} — submit gate cleared"
+                    )
+                    return True
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] Turnstile configured-provider solve failed (non-fatal): {exc}")
+
+        # ── CapSolver.com direct fallback (secondary; IP-independent) ────────
         key = os.getenv("CAPSOLVER_API_KEY", "").strip()
         if key and not key.lower().startswith("your_"):
             if await self._solve_turnstile_capsolver(page, ctx, key):
                 return True
         logger.warning(
             "[AgentLoop] Turnstile NOT settled. The managed token never populated "
-            "(common on datacenter IPs) and no usable CAPSOLVER_API_KEY is set. "
-            "Set CAPSOLVER_API_KEY (Turnstile-capable) or PROXY_URL (residential) "
-            "to clear the final-submit gate. NOTE: the Whisper 'capsolver' only "
-            "solves reCAPTCHA — it cannot solve Turnstile."
+            "(common on datacenter IPs) and the configured captcha provider could "
+            "not mint a token (managed-mode Turnstile is often proxyless-unsolvable). "
+            "A residential PROXY_URL is the reliable fix for these boards."
         )
         return False
 
@@ -4715,7 +4809,10 @@ class AgentLoop:
             meta = await ctx.evaluate(
                 """() => {
                     let sk = '';
-                    const d = document.querySelector('.cf-turnstile[data-sitekey],[data-sitekey]');
+                    // Turnstile-SPECIFIC markers only — never a bare [data-sitekey],
+                    // which also matches the hCaptcha widget and yields its UUID
+                    // (CapSolver then rejects it as 'invalid websiteKey').
+                    const d = document.querySelector('.cf-turnstile[data-sitekey]');
                     if (d) sk = d.getAttribute('data-sitekey') || '';
                     if (!sk) {
                         const ifr = document.querySelector("iframe[src*='challenges.cloudflare.com']");
@@ -4726,8 +4823,14 @@ class AgentLoop:
             )
             sitekey = (meta or {}).get("sitekey") or ""
             url = (meta or {}).get("url") or page.url
-            if not sitekey:
-                logger.warning("[AgentLoop] CapSolver: Turnstile sitekey not found on page")
+            # Cloudflare Turnstile keys are always '0x…'-prefixed. A non-0x value
+            # means we grabbed the wrong widget (e.g. hCaptcha) — bail before the
+            # provider rejects it and burns a paid round-trip.
+            if not sitekey or not sitekey.startswith("0x"):
+                logger.warning(
+                    f"[AgentLoop] CapSolver: no valid Turnstile sitekey on page "
+                    f"(got {sitekey!r}); skipping (likely hCaptcha, not Turnstile)"
+                )
                 return False
             async with httpx.AsyncClient(timeout=30) as c:
                 for task_attempt in range(2):
@@ -4917,6 +5020,103 @@ class AgentLoop:
         ))
         return True
 
+    async def _attempt_stall_recovery(
+        self,
+        page: Page,
+        live_frame: Optional[Any],
+        actions: List[AgentAction],
+        step: int,
+    ) -> bool:
+        """BASIC vision-guided stall recovery, called once when the loop first
+        detects it's stuck (DOM frozen), BEFORE the hard STUCK abort.
+
+        Uses the existing PageAgent vision tools (classify_page /
+        suggest_selectors) to pick a recovery move, then tries — in escalating
+        order of disruption — an alternate suggested-selector click, a scroll,
+        a reload, and finally go-back. Returns True as soon as any move changes
+        the page (DOM-hash delta), False if the page is genuinely frozen.
+
+        Guardrails: NEVER closes the page/context/browser; every step is
+        wrapped so a failure just moves on to the next; never raises. The
+        vision tools degrade gracefully when the LLM is unavailable (they return
+        UNKNOWN / [] ), so recovery still tries the mechanical reload/scroll/back
+        moves in that case."""
+        ctx = live_frame or page
+        try:
+            before = await _dom_hash(ctx)
+        except Exception:
+            before = ""
+
+        async def _changed() -> bool:
+            try:
+                await asyncio.sleep(1.0)
+                after = await _dom_hash(live_frame or page)
+                return bool(after) and after != before
+            except Exception:
+                return False
+
+        # ── 1. Vision: classify + alternate selector (least disruptive) ──
+        try:
+            from .page_agent import PageAgent
+            pa = PageAgent(ats=self._platform)
+            state = await pa.classify_page(page, frame=live_frame)
+            logger.info(
+                f"[AgentLoop] step={step} stall recovery: classify={state.kind} "
+                f"next={state.next_action} sel={state.suggested_selector!r} "
+                f"reason={(state.reason or '')[:80]!r}"
+            )
+            tried = [a.selector for a in actions if a.selector]
+            suggestions = await pa.suggest_selectors(
+                page, channel="next_step", tried=tried, frame=live_frame
+            )
+            candidates: List[str] = []
+            if state.suggested_selector:
+                candidates.append(state.suggested_selector)
+            candidates.extend(suggestions or [])
+            for sel in candidates:
+                try:
+                    loc = (live_frame or page).locator(sel).first
+                    if await loc.count() > 0 and await loc.is_visible():
+                        await loc.scroll_into_view_if_needed(timeout=2000)
+                        await loc.click(timeout=3000)
+                        logger.info(f"[AgentLoop] stall recovery: clicked suggested {sel!r}")
+                        if await _changed():
+                            return True
+                except Exception:
+                    continue
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] stall recovery classify/suggest skipped: {exc}")
+
+        # ── 2. Scroll (nudge lazy/virtualized content into rendering) ──
+        try:
+            await page.evaluate("window.scrollBy(0, Math.round(window.innerHeight * 0.8))")
+            if await _changed():
+                logger.info("[AgentLoop] stall recovery: scroll advanced the page")
+                return True
+        except Exception:
+            pass
+
+        # ── 3. Reload (keeps us on the same URL — preferred over go-back) ──
+        try:
+            await page.reload(timeout=10000, wait_until="domcontentloaded")
+            logger.info("[AgentLoop] stall recovery: reloaded page")
+            if await _changed():
+                return True
+        except Exception:
+            pass
+
+        # ── 4. Go back (last resort — leaves the current page) ──
+        try:
+            await page.go_back(timeout=6000, wait_until="domcontentloaded")
+            logger.info("[AgentLoop] stall recovery: navigated back")
+            if await _changed():
+                return True
+        except Exception:
+            pass
+
+        logger.warning(f"[AgentLoop] step={step} stall recovery: no move changed the page")
+        return False
+
     async def run(
         self,
         page: Page,
@@ -4929,6 +5129,10 @@ class AgentLoop:
         llm_error_count = 0
         prev_dom_hash = ""
         page_verified = False
+        # One-shot vision-based stall recovery (see the stuck detector below).
+        # Attempted ONCE per run when the loop first looks stuck, BEFORE the
+        # hard STUCK abort.
+        stall_recovery_done = False
         is_iframe_mode = frame is not None
         # Overlay-reflex fuel: consecutive turns where _dismiss_overlays found
         # nothing. Once it misses 3 turns in a row we stop calling it so pages
@@ -5777,6 +5981,32 @@ class AgentLoop:
                 if (current_hash and current_hash == prev_dom_hash and step > 1
                         and not last_action_was_observational):
                     stuck_count += 1
+                    # ── Vision-based stall recovery (before the hard abort) ──
+                    # The old handler aborted purely on change-absence and never
+                    # tried to unstick the page. When we FIRST look stuck
+                    # (stuck_count >= 2, well before STUCK_THRESHOLD=4), attempt
+                    # a BASIC recovery using the existing PageAgent vision tools
+                    # (classify_page + suggest_selectors) plus reload/back/
+                    # alternate-selector/scroll. Only if that fails do we let the
+                    # counter continue toward the STUCK abort. One-shot per run so
+                    # recovery itself can't become a loop.
+                    if stuck_count >= 2 and not stall_recovery_done:
+                        stall_recovery_done = True
+                        try:
+                            recovered = await self._attempt_stall_recovery(
+                                page, live_frame, actions, step
+                            )
+                        except Exception as _rec_exc:
+                            logger.debug(f"[AgentLoop] stall recovery raised (ignored): {_rec_exc}")
+                            recovered = False
+                        if recovered:
+                            logger.info(
+                                f"[AgentLoop] step={step} stall recovery changed the "
+                                "page — resetting stuck counter and re-perceiving."
+                            )
+                            stuck_count = 0
+                            prev_dom_hash = ""   # force a fresh perceive next turn
+                            continue
                     if stuck_count >= STUCK_THRESHOLD:
                         logger.warning(f"[AgentLoop] stuck for {stuck_count} steps — aborting")
                         return LoopResult(
@@ -6629,6 +6859,25 @@ class AgentLoop:
                 )
                 action.ok = ok
 
+                # ── Captcha genuinely unsolvable → clean terminal ────────────
+                # _execute_action flags CAPTCHA_UNSUPPORTED (a provider verdict
+                # that will never change on retry, e.g. Turnstile managed-mode on
+                # a datacenter IP) on the action rather than letting the loop
+                # keep re-requesting solve_captcha until MAX_STEPS. Abort now with
+                # an error the executor maps to a clean BLOCKED terminal (no
+                # traceback, no scripted fallback, no Celery retry).
+                _cap_unsupported = action.raw.get("captcha_unsupported")
+                if _cap_unsupported:
+                    logger.error(f"[AgentLoop] aborting run — {_cap_unsupported}")
+                    actions.append(action)
+                    return LoopResult(
+                        success=False,
+                        status="ABORTED",
+                        error=f"BLOCKED: CAPTCHA_UNSUPPORTED: {_cap_unsupported}",
+                        steps_taken=step,
+                        actions=actions,
+                    )
+
                 # A successful fill/upload is self-evident proof we are on a
                 # real application form — satisfy the verify-page gate even if
                 # the model never emitted an explicit verify_page (weaker
@@ -6720,6 +6969,66 @@ class AgentLoop:
                                     "another 3s before invoking AgentV."
                                 )
                             _hc_value = _v  # keep last-seen (None or "")
+
+                        # ── PRIMARY solver: configured token provider (Anti-Captcha) ──
+                        # Per operator request, try the paid/reliable solver FIRST.
+                        # Anti-Captcha's HCaptchaTaskProxyless mints a token off the
+                        # page sitekey; we inject it into Lever's custom
+                        # #hcaptchaResponseInput. On success _hc_value is set, so the
+                        # AgentV (Gemini vision) block below auto-skips and serves as
+                        # the FALLBACK. Skipped when the invisible poll already
+                        # produced a token, or when no funded token provider is set.
+                        if _hc_value is not None and not _hc_value:
+                            _prov = os.getenv("CAPTCHA_PROVIDER", "anticaptcha").lower().strip()
+                            if _prov in ("anticaptcha", "2captcha", "nopecha"):
+                                try:
+                                    _site_key = await page.evaluate(
+                                        """() => {
+                                            const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey]');
+                                            if (el) return el.getAttribute('data-sitekey');
+                                            const ifr = document.querySelector("iframe[src*='hcaptcha']");
+                                            if (ifr) { const m = ifr.src.match(/sitekey=([0-9a-f-]+)/i); if (m) return m[1]; }
+                                            return null;
+                                        }"""
+                                    )
+                                except Exception:
+                                    _site_key = None
+                                if _site_key:
+                                    logger.info(
+                                        f"[AgentLoop] Lever: trying configured token provider "
+                                        f"{_prov!r} FIRST for hCaptcha (sitekey={_site_key})."
+                                    )
+                                    try:
+                                        from ..captcha.service import CaptchaService
+                                        _sol = await CaptchaService(provider=_prov).solve_hcaptcha(
+                                            _site_key, page.url
+                                        )
+                                        if getattr(_sol, "success", False) and getattr(_sol, "token", None):
+                                            await page.evaluate(
+                                                """(token) => {
+                                                    const el = document.getElementById('hcaptchaResponseInput');
+                                                    if (el) { el.value = token; el.dispatchEvent(new Event('change', {bubbles: true})); }
+                                                    const ta = document.querySelector("textarea[name='h-captcha-response'], textarea[name='g-recaptcha-response']");
+                                                    if (ta) { ta.value = token; }
+                                                }""",
+                                                _sol.token,
+                                            )
+                                            _hc_value = _sol.token
+                                            logger.info(
+                                                f"[AgentLoop] Lever: {_prov!r} solved hCaptcha FIRST "
+                                                "— token injected; AgentV fallback not needed."
+                                            )
+                                        else:
+                                            logger.info(
+                                                f"[AgentLoop] Lever: {_prov!r} did not yield a token; "
+                                                "falling back to AgentV (Gemini vision)."
+                                            )
+                                    except Exception as _cap_exc:
+                                        logger.warning(
+                                            f"[AgentLoop] Lever: configured-provider hCaptcha solve "
+                                            f"raised (non-fatal): {_cap_exc} — falling back to AgentV."
+                                        )
+
                         if _hc_value is not None and not _hc_value and _lever_agentv is not None:
                             # Attempt 1: hcaptcha-challenger's AgentV, listener
                             # already attached pre-click above. It intercepts
@@ -6866,28 +7175,90 @@ class AgentLoop:
                                             break
                         if _hc_value is not None and not _hc_value:
                             # No token from AgentV (hcaptcha-challenger) or from
-                            # Lever's own invisible resolution. We deliberately do
-                            # NOT fall back to a paid token farm here:
-                            #   • CapSolver's account returns "We don't support
-                            #     this service" for hCaptcha (confirmed live), so
-                            #     the global CAPTCHA_PROVIDER can't help.
-                            #   • NopeCHA needs NOPECHA_API_KEY, which isn't
-                            #     configured — the old CaptchaService(provider=
-                            #     "nopecha") fallback just burned 3 failing
-                            #     attempts + log noise on every submit and never
-                            #     produced a token.
-                            # hcaptcha-challenger (AgentV, Gemini-vision) is the
-                            # only integrated hCaptcha solver that actually runs.
-                            # When it can't produce a token, the reliable fix is a
-                            # residential PROXY_URL (Lever's invisible hCaptcha then
-                            # passes with no challenge) or a NOPECHA_API_KEY — not
-                            # another keyless farm call. Report submit-not-completed.
+                            # Lever's own invisible resolution. Before bailing, try
+                            # the CONFIGURED token provider as a last resort. This
+                            # used to be a hard-coded CaptchaService(provider=
+                            # "nopecha") that always failed with no key; now we read
+                            # CAPTCHA_PROVIDER. Anti-Captcha DOES support hCaptcha
+                            # (HCaptchaTaskProxyless) — with a funded key it can
+                            # produce a token. CapSolver does NOT support hCaptcha
+                            # (returns "We don't support this service"), so it is
+                            # excluded here. The returned token is injected into
+                            # Lever's custom #hcaptchaResponseInput (not the standard
+                            # h-captcha-response textarea), then the click loop below
+                            # fires the hidden submit button.
+                            _prov = os.getenv("CAPTCHA_PROVIDER", "").lower().strip()
+                            if _prov in ("anticaptcha", "2captcha", "nopecha"):
+                                try:
+                                    _site_key = await page.evaluate(
+                                        """() => {
+                                            const el = document.querySelector('.h-captcha[data-sitekey], [data-sitekey]');
+                                            if (el) return el.getAttribute('data-sitekey');
+                                            const ifr = document.querySelector("iframe[src*='hcaptcha']");
+                                            if (ifr) {
+                                                const m = ifr.src.match(/sitekey=([0-9a-f-]+)/i);
+                                                if (m) return m[1];
+                                            }
+                                            return null;
+                                        }"""
+                                    )
+                                except Exception:
+                                    _site_key = None
+                                if _site_key:
+                                    logger.info(
+                                        f"[AgentLoop] Lever: trying configured token "
+                                        f"provider {_prov!r} for hCaptcha (sitekey={_site_key})."
+                                    )
+                                    try:
+                                        from ..captcha.service import CaptchaService
+                                        _sol = await CaptchaService(provider=_prov).solve_hcaptcha(
+                                            _site_key, page.url
+                                        )
+                                        if getattr(_sol, "success", False) and getattr(_sol, "token", None):
+                                            await page.evaluate(
+                                                """(token) => {
+                                                    const el = document.getElementById('hcaptchaResponseInput');
+                                                    if (el) {
+                                                        el.value = token;
+                                                        el.dispatchEvent(new Event('change', {bubbles: true}));
+                                                    }
+                                                    const ta = document.querySelector("textarea[name='h-captcha-response'], textarea[name='g-recaptcha-response']");
+                                                    if (ta) { ta.value = token; }
+                                                }""",
+                                                _sol.token,
+                                            )
+                                            _hc_value = _sol.token
+                                            logger.info(
+                                                f"[AgentLoop] Lever: {_prov!r} produced an "
+                                                "hCaptcha token — injected into #hcaptchaResponseInput."
+                                            )
+                                        else:
+                                            logger.warning(
+                                                f"[AgentLoop] Lever: {_prov!r} hCaptcha solve "
+                                                f"failed: {getattr(_sol, 'error', 'no token')}"
+                                            )
+                                    except Exception as _cap_exc:
+                                        logger.warning(
+                                            f"[AgentLoop] Lever: configured provider hCaptcha "
+                                            f"solve raised (non-fatal): {_cap_exc}"
+                                        )
+                        if _hc_value is not None and not _hc_value:
+                            # Still no token — from AgentV (hcaptcha-challenger),
+                            # Lever's own invisible resolution, OR the configured
+                            # token provider. hcaptcha-challenger (AgentV,
+                            # Gemini-vision) and Anti-Captcha are the integrated
+                            # solvers that actually run; when neither yields a
+                            # token, the most reliable fix is a residential
+                            # PROXY_URL (Lever's invisible hCaptcha then passes with
+                            # no challenge). Report submit-not-completed.
                             logger.warning(
-                                "[AgentLoop] Lever: hCaptcha token not obtained "
-                                "(AgentV / invisible resolution did not yield one, and "
-                                "no configured token solver supports Lever hCaptcha). "
-                                "Submission did NOT go through this attempt. Set a "
-                                "residential PROXY_URL or NOPECHA_API_KEY to clear this gate."
+                                "[AgentLoop] Lever: hCaptcha token not captured via the "
+                                "solver path (AgentV / invisible resolution / configured "
+                                "provider). NOTE: Lever's own onSuccess callback may still "
+                                "have fired the form POST independently — the /thanks "
+                                "navigation check below is authoritative for success. If "
+                                "it did NOT submit, set a residential PROXY_URL or ensure "
+                                "the configured CAPTCHA_PROVIDER key is funded."
                             )
                             ok = False
                             action.ok = False
@@ -7208,7 +7579,9 @@ class AgentLoop:
                 # the runner fires submit on its own. This is a SAFETY NET,
                 # not the primary path — the AI's submit click is preferred
                 # because it still goes through the pre-submit gate.
-                if action.kind in ("scroll", "wait") and "READY FOR SUBMIT" in (dom or ""):
+                # SAFETY: only fire when EVERY required field is actually filled
+                # (_required_fields_complete), never on a partial form.
+                if action.kind in ("scroll", "wait") and _required_fields_complete(dom):
                     consecutive_idle = 0
                     for past in reversed(actions):
                         if past.kind in ("scroll", "wait", "verify_page"):
@@ -7277,18 +7650,23 @@ class AgentLoop:
                     consecutive_scrolls += 1  # include current
                     if consecutive_scrolls >= 5:
                         # Last-ditch: before giving up STUCK, if there's a
-                        # visible Submit button AND the form had at least some
-                        # fields filled this session, try clicking it. Many
-                        # "scroll forever" loops happen on filled forms where
-                        # the AI just can't see the submit button — but
-                        # Playwright can still find it. Worst case the form
-                        # rejects with validation errors and we get clean
-                        # feedback instead of a STUCK abort.
-                        any_fills = any(a.kind == "fill_field" and a.ok for a in actions)
-                        if any_fills and not self.stop_before_submit:
+                        # visible Submit button AND the form is COMPLETE (every
+                        # required field filled), try clicking it. Many "scroll
+                        # forever" loops happen on filled forms where the AI just
+                        # can't see the submit button — but Playwright can still
+                        # find it. Worst case the form rejects with validation
+                        # errors and we get clean feedback instead of a STUCK
+                        # abort.
+                        # SAFETY: gate on _required_fields_complete, NOT on "any
+                        # field was filled" — the old any-fills check could fire
+                        # a submit on a partially-filled form. If the form isn't
+                        # complete we simply fall through to the clean STUCK
+                        # abort below rather than filing an incomplete application.
+                        form_ready = _required_fields_complete(dom)
+                        if form_ready and not self.stop_before_submit:
                             logger.warning(
                                 f"[AgentLoop] step={step} SCROLL GUARD tripped — "
-                                "form had fills this session, attempting last-ditch "
+                                "all required fields filled, attempting last-ditch "
                                 "auto-submit before aborting STUCK."
                             )
                             try:

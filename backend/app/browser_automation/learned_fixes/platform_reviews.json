@@ -1,6 +1,6 @@
 {
   "generic": {
-    "needs_review": false,
+    "needs_review": true,
     "failures": [
       {
         "timestamp": "2026-06-27T01:11:36.913603",
@@ -33,6 +33,74 @@
       {
         "timestamp": "2026-07-07T10:30:28.131728",
         "error": "Page.evaluate: Connection closed while reading from the driver"
+      },
+      {
+        "timestamp": "2026-07-07T21:12:23.008396",
+        "error": "BLOCKED: vision-agent flagged page state: Cloudflare security verification page, indicating the website is performing a bot check."
+      },
+      {
+        "timestamp": "2026-07-07T22:06:01.183910",
+        "error": "BLOCKED: vision-agent flagged page state: Cloudflare security verification page blocking access to the website content."
+      },
+      {
+        "timestamp": "2026-07-07T22:06:02.705241",
+        "error": "BLOCKED: vision-agent flagged page state: Cloudflare security challenge page, indicating a bot verification process is underway."
+      },
+      {
+        "timestamp": "2026-07-07T22:07:35.918974",
+        "error": "BLOCKED: vision-agent flagged page state: The page is displaying a Cloudflare security verification, indicating it's blocked by a WAF/captcha wall."
+      },
+      {
+        "timestamp": "2026-07-07T22:33:27.410998",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T22:35:43.490459",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T22:41:24.425990",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T22:58:47.657557",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T23:21:22.786869",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-07T23:23:21.271295",
+        "error": "BLOCKED: turnstile solve failed."
+      },
+      {
+        "timestamp": "2026-07-08T18:27:39.853807",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-09T15:03:41.041129",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-09T15:12:06.423449",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:14:38.373873",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-09T15:16:50.003544",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:21:55.715574",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:22:43.193552",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]
   },
@@ -92,7 +160,7 @@
     ]
   },
   "www.dice.com": {
-    "needs_review": false,
+    "needs_review": true,
     "failures": [
       {
         "timestamp": "2026-06-27T16:38:15.235873",
@@ -101,6 +169,26 @@
       {
         "timestamp": "2026-07-07T14:46:21.147266",
         "error": "BLOCKED: Dice posting is external-apply only (no Easy Apply). This adapter only drives Dice Easy Apply postings."
+      },
+      {
+        "timestamp": "2026-07-07T18:07:53.014880",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-07T18:11:54.305630",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-07T18:13:49.697875",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-07T18:14:54.712676",
+        "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-09T13:25:51.633285",
+        "error": "Resume file could not be resolved: https://rdfnydteruigmajebxsm.supabase.co/storage/v1/object/public/updated_resume/a1a05db4-7877-420e-93be-b5fad7f59edd/79221fe6-b722-453d-b95b-2638e39c84e2/v25/Dexter_Watts_resume.pdf"
       }
     ]
   },
@@ -130,6 +218,14 @@
       {
         "timestamp": "2026-06-30T22:02:45.116377",
         "error": "BrowserType.launch: Connection closed while reading from the driver"
+      },
+      {
+        "timestamp": "2026-07-09T15:09:23.609969",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-09T15:16:09.548387",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
       }
     ]
   },
@@ -148,11 +244,7 @@
         "timestamp": "2026-07-03T17:24:44.384853",
         "error": "EMAIL_VERIFICATION_REQUIRED: application was submitted but post-submit verification did not complete (loop status=VERIFICATION_FAILED, error=Could not clear email verification code screen)"
       }
-    ],
-    "spam_backoff": {
-      "count": 1,
-      "until": "2026-07-03T21:51:22.835443"
-    }
+    ]
   },
   "https://job-boards.greenhouse.io/vercel/jobs/5704320004": {
     "needs_review": false,
@@ -305,35 +397,23 @@
     ]
   },
   "www.talent.com": {
-    "needs_review": true,
+    "needs_review": false,
     "failures": [
       {
-        "timestamp": "2026-07-07T10:16:11.055533",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+        "timestamp": "2026-07-07T16:20:30.357575",
+        "error": "Error 8 connecting to wired-troll-155323.upstash.io:6379. nodename nor servname provided, or not known."
       },
       {
-        "timestamp": "2026-07-07T10:20:00.731620",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+        "timestamp": "2026-07-08T18:31:08.222968",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/jobs?l=Summit&id=602338154174221431'"
       },
       {
-        "timestamp": "2026-07-07T10:20:58.015025",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+        "timestamp": "2026-07-09T13:37:17.357343",
+        "error": "BLOCKED: Talent.com apply link not found (neither native Quick Apply nor an external 'f-link' apply). Posting may be expired, region-gated, or the DOM shifted."
       },
       {
-        "timestamp": "2026-07-07T10:22:04.339527",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:22:45.769606",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:24:04.127867",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
-      },
-      {
-        "timestamp": "2026-07-07T10:24:39.853942",
-        "error": "BLOCKED: Talent.com Quick Apply link not found. Posting may be expired, region-gated, not Quick-Apply, or the DOM shifted."
+        "timestamp": "2026-07-09T14:49:23.441580",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=626992598654986625&pid=6c16c38ca32c&action=f-link'"
       }
     ]
   },
@@ -343,6 +423,41 @@
       {
         "timestamp": "2026-07-07T10:21:42.292633",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T14:55:43.031479",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:06:56.726184",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      }
+    ]
+  },
+  "www.simplyhired.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-07T22:12:23.136018",
+        "error": "AgentLoop aborted: Cannot find application form or proceed with application on SimplyHired. Repeated attempts to click apply or navigate have led to a job search/sign-in page."
+      }
+    ]
+  },
+  "jobs.ashbyhq.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-08T18:06:38.968688",
+        "error": "cannot access local variable 'CaptchaService' where it is not associated with a value"
+      }
+    ]
+  },
+  "builtin.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-09T15:01:35.728567",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
       }
     ]
   }

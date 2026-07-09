@@ -1,8 +1,20 @@
-from pydantic import BaseModel, ConfigDict, field_validator
-from datetime import datetime
-from typing import Optional, List
-from uuid import UUID
 import json
+from datetime import datetime
+from typing import List, Optional
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, field_validator
+
+
+def clean_url_field(v: Optional[str]) -> Optional[str]:
+    if v is None:
+        return None
+    if not isinstance(v, str):
+        return v
+    cleaned = v.strip()
+    if 'not found' in cleaned.lower() or cleaned == '—' or cleaned == '':
+        return None
+    return cleaned
 
 
 class JobCreate(BaseModel):
@@ -35,6 +47,11 @@ class JobCreate(BaseModel):
                 return []
         return v
 
+    @field_validator('source_url', 'canonical_url', mode='before', check_fields=False)
+    @classmethod
+    def validate_urls(cls, v):
+        return clean_url_field(v)
+
 
 class JobResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
@@ -44,7 +61,7 @@ class JobResponse(BaseModel):
     company: str
     location: Optional[str] = None
     source: str
-    source_url: str
+    source_url: Optional[str] = None
     canonical_url: Optional[str] = None
     description: Optional[str] = None
     skills: Optional[List[str]] = None
@@ -71,6 +88,12 @@ class JobResponse(BaseModel):
                 return []
         return v
 
+    @field_validator('source_url', 'canonical_url', mode='before', check_fields=False)
+    @classmethod
+    def validate_urls(cls, v):
+        return clean_url_field(v)
+
+
 class JobMatchingResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -79,7 +102,7 @@ class JobMatchingResponse(BaseModel):
     company: str
     location: Optional[str] = None
     source: str
-    source_url: str
+    source_url: Optional[str] = None
     canonical_url: Optional[str] = None
     skills: Optional[List[str]] = None
     salary_min: Optional[int] = None
@@ -102,3 +125,9 @@ class JobMatchingResponse(BaseModel):
             except Exception:
                 return []
         return v
+
+    @field_validator('source_url', 'canonical_url', mode='before', check_fields=False)
+    @classmethod
+    def validate_urls(cls, v):
+        return clean_url_field(v)
+

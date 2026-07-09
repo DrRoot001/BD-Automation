@@ -1,17 +1,17 @@
 import asyncio
-import os
-import json
 import datetime
-from typing import Optional
-import httpx
+import json
 import logging
-from celery.exceptions import Retry
-import redis.asyncio as aioredis
+import os
+from typing import Optional
 
+import httpx
+import redis.asyncio as aioredis
+from app.browser_automation.services.executor import ApplicationExecutor
+from app.browser_automation.services.models import ApplicationPackage, ApplicationResult
 from app.celery_app import celery_app
 from app.services.events import publish_event
-from app.browser_automation.services.models import ApplicationPackage, ApplicationResult
-from app.browser_automation.services.executor import ApplicationExecutor
+from celery.exceptions import Retry
 
 logger = logging.getLogger(__name__)
 
@@ -29,26 +29,25 @@ def _make_redis_client():
     return aioredis.from_url(redis_url, **kwargs)
 
 
-# Module-level client reused across publish_event calls within a task execution.
-# Created lazily; closed at the end of execute_application via _close_redis_client().
-_redis_client: Optional[aioredis.Redis] = None
+import contextvars
 
+_redis_client_var = contextvars.ContextVar("_redis_client", default=None)
 
-def _get_redis_client() -> aioredis.Redis:
-    global _redis_client
-    if _redis_client is None:
-        _redis_client = _make_redis_client()
-    return _redis_client
-
+def _get_redis_client():
+    client = _redis_client_var.get()
+    if client is None:
+        client = _make_redis_client()
+        _redis_client_var.set(client)
+    return client
 
 async def _close_redis_client() -> None:
-    global _redis_client
-    if _redis_client is not None:
+    client = _redis_client_var.get()
+    if client is not None:
         try:
-            await _redis_client.aclose()
+            await client.aclose()
         except Exception:
             pass
-        _redis_client = None
+        _redis_client_var.set(None)
 
 
 async def publish_event(event_name: str, payload: dict) -> None:
@@ -70,10 +69,22 @@ async def publish_event(event_name: str, payload: dict) -> None:
         "data": payload,
         "timestamp": datetime.datetime.utcnow().isoformat(),
     })
-    async with client.pipeline(transaction=False) as pipe:
-        pipe.publish(f"event:{clean_name}", plain)
-        pipe.publish(f"events:{clean_name}", wrapped)
-        await pipe.execute()
+    # Best-effort: the WebSocket progress feed is cosmetic — the DB (via
+    # transition_status) is the source of truth for application state, and the
+    # watchdog recovers anything genuinely stuck. A transient Redis blip while
+    # publishing a progress event must NEVER abort an in-flight browser run, so
+    # swallow connection errors here rather than letting them propagate into
+    # execute_application's retry path (which was killing healthy applies).
+    try:
+        async with client.pipeline(transaction=False) as pipe:
+            pipe.publish(f"event:{clean_name}", plain)
+            pipe.publish(f"events:{clean_name}", wrapped)
+            await pipe.execute()
+    except Exception as exc:
+        logger.warning(
+            "[Events] publish %r skipped — Redis unavailable (%s): %s",
+            clean_name, type(exc).__name__, exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -112,11 +123,11 @@ async def publish_application_failed(
             "failure_reason": failure_reason,
         },
     )
-    
+
     # Transition the status in the database to FAILED or BLOCKED
     from app.browser_automation.services.state_machine import transition_status
     status_to_set = "BLOCKED" if failure_reason == "BOT_DETECTED" or "blocked" in error.lower() else "FAILED"
-    
+
     metadata = {
         "error_message": error,
         "retry_eligible": retry_eligible
@@ -161,6 +172,21 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         app_resp = await client.get(f"{api_base}/applications/{app_id}")
         app_resp.raise_for_status()
         app_data = app_resp.json()
+
+        # Honour an operator pause. The QUEUED Celery message may already have been
+        # enqueued when the operator paused this row; the worker still picks it up,
+        # so bail out here WITHOUT mutating status (leave it QUEUED). Resuming re-
+        # dispatches a fresh execute_application task. Returning PAUSED skips the
+        # retry/fail handling in execute_application.
+        if app_data.get("paused"):
+            logger.info(f"[M4] Application {app_id} is paused — skipping browser execution.")
+            return ApplicationResult(
+                application_id=str(app_id),
+                status="PAUSED",
+                error_message="Application is paused by operator",
+                execution_time_seconds=0.0,
+                retry_count=retry_count,
+            )
 
         cand_id = app_data["candidate_id"]
         job_id  = app_data["job_id"]
@@ -291,20 +317,20 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         "cover_letter_url":  cover_letter_url,
         "screening_answers": package_dict.get("screening_answers"),
     }
-    
+
     package = ApplicationPackage(**full_package_dict)
-    
-    logger.info(f"Loaded executor payload. Hydration complete.")
+
+    logger.info("Loaded executor payload. Hydration complete.")
     await publish_event("pipeline.progress", {
         "application_id": str(package.application_id),
         "candidate_id": str(package.candidate_id),
         "step": "form_filling",
         "message": f"Initializing browser to fill application at {package.platform.capitalize()}..."
     })
-    
+
     executor = ApplicationExecutor()
     result = await executor.execute(package, retry_count=retry_count)
-    
+
     if result.status == "SUBMITTED":
         await publish_event("pipeline.progress", {
             "application_id": str(package.application_id),
@@ -324,7 +350,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
             "step": "failed",
             "message": f"Automation ended with status: {result.status}"
         })
-        
+
     return result
 
 @celery_app.task(
@@ -355,6 +381,12 @@ def execute_application(self, package_dict: dict):
                 return await hydrate_and_execute(package_dict, retry_count=self.request.retries)
             finally:
                 await _close_redis_client()
+
+        # macOS + billiard (fork-based Celery): the forked worker process inherits
+        # the parent's event loop which is already closed. The first asyncio.run()
+        # call immediately raises RuntimeError('Event loop is closed'), which burns
+        # one of the 3 max retries every time. Always set a fresh loop before running.
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
         result: ApplicationResult = asyncio.run(_run())
         if result.status == "RATE_LIMITED":
@@ -421,7 +453,7 @@ def execute_application(self, package_dict: dict):
                 )
                 return result.dict()
             raise Exception(f"Execution failed: {result.error_message}")
-            
+
         return result.dict()
     except Retry:
         raise
@@ -538,7 +570,7 @@ def execute_application(self, package_dict: dict):
                 failure_reason = "BOT_DETECTED"
             elif "qualification" in err_msg.lower() or "mismatch" in err_msg.lower():
                 failure_reason = "QUALIFICATION_MISMATCH"
-                
+
             asyncio.run(publish_application_failed(
                 application_id=package_dict.get("application_id", ""),
                 error=err_msg,
@@ -551,11 +583,11 @@ def execute_application(self, package_dict: dict):
             # applies the correct timeout threshold.
             from app.browser_automation.services.state_machine import transition_status
             asyncio.run(transition_status(
-                package_dict.get("application_id", ""), 
+                package_dict.get("application_id", ""),
                 "QUEUED",
                 {"info": f"Retrying task after failure: {err_msg[:100]}"}
             ))
-            
+
         raise self.retry(exc=exc)
 
 
@@ -616,8 +648,9 @@ def recover_stuck_applications():
     browser-automation tasks on queue:application_execution.
     """
     import asyncio
+
     from app.services.state_machine import recover_stuck_applications_async
-    
+
     async def run_recovery():
         from app.database import task_session
         async with task_session() as session:

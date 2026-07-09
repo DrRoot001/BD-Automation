@@ -1,8 +1,23 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? '/api'
 
+async function handleResponseError(res: Response, path: string): Promise<never> {
+  let detail: string | null = null
+  try {
+    const errData = await res.json()
+    if (errData && errData.detail) {
+      detail = typeof errData.detail === 'string'
+        ? errData.detail
+        : JSON.stringify(errData.detail)
+    }
+  } catch {
+    // Response body is not JSON — fall through to generic message
+  }
+  throw new Error(detail ?? `API error ${res.status}: ${path}`)
+}
+
 async function fetchJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`)
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -12,7 +27,7 @@ async function postJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -22,7 +37,7 @@ async function patchJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -32,7 +47,7 @@ async function putJSON<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -40,7 +55,7 @@ async function deleteJSON<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
     method: 'DELETE',
   })
-  if (!res.ok) throw new Error(`API error ${res.status}: ${path}`)
+  if (!res.ok) await handleResponseError(res, path)
   return res.json() as Promise<T>
 }
 
@@ -78,6 +93,8 @@ export interface Candidate {
   linkedin_url?: string
   title?: string
   google_connected?: boolean
+  // 0 = pipeline running, 1 = pipeline stopped by operator
+  automation_paused?: number
   created_at: string
   updated_at: string
 }
@@ -109,6 +126,7 @@ export interface ApplicationSummary {
   company: string
   platform: string
   status: string
+  paused?: boolean
   fit_score: number | null
   ats_score: number | null
   ats_score_before?: number | null
@@ -274,8 +292,9 @@ export const api = {
   mergeUsers: (sourceUserId: string, targetUserId: string) =>
     postJSON<{ message: string }>('/auth/admin/users/merge', { source_user_id: sourceUserId, target_user_id: targetUserId }),
 
-  getJobsCount: (params?: { search?: string; source?: string; jobType?: string; timeFilter?: string }) => {
+  getJobsCount: (params?: { candidateId?: string; search?: string; source?: string; jobType?: string; timeFilter?: string }) => {
     const qs = new URLSearchParams()
+    if (params?.candidateId) qs.set('candidate_id', params.candidateId)
     if (params?.search) qs.set('search', params.search)
     if (params?.source) qs.set('source', params.source)
     if (params?.jobType) qs.set('job_type', params.jobType)
@@ -348,6 +367,21 @@ export const api = {
   retryApplication: (appId: string) =>
     postJSON<RetryResponse>(`/applications/${appId}/retry`, {}),
 
+  // Cancel (withdraw) an application without deleting it — frees the queue slot
+  // but keeps the audit trail.
+  cancelApplication: (appId: string) =>
+    postJSON<ApplicationSummary>(`/applications/${appId}/cancel`, {}),
+
+  // Hard-delete an application and its history. Destructive.
+  deleteApplication: (appId: string) =>
+    deleteJSON<{ deleted: number; application_id: string }>(`/applications/${appId}`),
+
+  // Hold / release a single application.
+  pauseApplication: (appId: string) =>
+    postJSON<ApplicationSummary>(`/applications/${appId}/pause`, {}),
+  resumeApplication: (appId: string) =>
+    postJSON<ApplicationSummary>(`/applications/${appId}/unpause`, {}),
+
   getJob: (id: string) =>
     fetchJSON<JobSummary>(`/jobs/${id}`),
 
@@ -360,8 +394,12 @@ export const api = {
   updateCandidate: (id: string, data: Record<string, unknown>) =>
     putJSON<Candidate>(`/candidates/${id}`, data),
 
-  triggerApply: (candidateId: string, maxApps: number) =>
-    postJSON<ApplyTriggerResponse>(`/candidates/${candidateId}/apply`, { max_apps: maxApps }),
+  triggerApply: (candidateId: string, maxApps: number, timeFilter?: string, platform?: string) =>
+    postJSON<ApplyTriggerResponse>(`/candidates/${candidateId}/apply`, {
+      max_apps: maxApps,
+      time_filter: timeFilter,
+      platform: platform
+    }),
 
   getGoogleAuthUrl: (candidateId: string) =>
     fetchJSON<{ auth_url: string; is_mock: boolean }>(`/candidates/${candidateId}/google/auth-url`),
@@ -375,9 +413,23 @@ export const api = {
   runMatching: (candidateId: string) =>
     postJSON<MatchingRunResponse>(`/candidates/${candidateId}/run-matching`, {}),
 
+  // Stop the whole apply pipeline for a candidate: blocks new matching runs,
+  // halts an active run at its next job boundary, and bulk-pauses every
+  // in-flight application so none of them block new job queues.
+  stopPipeline: (candidateId: string) =>
+    postJSON<{ status: string; paused_applications: number; in_browser_finishing: number }>(
+      `/candidates/${candidateId}/pipeline/pause`, {}),
+
+  resumePipeline: (candidateId: string) =>
+    postJSON<{ status: string; resumed_applications: number; redispatched_queued: number }>(
+      `/candidates/${candidateId}/pipeline/resume`, {}),
+
   triggerJobDiscovery: () =>
     postJSON<JobDiscoveryResponse>('/jobs/discover', {}),
 
   getDiscoveryStatus: () =>
     fetchJSON<DiscoveryStatusResponse>('/jobs/discover/status'),
+
+  getPlatforms: () =>
+    fetchJSON<string[]>('/jobs/platforms'),
 }

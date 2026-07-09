@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, Optional, List, Literal
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field, ConfigDict, model_validator
+from typing import Any, List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class NormalizedJob(BaseModel):
@@ -31,6 +32,16 @@ class NormalizedJob(BaseModel):
     @classmethod
     def normalize_fields(cls, data: Any) -> Any:
         if isinstance(data, dict):
+            # Clean URLs
+            for field in ["canonical_url", "source_url"]:
+                val = data.get(field)
+                if isinstance(val, str):
+                    val = val.strip()
+                    if "not found" in val.lower() or val in ("—", ""):
+                        data[field] = None
+                    else:
+                        data[field] = val
+
             # Normalize pay_period
             pay_period = str(data.get("pay_period") or "").lower().strip()
             if pay_period not in ["hourly", "yearly", "monthly", "daily"]:

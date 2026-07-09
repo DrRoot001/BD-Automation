@@ -30,7 +30,6 @@ def _api_base() -> str:
     return os.getenv("M1_API_BASE_URL", "http://127.0.0.1:8000/api")
 
 MAX_APPLICATIONS_PER_RUN = int(os.getenv("M4_MAX_APPS_PER_RUN", "10"))
-SCORE_FLOOR = float(os.getenv("M4_DYNAMIC_SCORE_FLOOR", "0.25"))
 
 
 _WORD_RE = re.compile(r"[A-Za-z0-9\+\-\#\.]{2,}")
@@ -43,11 +42,13 @@ def _tokens(s: str) -> Set[str]:
 
 
 def _score_job(candidate_keywords: Set[str], job: Dict[str, Any]) -> float:
-    """Cheap relevance score between candidate tech_stack and a job's skills/title/description.
+    """Cheap token-overlap signal between candidate keywords and a job.
 
-    We don't need a perfect score — we just need to order jobs so the top-N are
-    plausibly aligned with the candidate. M3 will do the deep scoring after
-    application creation; this is a coarse pre-filter to avoid spam.
+    NOTE: this ratio divides by the candidate's full keyword count, so it
+    under-scores specialists (a niche role overlaps on few keywords). It is NOT
+    used for ranking or as a score floor anymore — job selection is driven by
+    pgvector semantic distance in /jobs/for-matching. This is kept only as a
+    zero-overlap garbage guard for the no-embedding fallback path.
     """
     if not candidate_keywords:
         return 0.0
@@ -69,12 +70,17 @@ async def _fetch_candidate(client: httpx.AsyncClient, candidate_id: str) -> Opti
     return r.json()
 
 
-async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: int = 500) -> List[Dict[str, Any]]:
+async def _fetch_open_jobs(client: httpx.AsyncClient, candidate_id: str, limit: int = 500, time_filter: Optional[str] = None, platform: Optional[str] = None) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     skip = 0
     page_size = 100
     while skip < limit:
-        r = await client.get(f"{_api_base()}/jobs/for-matching", params={"skip": skip, "limit": page_size, "candidate_id": candidate_id})
+        params = {"skip": skip, "limit": page_size, "candidate_id": candidate_id}
+        if time_filter:
+            params["time_filter"] = time_filter
+        if platform:
+            params["source"] = platform
+        r = await client.get(f"{_api_base()}/jobs/for-matching", params=params)
         if r.status_code != 200:
             logger.error(f"[Dynamic] Failed to fetch jobs: HTTP {r.status_code} — {r.text}")
             raise RuntimeError(f"Failed to fetch jobs from API: HTTP {r.status_code}")
@@ -144,7 +150,7 @@ async def _already_applied_job_ids(client: httpx.AsyncClient, candidate_id: str)
     return set()
 
 
-async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = None) -> Dict[str, Any]:
+async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = None, time_filter: Optional[str] = None, platform: Optional[str] = None) -> Dict[str, Any]:
     queued: List[str] = []
     skipped: int = 0
 
@@ -167,7 +173,7 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
             "message": "Fetching available jobs from database..."
         })
 
-        jobs = await _fetch_open_jobs(client, candidate_id)
+        jobs = await _fetch_open_jobs(client, candidate_id, time_filter=time_filter, platform=platform)
         if not jobs:
             return {"queued": [], "skipped": 0, "error": "no_jobs"}
 
@@ -180,35 +186,44 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
 
         already = await _already_applied_job_ids(client, candidate_id)
 
-        scored = []
+        # /jobs/for-matching already hard-filters to the stack-relevant set
+        # (cosine_distance < threshold) and returns jobs closest-first by
+        # semantic similarity to the candidate's resume. Preserve that order —
+        # do NOT re-rank by raw token overlap. That token ratio divides by the
+        # candidate's full keyword count and so penalises specialists: a pure
+        # ServiceNow role overlaps on one keyword out of ~30 and loses to a
+        # generic full-stack listing, which is exactly the off-stack-queueing
+        # bug we're fixing. The `_score_job() <= 0` check is only a garbage
+        # guard for candidates whose resume has no embedding (endpoint then
+        # falls back to newest-first with no relevance filter).
+        selected: List[Dict[str, Any]] = []
         for job in jobs:
             jid = str(job.get("id") or job.get("job_id") or "")
             if not jid or jid in already:
                 continue
-            score = _score_job(keywords, job)
-            if score < SCORE_FLOOR:
+            if _score_job(keywords, job) <= 0.0:
                 continue
-            scored.append((score, job))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        scored = scored[:max_apps]
+            selected.append(job)
+            if len(selected) >= max_apps:
+                break
 
-        if not scored:
+        if not selected:
             publish_event_sync("pipeline.progress", {
                 "candidate_id": candidate_id,
                 "bd_user_id": bd_user_id,
                 "step": "no_matches",
-                "message": "No jobs found above the match score threshold."
+                "message": "No stack-relevant jobs found for this candidate's resume."
             })
-            return {"queued": [], "skipped": len(jobs), "error": "no_matches_above_floor"}
+            return {"queued": [], "skipped": len(jobs), "error": "no_stack_relevant_jobs"}
 
         publish_event_sync("pipeline.progress", {
             "candidate_id": candidate_id,
             "bd_user_id": bd_user_id,
             "step": "matches_found",
-            "message": f"Found {len(scored)} suitable jobs. Triggering AI matching and application pipeline..."
+            "message": f"Found {len(selected)} stack-relevant jobs. Triggering AI matching and application pipeline..."
         })
 
-        target_job_ids = [str(job.get("id") or job.get("job_id")) for score, job in scored]
+        target_job_ids = [str(job.get("id") or job.get("job_id")) for job in selected]
         
         from app.database import task_session
         from app.services.matching import run_matching_for_candidate
@@ -267,7 +282,7 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
     queue="queue:job_processing",
     max_retries=1,
 )
-def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None):
+def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None, time_filter: Optional[str] = None, platform: Optional[str] = None):
     """Score every open job against the candidate's CV, queue top matches into M4.
 
     Args:
@@ -275,14 +290,17 @@ def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_us
         max_apps: cap on number of applications (defaults to MAX_APPLICATIONS_PER_RUN env).
         bd_user_id: supabase_user_id of the BD user who triggered this run.
                     Used to scope WebSocket pipeline.progress events to only that user.
+        time_filter: filter jobs by scrape time (e.g. '24h').
+        platform: filter jobs by platform (source).
     """
     logger.info(
         f"[Celery] Starting dynamic-apply for candidate={candidate_id} "
-        f"max_apps={max_apps} triggered_by_user={bd_user_id}"
+        f"max_apps={max_apps} triggered_by_user={bd_user_id} "
+        f"time_filter={time_filter} platform={platform}"
     )
 
     try:
-        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN, bd_user_id))
+        result = asyncio.run(_run(candidate_id, max_apps or MAX_APPLICATIONS_PER_RUN, bd_user_id, time_filter, platform))
         logger.info(f"[Celery] Dynamic-apply completed for candidate={candidate_id}: {result}")
         return result
     except Exception as e:

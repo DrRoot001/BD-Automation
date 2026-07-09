@@ -1,0 +1,370 @@
+{
+  "address": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Address*",
+    "last_seen": 1783609896,
+    "source": "screening",
+    "value": "Not provided."
+  },
+  "are you a us citizen": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you a US Citizen?*",
+    "last_seen": 1783609521,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "are you willing to relocate if needed": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you willing to relocate if needed?",
+    "last_seen": 1783610010,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you willing to relocate if needed✱": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you willing to relocate if needed?✱",
+    "last_seen": 1783608936,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "availability": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Availability",
+    "last_seen": 1783610257,
+    "source": "agent_loop",
+    "value": "Immediately"
+  },
+  "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field1]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field1]",
+    "last_seen": 1783609572,
+    "source": "screening",
+    "value": "Question prompt missing."
+  },
+  "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field2]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field2]",
+    "last_seen": 1783610120,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "certifications": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Certifications",
+    "last_seen": 1783610297,
+    "source": "agent_loop",
+    "value": "ITSM, ITOM, ServiceNow"
+  },
+  "city": {
+    "count": 1,
+    "field_type": "text",
+    "label": "City*",
+    "last_seen": 1783609897,
+    "source": "profile_direct",
+    "value": "Newark, NJ"
+  },
+  "confirm password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Confirm password",
+    "last_seen": 1783608522,
+    "source": "agent_loop",
+    "value": "Password123!"
+  },
+  "country": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Country",
+    "last_seen": 1783610211,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "current company / employer": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Current company",
+    "last_seen": 1783608928,
+    "source": "rules",
+    "value": "Freelance"
+  },
+  "current location no location found. try entering a different locationloading": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Current location No location found. Try entering a different locationLoading",
+    "last_seen": 1783608927,
+    "source": "rules",
+    "value": "Newark, NJ"
+  },
+  "date": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Date*",
+    "last_seen": 1783610740,
+    "source": "agent_loop",
+    "value": "2024-07-20"
+  },
+  "desired salary": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Desired Salary:*",
+    "last_seen": 1783610244,
+    "source": "agent_loop",
+    "value": "Negotiable"
+  },
+  "do you have servicenow experience": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have ServiceNow experience?",
+    "last_seen": 1783609532,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email*",
+    "last_seen": 1783609899,
+    "source": "profile_direct",
+    "value": "james12william893@gmail.com"
+  },
+  "email✱": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Email✱",
+    "last_seen": 1783608925,
+    "source": "rules",
+    "value": "james12william893@gmail.com"
+  },
+  "employee id (if applicable)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Employee ID (if applicable)",
+    "last_seen": 1783610492,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "expected salary": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Expected Salary?",
+    "last_seen": 1783610100,
+    "source": "agent_loop",
+    "value": "$140,000 - $160,000"
+  },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name",
+    "last_seen": 1783608553,
+    "source": "agent_loop",
+    "value": "james"
+  },
+  "full name✱": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Full name✱",
+    "last_seen": 1783608925,
+    "source": "rules",
+    "value": "james William"
+  },
+  "github url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "GitHub URL",
+    "last_seen": 1783608930,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "i acknowledge": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "I Acknowledge",
+    "last_seen": 1783608937,
+    "source": "rules",
+    "value": "Yes"
+  },
+  "if you have a college degree, what was your field of study": {
+    "count": 4,
+    "field_type": "text",
+    "label": "If you have a college degree, what was your field of study?",
+    "last_seen": 1783610283,
+    "source": "agent_loop",
+    "value": "ServiceNow"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name",
+    "last_seen": 1783608566,
+    "source": "agent_loop",
+    "value": "William"
+  },
+  "linkedin url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn URL",
+    "last_seen": 1783608929,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Name",
+    "last_seen": 1783608935,
+    "source": "rules",
+    "value": "james William"
+  },
+  "other website": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Other website",
+    "last_seen": 1783608932,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Password",
+    "last_seen": 1783608507,
+    "source": "agent_loop",
+    "value": "Password123!"
+  },
+  "phone": {
+    "count": 4,
+    "field_type": "text",
+    "label": "Phone*",
+    "last_seen": 1783610223,
+    "source": "agent_loop",
+    "value": "+15512166306"
+  },
+  "portfolio url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Portfolio URL",
+    "last_seen": 1783608931,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "select location": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Select location",
+    "last_seen": 1783440922,
+    "source": "agent_loop",
+    "value": "United States"
+  },
+  "tap to select job title": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Tap to select job title",
+    "last_seen": 1783441322,
+    "source": "agent_loop",
+    "value": "ServiceNow ITSM Developer"
+  },
+  "today's date": {
+    "count": 2,
+    "field_type": "date",
+    "label": "Today's Date*",
+    "last_seen": 1783610490,
+    "source": "llm:0.40",
+    "value": "2024-07-20"
+  },
+  "twitter url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Twitter URL",
+    "last_seen": 1783608930,
+    "source": "screening",
+    "value": "N/A"
+  },
+  "type or paste your resume here": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Type or paste your Resume here",
+    "last_seen": 1783610158,
+    "source": "agent_loop",
+    "value": "james William\nLead ServiceNow Developer / Architect\nNewark, NJ | james12william893@gmail.com | +15512166306\nProfessional Summary\nServiceNow professional with 12+ years of progressive experience delivering enterprise-scale automation and workflow\nsolutions across ITSM, ITOM, CMDB, HRSD, GRC, and SPM modules. Proven expertise in designing, developing, and\noptimizing ServiceNow platforms for global organizations. Skilled in implementing ITIL-aligned and governance-driven\nframeworks to enhance service delivery and operational excellence. Strong background in Virtual Agent deployment,\nintegrations, performance tuning, and end-to-end platform governance. Experienced in leading and mentoring developer\nteams while driving innovation through scalable ServiceNow architecture and automation.\nSkills\nServiceNow Modules: ITSM, ITOM, CMDB, HRSD, GRC, SPM, Virtual Agent, CSM, Discovery, Service Portal,\nService Catalog, Asset Management, Knowledge Management\nDevelopment & Scripting: JavaScript, Glide API, Business Rules, Client Scripts, UI Policies, UI Actions, Script\nIncludes, Flow Designer, Data Policies, Notifications\nIntegration & Automation: IntegrationHub, MID Server, REST APIs, SOAP APIs, Web Services, JSON/XML, LDAP,\nSSO, OAuth, API Gateway\nPlatform Architecture & Instance Management, Multi-Instance Strategy, Upgrades, Security ACLs, Performance\nGovernance: Optimization, Cloning, Scoped Apps, Data Policies, Dev Instance Governance\nConfiguration Management CMDB Design, Discovery Patterns, Service Mapping, Dependency Views, Reconciliation,\n& Discovery: Data Normalization, Asset Relationships, CI Classes, Identification Rules, Discovery\nSchedules\nWorkflow & Process Catalog Workflows, Approval Flows, Flow Designer, Orchestration, SLA/OLA\nAutomation: Management, Event Management, Task Automation, Notifications, Scripted Workflows,\nProcess Optimization\nReporting & Analytics: Performance Analytics, Dashboards, Reports, KPIs, Metrics Definition, Trend Analysis,\nData Visualization, Service Level Reports, Business Intelligence Integration, Custom\nAnalytics\nTools, Frameworks & ITIL Framework, Agile, Scrum, CI/CD, DevOps, Version Control (Git), Data Management,\nPractice: Testing Automation, Change Governance, Continual Service Improvement (CSI),\nDocumentation\nLeadership & Collaboration:Team Mentorship, Leading 20 Developers, Code Governance, Solution Design Reviews,\nTechnical Training, Stakeholder Communication, Sprint Planning, Cross-Team\nCollaboration, Project Coordination, Conflict Resolution\nCloud, Infrastructure & AWS, Azure, MID Server Configuration, Network Discovery, Cloud Integrations, Identity &\nSecurity: Access Management, SSL Configuration, Vulnerability Response, Patch Automation,\nMonitoring Integrations, Security Compliance\nProfessional Experience\nBluestone Innovations 10-2021 - Present\nLead ServiceNow Developer / Architect\nTechnologies: ServiceNow, ITSM, ITOM, HRSD, GRC, SPM, Virtual Agent, REST APIs, SOAP APIs, IntegrationHub, MID\nServer, CI/CD, CMDB\n(cid:127) Designed and implemented enterprise-scale ServiceNow solutions across ITSM, ITOM, HRSD, GRC, and SPM\nmodules to modernize service delivery and governance.\n(cid:127) Integrated Virtual Agent to automate end-user interactions and enhance self-service capabilities.\n(cid:127) Led and mentored a global team of 20 developers, establishing coding standards, architecture patterns, and\ngovernance frameworks.\n(cid:127) Architected integrations with third-party tools using REST/SOAP APIs, IntegrationHub, and MID Server for seamless\ndata exchange.\n(cid:127) Deployed CI/CD automation pipelines to accelerate platform releases and ensure instance consistency.\n(cid:127) Optimized CMDB structure, discovery schedules, and reconciliation rules to enhance visibility and dependency\naccuracy.\n(cid:127) Implemented SPM for demand, project, and resource management, aligning IT initiatives with business goals.\n(cid:127) Applied GRC and risk compliance automation to ensure adherence to organizational and regulatory frameworks.\n(cid:127) Directed platform performance tuning, instance cloning, and upgrade readiness assessments.\n(cid:127) Collaborated with IT leadership and stakeholders to align platform strategy with enterprise IT governance and\nsecurity compliance.\nCOPAINS 06-2018 - 09-2021\nSenior ServiceNow Developer / Engineer\nTechnologies: ServiceNow, ITSM, HRSD, Incident Management, Problem Management, Change Management, Request\nManagement, Virtual Agent, Flow Designer, Orchestration, CMD"
+  },
+  "type your response": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Type your response",
+    "last_seen": 1783610087,
+    "source": "agent_loop",
+    "value": "My background includes extensive experience in business process consulting and leveraging ServiceNow for digital transformation."
+  },
+  "veteran status": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Veteran status",
+    "last_seen": 1783608934,
+    "source": "rules",
+    "value": "I am not a protected veteran"
+  },
+  "what": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What?",
+    "last_seen": 1783609017,
+    "source": "screening",
+    "value": "I bring 12 years of experience as a ServiceNow Engineer, specializing in architecting and implementing comprehensive solutions across ITSM, ITOM, HRSD, GRC, and SPM."
+  },
+  "what % of travel are you open to": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What % of travel are you open to?",
+    "last_seen": 1783609958,
+    "source": "agent_loop",
+    "value": "0%"
+  },
+  "what is your highest degree of education achieved": {
+    "count": 3,
+    "field_type": "text",
+    "label": "What is your highest degree of education achieved?",
+    "last_seen": 1783610270,
+    "source": "agent_loop",
+    "value": "Master's Degree"
+  },
+  "where": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Where?",
+    "last_seen": 1783608590,
+    "source": "agent_loop",
+    "value": "Newark, NJ"
+  },
+  "work authorization status (us citizen, green card holder, etc.)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Work Authorization status (US Citizen, Green Card Holder, etc.)",
+    "last_seen": 1783610130,
+    "source": "agent_loop",
+    "value": "US Citizen"
+  },
+  "your name": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Your Name*",
+    "last_seen": 1783610378,
+    "source": "agent_loop",
+    "value": "james William"
+  },
+  "zip": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Zip*",
+    "last_seen": 1783609898,
+    "source": "screening",
+    "value": "Not provided."
+  }
+}

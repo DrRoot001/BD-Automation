@@ -1,26 +1,24 @@
-from fastapi import HTTPException
-from app.schemas.application import ApplicationStatus
 
 VALID_TRANSITIONS: dict[str, list[str]] = {
-    "FOUND":               ["ANALYZED", "QUEUED", "FAILED"],
-    "ANALYZED":            ["MATCHED", "APPLICATION_STARTED", "FAILED"],
-    "MATCHED":             ["RESUME_UPDATED", "APPLICATION_STARTED", "QUEUED", "FAILED"],
-    "RESUME_UPDATED":      ["COVER_LETTER_CREATED", "FORM_COMPLETED", "APPLICATION_STARTED", "QUEUED", "FAILED"],
-    "COVER_LETTER_CREATED":["QUEUED", "FAILED"],
-    "QUEUED":              ["APPLICATION_STARTED", "FORM_COMPLETED", "SUBMITTED", "FAILED", "ANALYZED"],
-    "APPLICATION_STARTED": ["FORM_COMPLETED", "QUEUED", "ANALYZED", "SUBMITTED", "FAILED", "BLOCKED"],
-    "FORM_COMPLETED":      ["SUBMITTED", "QUEUED", "FAILED"],
+    "FOUND":               ["ANALYZED", "QUEUED", "FAILED", "BLOCKED", "WITHDRAWN"],
+    "ANALYZED":            ["MATCHED", "APPLICATION_STARTED", "FAILED", "WITHDRAWN"],
+    "MATCHED":             ["RESUME_UPDATED", "APPLICATION_STARTED", "QUEUED", "FAILED", "WITHDRAWN"],
+    "RESUME_UPDATED":      ["COVER_LETTER_CREATED", "FORM_COMPLETED", "APPLICATION_STARTED", "QUEUED", "FAILED", "WITHDRAWN"],
+    "COVER_LETTER_CREATED":["QUEUED", "FAILED", "WITHDRAWN"],
+    "QUEUED":              ["APPLICATION_STARTED", "FORM_COMPLETED", "SUBMITTED", "FAILED", "ANALYZED", "BLOCKED", "WITHDRAWN"],
+    "APPLICATION_STARTED": ["FORM_COMPLETED", "QUEUED", "ANALYZED", "SUBMITTED", "FAILED", "BLOCKED", "WITHDRAWN"],
+    "FORM_COMPLETED":      ["SUBMITTED", "QUEUED", "FAILED", "WITHDRAWN"],
     "SUBMITTED":           ["CONFIRMED", "REJECTED", "GHOSTED"],
     "CONFIRMED":           ["INTERVIEW_R1", "REJECTED", "WITHDRAWN"],
     "INTERVIEW_R1":        ["INTERVIEW_R2", "REJECTED", "WITHDRAWN", "OFFER"],
     "INTERVIEW_R2":        ["OFFER", "REJECTED", "WITHDRAWN"],
     # Terminal or pseudo-terminal states
-    "FAILED":              [],
-    "BLOCKED":             ["QUEUED"],   # Blocked apps can be retried
+    "FAILED":              ["QUEUED", "WITHDRAWN"],   # Failed apps can be retried or withdrawn
+    "BLOCKED":             ["QUEUED", "WITHDRAWN"],   # Blocked apps can be retried
     "REJECTED":            [],
     "OFFER":               [],
-    "GHOSTED":             ["QUEUED"],   # Can retry if desired
-    "WITHDRAWN":           [],           # Terminal
+    "GHOSTED":             ["QUEUED", "WITHDRAWN"],   # Can retry if desired
+    "WITHDRAWN":           ["QUEUED"],   # Cancelled apps can be re-queued if it was a mistake
 }
 
 class InvalidTransitionError(Exception):
@@ -36,11 +34,12 @@ def validate_transition(current: str, target: str) -> bool:
 
 
 import logging
-from datetime import datetime, timezone, timedelta
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timedelta, timezone
+
 from app.models.application import Application
 from app.models.application_history import ApplicationHistory
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
@@ -60,16 +59,21 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
     transient 404s.  Job expiry is now handled opportunistically by the browser
     automation layer when it actually tries to load the page.
     """
-    from sqlalchemy import func, or_, text
+    from sqlalchemy import text
 
     now = datetime.now(timezone.utc)
-    
+
     # 1. Fetch stuck apps and their latest history timestamp in a single grouped query
+    # paused = 0 filter: an operator-paused application is intentionally held and
+    # must never be force-failed by the watchdog. It is also excluded from the
+    # active-count gate, so it does not need recovering to unblock the pipeline.
     stmt = text("""
         SELECT a.id, a.status, COALESCE(MAX(h.created_at), a.created_at) as last_updated
         FROM applications a
         LEFT JOIN application_history h ON h.application_id = a.id
-        WHERE a.status IN ('FOUND', 'QUEUED', 'APPLICATION_STARTED', 'FORM_COMPLETED')
+        WHERE a.status IN ('FOUND', 'MATCHED', 'RESUME_UPDATED', 'COVER_LETTER_CREATED',
+                           'QUEUED', 'APPLICATION_STARTED', 'FORM_COMPLETED')
+          AND a.paused = 0
         GROUP BY a.id, a.status, a.created_at
     """)
 
@@ -88,6 +92,13 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             # FOUND means the orchestration pipeline is running. 30 min is generous
             # for LLM scoring + tailoring; if it's still FOUND after that, the pipeline died.
             threshold_min = 30
+        elif status in ("MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED"):
+            # Tailoring phase (resume tailoring + cover letter + screening QA). These
+            # are transient hand-off states; if an app lingers here it means the
+            # tailoring pipeline died mid-way. Before this was added, such rows were
+            # never recovered and permanently counted toward the candidate's active
+            # cap (get_active_application_count), silently blocking all new jobs.
+            threshold_min = 20
         elif status == "QUEUED":
             # Must match get_active_application_count's 15-min stale threshold exactly.
             # The watchdog runs before the limit check inside run_matching_for_candidate,
@@ -95,13 +106,16 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             # This prevents stale QUEUED jobs from appearing as "limit reached".
             threshold_min = 15
         else:
-            threshold_min = 30
-            
+            # APPLICATION_STARTED / FORM_COMPLETED: reduce to 20 min so stuck browser
+            # sessions don't block worker slots for a full 30 minutes. The 30 min threshold
+            # was causing live workers to appear "full" even though the browser had crashed.
+            threshold_min = 20
+
         time_limit = now - timedelta(minutes=threshold_min)
-        
+
         if last_updated < time_limit:
             stuck_ids_and_statuses.append((app_id, status, last_updated))
-            
+
     if not stuck_ids_and_statuses:
         return
 
@@ -184,7 +198,7 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             )
         except Exception as ev_err:
             logger.error(f"[Watchdog] failed to publish status changed event for {app.id}: {ev_err}")
-            
+
     if stuck_count > 0:
         await session.commit()
         logger.info(f"[Watchdog] Successfully recovered {stuck_count} stuck applications.")

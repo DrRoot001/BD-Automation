@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { api } from '@/lib/api'
-import { Mail, Check, Loader2, AlertTriangle, Activity, FileText, ExternalLink, ArrowLeft, UserCheck } from 'lucide-react'
+import { Mail, Check, Loader2, AlertTriangle, Activity, FileText, ExternalLink, ArrowLeft, UserCheck, OctagonPause, Play } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 
 function ViewResumeButton({ resumeId }: { resumeId: string; fileUrl?: string }) {
@@ -56,6 +56,27 @@ export default function CandidateDetailPage() {
   const [maxAppsError, setMaxAppsError] = useState<string | null>(null)
   const [progressLogs, setProgressLogs] = useState<{ timestamp: string; message: string }[]>([])
   const processedLogsRef = useRef<Set<string>>(new Set())
+
+  const [past24Only, setPast24Only] = useState(false)
+  const [selectedPlatform, setSelectedPlatform] = useState('')
+
+  // Fetch platforms dynamically with standard fallbacks
+  const { data: platforms = ['greenhouse', 'lever', 'dice', 'indeed', 'remoteok', 'jobicy', 'remoterocketship'] } = useQuery({
+    queryKey: ['platforms'],
+    queryFn: () => api.getPlatforms().catch(() => ['greenhouse', 'lever', 'dice', 'indeed', 'remoteok', 'jobicy', 'remoterocketship']),
+  })
+
+  // Fetch count of available jobs matching the filters
+  const { data: availableJobsData, isLoading: countLoading } = useQuery({
+    queryKey: ['available-jobs-count', id, past24Only, selectedPlatform],
+    queryFn: () => api.getJobsCount({
+      candidateId: id as string,
+      timeFilter: past24Only ? '24h' : undefined,
+      source: selectedPlatform || undefined
+    }),
+    staleTime: 10 * 1000,
+  })
+  const availableJobsCount = availableJobsData?.total_count ?? 0
 
   useWebSocket((evt) => {
     if (evt.event === 'pipeline.progress' && evt.data) {
@@ -106,6 +127,59 @@ export default function CandidateDetailPage() {
       toast.error(errorObj.message || 'Failed to assign candidate')
     },
   })
+
+  // BG-08: stop/resume the whole apply pipeline for this candidate. Stop pauses
+  // every in-flight application (they stop counting toward the active cap) and
+  // blocks new matching runs; resume releases them and re-dispatches queued ones.
+  const pipelineMutation = useMutation({
+    mutationFn: (action: 'stop' | 'resume'): Promise<{
+      status: string
+      paused_applications?: number
+      in_browser_finishing?: number
+      resumed_applications?: number
+      redispatched_queued?: number
+    }> =>
+      action === 'stop'
+        ? api.stopPipeline(id as string)
+        : api.resumePipeline(id as string),
+    onSuccess: (res, action) => {
+      queryClient.invalidateQueries({ queryKey: ['candidate', id] })
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      queryClient.invalidateQueries({ queryKey: ['kpis'] })
+      if (action === 'stop') {
+        toast.success(
+          `Pipeline stopped — ${res.paused_applications ?? 0} application(s) paused` +
+          ((res.in_browser_finishing ?? 0) > 0
+            ? `. ${res.in_browser_finishing} already in a browser run will finish.`
+            : '.'),
+        )
+      } else {
+        toast.success(
+          `Pipeline resumed — ${res.resumed_applications ?? 0} application(s) released` +
+          ((res.redispatched_queued ?? 0) > 0 ? `, ${res.redispatched_queued} re-queued.` : '.'),
+        )
+      }
+    },
+    onError: (err: unknown) => {
+      const errorObj = err as { message?: string }
+      toast.error(errorObj.message || 'Pipeline action failed')
+    },
+  })
+
+  const handlePipelineToggle = async () => {
+    if (!candidate) return
+    if (candidate.automation_paused) {
+      pipelineMutation.mutate('resume')
+      return
+    }
+    const isConfirmed = await confirm({
+      title: 'Stop Pipeline?',
+      message: `Stop the auto-apply pipeline for ${candidate.name}? All in-flight applications will be paused and no new applications will start until you resume. Applications already inside a live browser run will finish their current attempt.`,
+      confirmLabel: 'Stop Pipeline',
+      variant: 'danger',
+    })
+    if (isConfirmed) pipelineMutation.mutate('stop')
+  }
 
   const handleAssignChange = async (newUserId: string) => {
     if (!newUserId || candidate?.user_id === newUserId) return
@@ -204,7 +278,12 @@ export default function CandidateDetailPage() {
     setProgressLogs([])
     processedLogsRef.current.clear()
     try {
-      await api.triggerApply(id as string, maxApps)
+      await api.triggerApply(
+        id as string, 
+        maxApps,
+        past24Only ? '24h' : undefined,
+        selectedPlatform || undefined
+      )
       toast.success(`Auto-Apply started for up to ${maxApps} applications.`)
     } catch (e: unknown) {
       const errorObj = e as { message?: string }
@@ -302,19 +381,48 @@ export default function CandidateDetailPage() {
             <ArrowLeft className="w-3 h-3" /> Back to Candidates
           </Link>
         </div>
-        <button
-          onClick={() => setShowAutoApply(!showAutoApply)}
-          className="btn-primary shrink-0"
-        >
-          {showAutoApply ? 'Hide Auto-Apply Control' : 'Start Auto-Apply'}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* BG-08: candidate-level pipeline stop/resume */}
+          <button
+            onClick={handlePipelineToggle}
+            disabled={pipelineMutation.isPending}
+            className={
+              candidate.automation_paused
+                ? 'btn-secondary !border-success/40 !text-success hover:!bg-success/10'
+                : 'btn-secondary !border-danger/40 !text-danger hover:!bg-danger/10'
+            }
+            title={
+              candidate.automation_paused
+                ? 'Pipeline is stopped — release paused applications and allow new runs'
+                : 'Pause all in-flight applications and block new runs for this candidate'
+            }
+          >
+            {pipelineMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : candidate.automation_paused ? (
+              <>
+                <Play className="w-4 h-4" /> Resume Pipeline
+              </>
+            ) : (
+              <>
+                <OctagonPause className="w-4 h-4" /> Stop Pipeline
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => setShowAutoApply(!showAutoApply)}
+            className="btn-primary"
+          >
+            {showAutoApply ? 'Hide Auto-Apply Control' : 'Start Auto-Apply'}
+          </button>
+        </div>
       </div>
 
       {/* Auto Apply Panel */}
       {showAutoApply && (
         <div className="card p-5 bg-bg-card border border-bg-border rounded-xl shadow-sm animate-fade-in flex flex-col gap-5">
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-            <div className="max-w-xl">
+          <div className="flex flex-col gap-4">
+            <div>
               <h2 className="text-sm font-semibold text-text-primary mb-1 flex items-center gap-2">
                 <Activity className="w-4 h-4 text-accent" />
                 Trigger Job Search & Apply
@@ -323,7 +431,26 @@ export default function CandidateDetailPage() {
                 Run the background pipeline to discover jobs and auto-submit applications for this candidate.
               </p>
             </div>
-            <div className="flex items-end gap-3 shrink-0">
+            
+            <div className="flex flex-col sm:flex-row items-end gap-3 flex-wrap border-t border-bg-border pt-4">
+              {/* Select Platform */}
+              <div className="w-48">
+                <label className="input-label text-xs">Select Platform</label>
+                <select
+                  value={selectedPlatform}
+                  onChange={(e) => setSelectedPlatform(e.target.value)}
+                  className="input capitalize"
+                >
+                  <option value="">All Platforms</option>
+                  {platforms.map((plat) => (
+                    <option key={plat} value={plat}>
+                      {plat}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Max Applications */}
               <div className="w-36">
                 <label className="input-label text-xs">Max Applications</label>
                 <input
@@ -340,10 +467,25 @@ export default function CandidateDetailPage() {
                 />
                 {maxAppsError && <p className="text-danger text-[11px] mt-1">{maxAppsError}</p>}
               </div>
+
+              {/* Past 24 Hours Checkbox */}
+              <div className="flex items-center h-[38px] px-2">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-text-primary select-none">
+                  <input
+                    type="checkbox"
+                    checked={past24Only}
+                    onChange={(e) => setPast24Only(e.target.checked)}
+                    className="rounded border-bg-border bg-bg-secondary text-accent focus:ring-accent w-4 h-4 cursor-pointer"
+                  />
+                  <span>Past 24 Hours Only</span>
+                </label>
+              </div>
+
+              {/* Run Button */}
               <button
                 onClick={triggerApply}
                 disabled={isApplying || !!maxAppsError}
-                className="btn-primary h-[38px] min-w-[110px]"
+                className="btn-primary h-[38px] min-w-[110px] sm:ml-auto"
               >
                 {isApplying ? (
                   <>
@@ -354,6 +496,21 @@ export default function CandidateDetailPage() {
                   'Run Now'
                 )}
               </button>
+            </div>
+
+            {/* Available Jobs Count */}
+            <div className="text-xs text-text-muted mt-1 bg-bg-secondary border border-bg-border/60 rounded-lg p-2.5 flex items-center justify-between">
+              <span>Matching Jobs status:</span>
+              {countLoading ? (
+                <span className="flex items-center gap-1.5 font-medium text-text-secondary">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                  Calculating available jobs...
+                </span>
+              ) : (
+                <span className="font-semibold text-text-primary">
+                  {availableJobsCount} available {availableJobsCount === 1 ? 'job' : 'jobs'} to apply
+                </span>
+              )}
             </div>
           </div>
 

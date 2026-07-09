@@ -1,6 +1,8 @@
 import os
 import json
 import logging
+from typing import Optional
+from urllib.parse import urlparse, unquote
 import redis.asyncio as redis
 from playwright.async_api import async_playwright, BrowserContext, Playwright
 from dotenv import load_dotenv
@@ -8,6 +10,56 @@ from .stealth_config import get_stealth_config, build_stealth_init_script, Steal
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+
+def _parse_proxy_url(proxy_url: str) -> Optional[dict]:
+    """Parse PROXY_URL into a Playwright proxy dict.
+
+    Playwright IGNORES inline ``user:pass@`` credentials embedded in the
+    ``server`` field — they MUST be split into separate ``username`` /
+    ``password`` keys, otherwise proxy auth silently fails (the upstream
+    returns 407 and every navigation dies). This normalizes any of:
+
+        http://user:pass@host:port
+        socks5://user:pass@host:port
+        host:port                     (scheme defaults to http)
+
+    into ``{"server": "scheme://host:port", "username": ..., "password": ...}``
+    with the username/password keys OMITTED when absent. Returns None when the
+    URL is unusable (no host) so the caller can cleanly skip the proxy.
+    """
+    raw = (proxy_url or "").strip()
+    if not raw:
+        return None
+    # A bare "host:port" (no scheme) makes urlparse treat "host" as the scheme;
+    # prepend http:// so host/port/credentials parse correctly.
+    if "://" not in raw:
+        raw = "http://" + raw
+    try:
+        parsed = urlparse(raw)
+    except Exception as exc:
+        logger.warning(f"[Browser] PROXY_URL parse failed ({exc}); ignoring proxy")
+        return None
+    scheme = (parsed.scheme or "http").lower()
+    # Playwright accepts http/https/socks5 proxy schemes. Anything else falls
+    # back to http rather than passing an invalid scheme straight through.
+    if scheme not in ("http", "https", "socks5", "socks5h"):
+        scheme = "http"
+    host = parsed.hostname
+    if not host:
+        logger.warning("[Browser] PROXY_URL has no host; ignoring proxy")
+        return None
+    server = f"{scheme}://{host}"
+    if parsed.port:
+        server = f"{server}:{parsed.port}"
+    cfg: dict = {"server": server}
+    # unquote so %-encoded credentials (e.g. a password with '@' or ':')
+    # are passed to the proxy verbatim.
+    if parsed.username:
+        cfg["username"] = unquote(parsed.username)
+    if parsed.password:
+        cfg["password"] = unquote(parsed.password)
+    return cfg
 
 
 def _session_ttl_s() -> int:
@@ -27,6 +79,9 @@ class BrowserContextManager:
         self._redis = None
         self._playwright = None
         self._browser = None
+        # Set only on the rektCaptcha persistent-context path (see get_context);
+        # declared here so close() can tear it down without a getattr guard.
+        self._persistent_ctx = None
 
     async def _get_redis(self):
         if self._redis is None:
@@ -173,10 +228,15 @@ class BrowserContextManager:
         proxy_url = os.getenv("PROXY_URL", "").strip()
         proxy_config = None
         if proxy_url:
-            # Playwright proxy dict: server is required; username/password are optional
-            # They can be encoded in the URL or split out separately
-            proxy_config = {"server": proxy_url}
-            logger.info(f"[Browser] Using proxy: {proxy_url.split('@')[-1]}")  # hide creds in log
+            # Playwright IGNORES inline user:pass@ creds in the server field —
+            # they must be split into username/password keys. _parse_proxy_url
+            # does that and returns None if the URL is unusable.
+            proxy_config = _parse_proxy_url(proxy_url)
+            if proxy_config:
+                # Log host:port only — never the credentials.
+                logger.info(f"[Browser] Using proxy: {proxy_config['server']}")
+            else:
+                logger.warning("[Browser] PROXY_URL set but could not be parsed; proceeding without a proxy")
 
         # CRITICAL: When using real Chrome (channel="chrome"), DO NOT override
         # the user_agent or sec-ch-ua headers. The browser sends a consistent
@@ -212,24 +272,59 @@ class BrowserContextManager:
         if proxy_config:
             context_kwargs["proxy"] = proxy_config
 
-        # ── Persistent storage_state (cookies + localStorage) per platform ──
+        # ── Persistent storage_state (cookies + localStorage), PER CANDIDATE ──
         # Auth-walled ATSes (Dice, LinkedIn, Workday) bot-throttle repeated
-        # logins. Logging in ONCE and reusing the full storage_state avoids
-        # that. Path: env "<PLATFORM>_STORAGE_STATE" or backend/data/sessions/
-        # <platform>.json. When present we DON'T also restore redis cookies
-        # (storage_state already carries them).
+        # logins, so reusing a saved storage_state avoids re-login churn. This
+        # MUST be scoped per candidate: a single, candidate-agnostic file makes
+        # every candidate apply inside whatever account seeded it — the root
+        # cause of wrong-account submissions (e.g. one candidate's job submitted
+        # under the account that bootstrapped the shared file). The default path
+        # is therefore backend/data/sessions/<platform>/<candidate_id>.json.
+        # When a file IS used we DON'T also restore the redis blob below
+        # (storage_state already carries the cookies).
+        #
+        # "<PLATFORM>_STORAGE_STATE" is kept as an explicit operator override,
+        # but it is GLOBAL — applied to EVERY candidate — so it is only safe for
+        # single-account/testing setups. We warn loudly whenever it is used.
         storage_state_used = False
         try:
             from pathlib import Path as _Path
             backend_dir = _Path(__file__).resolve().parents[3]
-            storage_state_path = os.getenv(
-                f"{platform.upper()}_STORAGE_STATE",
-                str(backend_dir / "data" / "sessions" / f"{platform}.json"),
-            )
-            if storage_state_path and os.path.isfile(storage_state_path):
-                context_kwargs["storage_state"] = storage_state_path
+            sessions_dir = backend_dir / "data" / "sessions"
+
+            env_override = os.getenv(f"{platform.upper()}_STORAGE_STATE", "").strip()
+            per_candidate_path = sessions_dir / platform / f"{candidate_id}.json"
+
+            if env_override and os.path.isfile(env_override):
+                context_kwargs["storage_state"] = env_override
                 storage_state_used = True
-                logger.info(f"[Browser] Loaded storage_state for {platform} ← {storage_state_path}")
+                logger.warning(
+                    f"[Browser] Using GLOBAL {platform.upper()}_STORAGE_STATE override "
+                    f"← {env_override} — this session is applied to ALL candidates "
+                    f"(current candidate_id={candidate_id}); only safe for a "
+                    "single-account/testing setup, never multi-candidate."
+                )
+            elif per_candidate_path.is_file():
+                context_kwargs["storage_state"] = str(per_candidate_path)
+                storage_state_used = True
+                logger.info(
+                    f"[Browser] Loaded per-candidate storage_state for {platform} "
+                    f"← {per_candidate_path}"
+                )
+            else:
+                # Legacy candidate-agnostic file (backend/data/sessions/<platform>.json)
+                # is intentionally NOT loaded any more — it caused cross-candidate
+                # account bleed. Warn so operators who seeded it know why it no
+                # longer applies; the correct per-candidate redis session (or a
+                # fresh per-candidate login) governs instead.
+                legacy_shared = sessions_dir / f"{platform}.json"
+                if legacy_shared.is_file():
+                    logger.warning(
+                        f"[Browser] Ignoring legacy SHARED session file {legacy_shared} "
+                        f"— storage_state is now per-candidate. Delete it, or move it to "
+                        f"{per_candidate_path} for this candidate, or set "
+                        f"{platform.upper()}_STORAGE_STATE for an intentional single-account setup."
+                    )
         except Exception as exc:
             logger.debug(f"[Browser] storage_state load skipped: {exc}")
 
@@ -304,12 +399,52 @@ class BrowserContextManager:
         await redis_client.set(session_key, json.dumps(state), ex=_session_ttl_s())
 
     async def destroy_context(self, context: BrowserContext) -> None:
-        await context.close()
+        # Idempotent + exception-safe. A context may already be closed (the
+        # browser teardown in close() cascades to its contexts), and a
+        # double-close raises in some Playwright versions. Cleanup must never
+        # raise back into the caller's success/error path.
+        if context is None:
+            return
+        try:
+            await context.close()
+        except Exception as exc:
+            logger.debug(f"[Browser] destroy_context: close skipped ({exc})")
 
     async def close(self):
-        if self._browser:
-            await self._browser.close()
-        if self._playwright:
-            await self._playwright.stop()
-        if self._redis:
-            await self._redis.close()
+        # Full end-of-run teardown. destroy_context() only closes the CONTEXT;
+        # WITHOUT this the underlying Chrome process, the node driver, and the
+        # redis connection leak once per run. Under Celery concurrency that
+        # exhausts RAM/FDs and surfaces as "Connection closed while reading
+        # from the driver" / "Target page/context/browser has been closed".
+        #
+        # This is correct END-OF-RUN lifecycle management and does NOT violate
+        # the "never close mid-run" guardrail — that rule governs the AgentLoop
+        # action space (which has no close action), not the executor's teardown.
+        #
+        # Idempotent: each handle is dropped to None after closing so a second
+        # call is a no-op, and every step is guarded so one failure can't strand
+        # the others (or raise into the caller's finally).
+        if self._persistent_ctx is not None:
+            try:
+                await self._persistent_ctx.close()
+            except Exception as exc:
+                logger.debug(f"[Browser] close: persistent ctx skipped ({exc})")
+            self._persistent_ctx = None
+        if self._browser is not None:
+            try:
+                await self._browser.close()
+            except Exception as exc:
+                logger.debug(f"[Browser] close: browser skipped ({exc})")
+            self._browser = None
+        if self._playwright is not None:
+            try:
+                await self._playwright.stop()
+            except Exception as exc:
+                logger.debug(f"[Browser] close: playwright stop skipped ({exc})")
+            self._playwright = None
+        if self._redis is not None:
+            try:
+                await self._redis.close()
+            except Exception as exc:
+                logger.debug(f"[Browser] close: redis skipped ({exc})")
+            self._redis = None

@@ -1,0 +1,10 @@
+{
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1783430941,
+    "source": "agent_loop",
+    "value": "l1f22bsse0043@ucp.edu.pk"
+  }
+}

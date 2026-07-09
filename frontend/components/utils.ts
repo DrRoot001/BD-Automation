@@ -32,6 +32,19 @@ export function resolveFileUrl(fileUrl: string | null | undefined): string | nul
   return null
 }
 
+/** Format a job URL to ensure it has a scheme (http:// or https://) */
+export function formatJobUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  const cleaned = url.trim()
+  if (cleaned.toLowerCase().includes('not found') || cleaned === '—' || cleaned === '') {
+    return undefined
+  }
+  if (cleaned.startsWith('http://') || cleaned.startsWith('https://')) return cleaned
+  if (!cleaned.includes('.')) return undefined
+  return `https://${cleaned}`
+}
+
+
 /** Format a future or past ISO date as a calendar label */
 export function formatScheduled(isoString: string | null | undefined): string {
   if (!isoString) return 'Time TBD'

@@ -23,7 +23,7 @@ class ApplicationPackage(BaseModel):
 
 class ApplicationResult(BaseModel):
     application_id: str
-    status: Literal["SUBMITTED", "FORM_COMPLETED", "FAILED", "CAPTCHA_FAILED", "RATE_LIMITED", "BLOCKED"]
+    status: Literal["SUBMITTED", "FORM_COMPLETED", "FAILED", "CAPTCHA_FAILED", "RATE_LIMITED", "BLOCKED", "PAUSED"]
     screenshot_url: Optional[str] = None
     confirmation_text: Optional[str] = None
     error_message: Optional[str] = None

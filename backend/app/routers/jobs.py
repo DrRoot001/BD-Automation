@@ -268,9 +268,17 @@ async def create_jobs(
 
     for job in created:
         await db.refresh(job)
-        if job.embedding is None:
-            from app.tasks.embedding_generation import generate_job_embedding
-            generate_job_embedding.delay(str(job.id))
+
+    # Embed the whole insert in ONE batched task rather than firing a
+    # fire-and-forget task per job. The per-job flood opened a fresh pooled
+    # connection + a single-text Gemini call (~14s) for every job, saturating the
+    # Supabase pooler's session-mode client limit and starving concurrent API
+    # requests (dashboard endpoints were timing out at 10s). embed_jobs_batch
+    # groups the texts (50/Gemini call) and only touches embedding-null rows.
+    new_ids = [str(job.id) for job in created if job.embedding is None]
+    if new_ids:
+        from app.tasks.embedding_generation import embed_jobs_batch
+        embed_jobs_batch.delay(new_ids)
 
     await _append_jobs_to_json_log(created)
 
@@ -329,12 +337,22 @@ async def get_jobs_for_matching(
     skip: int = 0,
     limit: int = 100,
     candidate_id: Optional[str] = None,
+    time_filter: Optional[str] = None,
+    source: Optional[str] = None,
+    max_distance: Optional[float] = None,
     db: AsyncSession = Depends(get_db)
 ):
     """
     Lightweight endpoint for the keyword matching pipeline.
     Explicitly defers 'description' and 'embedding' to reduce Pydantic serialization
     overhead and improve fetch performance (e.g. from 17s to <1s for 100 jobs).
+
+    When a candidate_id is supplied and their base resume has an embedding, jobs
+    are hard-filtered to the stack-relevant set (cosine_distance < threshold) and
+    returned closest-first — same criterion as the daily beat matcher. This keeps
+    the manual "Run Now" path from selecting off-stack jobs (e.g. generic
+    full-stack roles for a ServiceNow specialist). Override the threshold with
+    max_distance; defaults to settings.job_matching_max_distance (0.35).
     """
     from sqlalchemy import select, or_, and_
     from sqlalchemy.orm import defer
@@ -371,7 +389,25 @@ async def get_jobs_for_matching(
 
     stmt = select(Job).options(defer(Job.embedding), defer(Job.description)).where(~exclusions)
     
+    if source:
+        stmt = stmt.where(Job.source.ilike(f"%{source}%"))
+        
+    if time_filter:
+        from datetime import datetime, timezone, timedelta
+        now = datetime.now(timezone.utc)
+        if time_filter == '24h':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=1))
+        elif time_filter == '3d':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=3))
+        elif time_filter == '7d':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=7))
+        elif time_filter == '30d':
+            stmt = stmt.where(Job.created_at >= now - timedelta(days=30))
+    
     if resume_embedding is not None:
+        from app.config import get_settings
+        threshold = max_distance if max_distance is not None else get_settings().job_matching_max_distance
+        stmt = stmt.where(Job.embedding.cosine_distance(resume_embedding) < threshold)
         stmt = stmt.order_by(Job.embedding.cosine_distance(resume_embedding).asc())
     else:
         stmt = stmt.order_by(Job.created_at.desc())
@@ -484,8 +520,18 @@ async def get_jobs(
         )
         return result.scalars().all()
 
+@router.get("/platforms", response_model=List[str])
+async def get_job_platforms(db: AsyncSession = Depends(get_db)):
+    from sqlalchemy import select
+    stmt = select(Job.source).distinct().where(Job.source != None, Job.source != 'manual', Job.source != '')
+    result = await db.execute(stmt)
+    platforms = [row[0] for row in result.fetchall() if row[0]]
+    return platforms
+
+
 @router.get("/count")
 async def get_jobs_count(
+    candidate_id: Optional[str] = None,
     search: Optional[str] = None,
     source: Optional[str] = None,
     job_type: Optional[str] = None,
@@ -494,6 +540,7 @@ async def get_jobs_count(
 ):
     from sqlalchemy import select, func, or_, and_
     from datetime import datetime, timezone, timedelta
+    from uuid import UUID
     exclusions = or_(
         Job.source == 'manual',
         Job.source_url.is_(None),
@@ -526,7 +573,28 @@ async def get_jobs_count(
                 query = query.where(Job.created_at >= now - timedelta(days=30))
         return query
 
-    query = select(func.count(Job.id)).where(~exclusions)
+    candidate_uuid = None
+    if candidate_id:
+        try:
+            candidate_uuid = UUID(candidate_id)
+        except ValueError:
+            pass
+
+    if candidate_uuid:
+        from app.models.application import Application
+        
+        # 1. Fetch job IDs candidate has already applied to
+        applied_result = await db.execute(
+            select(Application.job_id).where(Application.candidate_id == candidate_uuid)
+        )
+        applied_job_ids = [row[0] for row in applied_result.fetchall() if row[0] is not None]
+        
+        query = select(func.count(Job.id)).where(Job.is_duplicate == False, ~exclusions)
+        if applied_job_ids:
+            query = query.where(Job.id.notin_(applied_job_ids))
+    else:
+        query = select(func.count(Job.id)).where(~exclusions)
+        
     query = apply_job_filters(query)
     result = await db.execute(query)
     return {"total_count": result.scalar()}

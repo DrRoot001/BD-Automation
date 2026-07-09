@@ -181,11 +181,6 @@ celery_app.conf.task_time_limit = 3600        # 60 minutes — hard kill
 # ── Beat schedule ─────────────────────────────────────────────────────────────
 celery_app.conf.beat_schedule = {
 
-    # Job discovery — scrape all configured platforms every 24 hours
-    "discover-jobs-every-24h": {
-        "task": "task:discover_jobs_all_platforms",
-        "schedule": 60 * 60 * 24,  # 24 hours
-    },
     # Email inbox scan — poll every 15 minutes for candidates with Gmail connected
     "scan-inbox-every-15m": {
         "task": "task:scan_candidate_inbox",
@@ -211,4 +206,19 @@ celery_app.conf.beat_schedule = {
         "task": "task:recover_stuck_applications",
         "schedule": 60 * 10,  # 10 minutes
     },
+    # Self-heal job embeddings: re-embed any jobs the per-job fire-and-forget task
+    # dropped (Gemini rate-limit during a discovery burst, worker blip, etc.).
+    "sweep-missing-job-embeddings-every-15m": {
+        "task": "task:sweep_missing_job_embeddings",
+        "schedule": 60 * 15,  # 15 minutes
+    },
 }
+
+# Job discovery — scrape all configured platforms every 24 hours. Gated behind
+# ENABLE_AUTO_SCRAPE (default OFF) so that dev laptops sharing one Redis/DB don't
+# each fire the Gemini-backed scraper. Enable on exactly ONE machine.
+if settings.enable_auto_scrape:
+    celery_app.conf.beat_schedule["discover-jobs-every-24h"] = {
+        "task": "task:discover_jobs_all_platforms",
+        "schedule": 60 * 60 * 24,  # 24 hours
+    }

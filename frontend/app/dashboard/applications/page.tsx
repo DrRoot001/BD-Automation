@@ -8,6 +8,7 @@ import { api, ApplicationSummary } from '@/lib/api'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Skeleton } from '@/components/shared/Skeleton'
 import { formatDistanceToNow } from '@/lib/utils'
+import { formatJobUrl } from '@/components/utils'
 import { ApplicationDrawer } from '@/components/dashboard/ApplicationDrawer'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useToast } from '@/components/ui/Toast'
@@ -192,7 +193,7 @@ export default function ApplicationsPage() {
                           </div>
                           {!isCompleted(app.status) && !isInFlight(app.status) && app.job_url && (
                             <a
-                              href={app.job_url}
+                              href={formatJobUrl(app.job_url)}
                               target="_blank"
                               rel="noreferrer"
                               onClick={(e) => e.stopPropagation()}

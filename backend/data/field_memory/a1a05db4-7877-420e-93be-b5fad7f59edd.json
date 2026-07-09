@@ -22,5 +22,13 @@
     "last_seen": 1783435235,
     "source": "agent_loop",
     "value": "Watts"
+  },
+  "work authorization": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Work Authorization",
+    "last_seen": 1783603568,
+    "source": "agent_loop",
+    "value": "US Citizen"
   }
 }

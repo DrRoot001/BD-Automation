@@ -52,7 +52,7 @@ _APPLY_POLL_S = 20.0
 # text) is the reliable, label-independent signal. CRUCIAL: there is ALSO a
 # "Quick Apply" FILTER chip (a <button> with NO href) in the top filter bar;
 # matching on text alone clicks the filter and toggles apply_type=quickApply
-# instead of applying. So _read_apply_href() targets the href only.
+# instead of applying. So _read_apply_cta() targets the href's action param only.
 
 # Cookie / consent banners commonly seen on talent.com.
 _COOKIE_SELECTORS = (
@@ -102,6 +102,14 @@ class TalentAdapter(BasePlatformAdapter):
         # "Continue with Google" SSO button). Optional — falls back to the
         # AgentLoop if absent.
         self.candidate_profile: Optional[dict] = None
+        # Passthrough state — set when a talent.com posting is an EXTERNAL
+        # ("f-link") apply that, after the reCAPTCHA, redirects to the
+        # employer's own ATS. We then delegate every subsequent adapter method
+        # to the inner ATS adapter, exactly like the Himalayas / RemoteRocketship
+        # passthrough pattern. Left None for the native Quick-Apply flow.
+        self._inner: Optional[BasePlatformAdapter] = None
+        self._resolved_url: Optional[str] = None
+        self._apply_kind: Optional[str] = None  # "quickapply" | "external"
 
     # ──────────────────────────────────────────────────────────────────────
     # Navigation (open job -> click Apply -> handle captcha interstitial)
@@ -126,70 +134,172 @@ class TalentAdapter(BasePlatformAdapter):
         # Clicking it opens a NEW TAB; instead we read the absolute href and
         # navigate the SAME tab to it, so the executor's single `page` stays on
         # the apply flow (no cross-tab page-swap needed downstream).
-        apply_href = await self._read_apply_href(page)
+        apply_href, kind = await self._read_apply_cta(page)
         if not apply_href:
             raise RuntimeError(
-                "BLOCKED: Talent.com Quick Apply link not found. Posting may be "
-                "expired, region-gated, not Quick-Apply, or the DOM shifted."
+                "BLOCKED: Talent.com apply link not found (neither native Quick "
+                "Apply nor an external 'f-link' apply). Posting may be expired, "
+                "region-gated, or the DOM shifted."
             )
-        logger.info(f"[Talent] Apply href resolved: {apply_href}")
+        self._apply_kind = kind
+        logger.info(f"[Talent] Apply CTA resolved (kind={kind}): {apply_href}")
         try:
             await page.goto(apply_href, wait_until="domcontentloaded", timeout=_NAV_TIMEOUT_MS)
         except Exception as exc:
             logger.warning(f"[Talent] apply-href goto soft-failed ({exc}); continuing")
 
-        # The redirect surface is a near-blank page guarding the apply flow with
-        # a Google reCAPTCHA v2 checkbox. Solve it (free AI checkbox-pass +
-        # Whisper audio), then wait for the email/sign-in page to render.
+        # BOTH flavours land first on talent's near-blank /redirect page, which
+        # guards the hop with a Google reCAPTCHA v2 checkbox. Solve it (free AI
+        # checkbox-pass + Whisper audio, paid provider as backup) before we go on.
         await self._solve_interstitial_captcha(page)
-        await self._wait_for_apply_surface(page)
 
-        # Deterministically clear the email gate (fill email + click the EXACT
-        # "Continue" — NOT "Continue with Google") so the OTP is sent. The
+        if kind == "external":
+            # EXTERNAL ("f-link") apply — after the reCAPTCHA, talent bounces to
+            # the employer's own site/ATS. Resolve that destination and delegate
+            # to the matching inner adapter (Himalayas / RemoteRocketship
+            # passthrough). The AgentLoop then drives the employer's real form.
+            await self._resolve_external_destination(page)
+            await self.human_delay(0.6, 1.2)
+            return
+
+        # NATIVE Quick Apply — wait for the email/sign-in surface to render,
+        # then deterministically clear the email gate (fill email + click the
+        # EXACT "Continue" — NOT "Continue with Google") so the OTP is sent. The
         # AgentLoop's mid-flow handler then auto-fetches + fills the code, and
         # the AI drives the contact/review/submit steps. This is infra (like a
         # login), so the AI never has to disambiguate the SSO button.
+        await self._wait_for_apply_surface(page)
         await self._enter_email_gate(page)
         await self.human_delay(0.6, 1.2)
 
     async def detect_application_type(self, page: Page) -> str:
+        if self._inner:
+            try:
+                return await self._inner.detect_application_type(page)
+            except NotImplementedError:
+                pass
         return "EASY_APPLY"
 
     async def refresh_frame(self, page: Page) -> None:
+        if self._inner and hasattr(self._inner, "refresh_frame"):
+            await self._inner.refresh_frame(page)
+            self._mirror_inner_attrs()
         return None
 
     # ──────────────────────────────────────────────────────────────────────
     # Apply CTA
     # ──────────────────────────────────────────────────────────────────────
 
-    async def _read_apply_href(self, page: Page) -> Optional[str]:
-        """Poll for the selected job's Quick-Apply anchor and return its
-        ABSOLUTE href. The href (not the visible text) is the reliable signal:
-        the "Quick Apply" filter chip in the top bar is a <button> with no href
-        and so is never matched here. We prefer the anchor whose href carries
-        THIS job's id."""
+    async def _read_apply_cta(self, page: Page) -> Tuple[Optional[str], Optional[str]]:
+        """Poll for the selected job's apply anchor and return (ABSOLUTE href,
+        kind). Talent.com postings come in two flavours, both exposed as
+        ``<a href="/redirect?id=<id>&pid=...&action=<X>">``:
+
+          • ``action=quickapply`` → native Talent OTP apply flow  → kind="quickapply"
+          • ``action=f-link``      → EXTERNAL redirect to the employer's own ATS
+                                     → kind="external"
+
+        We match on the href's ``action`` param (never the visible text): the
+        top-bar "Quick Apply" FILTER is a <button> with no href and so is never
+        picked up here. Quick Apply is preferred when both are present; we fall
+        back to the external f-link so postings that are external-only apply
+        instead of hard-failing. Prefers the anchor carrying THIS job's id."""
         m = re.search(r"[?&]id=(\d+)", page.url)
         job_id = m.group(1) if m else None
         deadline = asyncio.get_event_loop().time() + _APPLY_POLL_S
         while asyncio.get_event_loop().time() < deadline:
-            href = await page.evaluate(
+            res = await page.evaluate(
                 """(jobId) => {
-                    const anchors = Array.from(
-                        document.querySelectorAll("a[href*='quickapply'], a[href*='action=quickapply']")
-                    );
-                    if (!anchors.length) return null;
-                    if (jobId) {
-                        const m = anchors.find(a => (a.getAttribute('href')||'').includes('id=' + jobId));
-                        if (m) return m.href;  // .href is absolute
-                    }
-                    return anchors[0].href;
+                    const pick = (sel) => {
+                        const anchors = Array.from(document.querySelectorAll(sel));
+                        if (!anchors.length) return null;
+                        if (jobId) {
+                            const m = anchors.find(a => (a.getAttribute('href')||'').includes('id=' + jobId));
+                            if (m) return m.href;  // .href is absolute
+                        }
+                        return anchors[0].href;
+                    };
+                    const qa = pick("a[href*='action=quickapply'], a[href*='quickapply']");
+                    if (qa) return {href: qa, kind: 'quickapply'};
+                    const ext = pick("a[href*='action=f-link']");
+                    if (ext) return {href: ext, kind: 'external'};
+                    return null;
                 }""",
                 job_id,
             )
-            if href:
-                return href
+            if res and res.get("href"):
+                return res["href"], res.get("kind")
             await asyncio.sleep(0.8)
-        return None
+        return None, None
+
+    # ──────────────────────────────────────────────────────────────────────
+    # External ("f-link") apply — passthrough to the employer's own ATS
+    # ──────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _is_off_talent(page: Page) -> bool:
+        """True once the page has navigated to a host other than talent.com
+        (i.e. the external redirect completed)."""
+        from urllib.parse import urlparse
+        try:
+            host = (urlparse(page.url or "").hostname or "").lower()
+            return bool(host) and "talent.com" not in host
+        except Exception:
+            return False
+
+    async def _resolve_external_destination(self, page: Page, timeout_s: float = 30.0) -> None:
+        """After the f-link reCAPTCHA, talent redirects to the employer's own
+        site/ATS. Wait for the hop off talent.com, detect the ATS from the final
+        URL, and delegate to the matching inner adapter (generic when the site
+        isn't a known ATS). Mirrors the Himalayas / RemoteRocketship passthrough
+        so the AgentLoop + executor see the inner ATS's hints and frame state."""
+        # Lazy imports avoid a circular import with registry.py.
+        from .registry import get_adapter
+        from .remoterocketship import _detect_ats_from_url
+
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        while asyncio.get_event_loop().time() < deadline:
+            if self._is_off_talent(page):
+                break
+            await asyncio.sleep(0.8)
+
+        final_url = page.url or ""
+        if not self._is_off_talent(page):
+            raise RuntimeError(
+                "BLOCKED: Talent.com external apply did not leave talent.com "
+                "(reCAPTCHA likely not passed on this untrusted session). "
+                f"url={final_url!r}"
+            )
+
+        self._resolved_url = final_url
+        ats_key = _detect_ats_from_url(final_url)
+        if ats_key:
+            logger.info(f"[Talent] External apply → detected {ats_key!r} ATS at {final_url!r}; delegating")
+            self._inner = get_adapter(ats_key)
+            try:
+                await self._inner.navigate_to_application(page, final_url)
+            except Exception as exc:
+                logger.warning(
+                    f"[Talent] inner {ats_key!r} navigate soft-failed ({exc}); "
+                    "continuing on the already-loaded page"
+                )
+        else:
+            logger.info(
+                f"[Talent] External apply → no known ATS at {final_url!r}; "
+                "using generic adapter (AgentLoop drives the employer form)"
+            )
+            self._inner = get_adapter("generic")
+        self._mirror_inner_attrs()
+
+    def _mirror_inner_attrs(self) -> None:
+        """Copy the inner adapter's iframe/frame attributes up so the executor's
+        getattr() reads (``_iframe_mode`` / ``_frame_locator`` / ``_frame``)
+        resolve against the delegated ATS."""
+        if not self._inner:
+            return
+        self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
+        self._frame_locator = getattr(self._inner, "_frame_locator", None)
+        self._frame = getattr(self._inner, "_frame", None)
 
     # ──────────────────────────────────────────────────────────────────────
     # Captcha interstitial (reCAPTCHA v2 on the /redirect page)
@@ -254,7 +364,11 @@ class TalentAdapter(BasePlatformAdapter):
             # Whether or not the solver reports success, the page may have
             # advanced (Google commits the token to the widget directly).
             await asyncio.sleep(3.0)
-            if "/apply" in (page.url or "") or await self._email_surface_visible(page):
+            # Quick Apply advances to talent's /apply surface; the external
+            # f-link flow instead bounces OFF talent.com to the employer — both
+            # mean the reCAPTCHA gate is cleared.
+            if ("/apply" in (page.url or "") or await self._email_surface_visible(page)
+                    or self._is_off_talent(page)):
                 logger.info("[Talent] Apply surface reached after captcha")
                 return True
             # Re-wait for a fresh widget before the next attempt.
@@ -402,12 +516,20 @@ class TalentAdapter(BasePlatformAdapter):
         pre_detected_form=None,
         candidate_id: Optional[str] = None,
     ) -> bool:
+        if self._inner:
+            return await self._inner.fill_application(
+                page, profile, resume_path, cover_letter_path,
+                screening_answers, pre_detected_form=pre_detected_form,
+                candidate_id=candidate_id,
+            )
         from ..forms import detect_form, fill_form
 
         form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
         return await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
 
     async def submit(self, page: Page) -> bool:
+        if self._inner:
+            return await self._inner.submit(page)
         try:
             btn = page.get_by_role("button", name=_SUBMIT_NAME_RE).first
             if await btn.count() > 0 and await btn.is_visible() and await btn.is_enabled():
@@ -442,6 +564,8 @@ class TalentAdapter(BasePlatformAdapter):
         await self.human_delay(1.0, 2.0)
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
+        if self._inner:
+            return await self._inner.verify_success(page)
         content = (await self._safe_content(page)).lower()
         for pattern in _SUCCESS_TEXT_PATTERNS:
             if pattern in content:

@@ -1,21 +1,21 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, File, UploadFile, Form, Request
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from typing import List
+from typing import List, Optional
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
+from app.middleware.rate_limit import limiter
+from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.resume import Resume
-from app.models.application import Application
+from app.models.user import User, UserRole
+from app.routers.auth import get_current_user
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
 from app.schemas.resume import ResumeResponse
-
-from app.routers.auth import get_current_user
-from app.models.user import User, UserRole
-from app.services.crypto import encrypt_token, decrypt_token
-from app.middleware.rate_limit import limiter
+from app.services.crypto import encrypt_token
 
 router = APIRouter(prefix="/api/candidates", tags=["candidates"])
 
@@ -29,7 +29,7 @@ async def list_candidates(
     query = select(Candidate).order_by(Candidate.created_at.desc())
     if current_user.role != UserRole.admin:
         query = query.where(Candidate.user_id == current_user.id)
-        
+
     query = query.offset(skip).limit(limit)
     result = await db.execute(query)
     return result.scalars().all()
@@ -87,7 +87,7 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
     db_candidate = result.scalar_one_or_none()
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     update_data = candidate_update.model_dump(exclude_unset=True)
 
     if "email" in update_data and update_data["email"]:
@@ -107,7 +107,7 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
 
     for key, value in update_data.items():
         setattr(db_candidate, key, value)
-        
+
     try:
         await db.commit()
         await db.refresh(db_candidate)
@@ -138,6 +138,7 @@ async def upload_candidate_resume(
 
     # Upload directly to Supabase "resume" bucket (no local saving)
     import tempfile
+
     from module3.utils.storage import upload_file_to_supabase as _upload
 
     content = await file.read()
@@ -233,6 +234,8 @@ async def list_candidate_applications(
 
 class ApplyRequest(BaseModel):
     max_apps: int = 10
+    time_filter: Optional[str] = None
+    platform: Optional[str] = None
 
 @router.post("/{candidate_id}/apply")
 async def trigger_apply(
@@ -255,6 +258,16 @@ async def trigger_apply(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # Enforce that the candidate has a base resume
+    resume_stmt = select(Resume).where(Resume.candidate_id == candidate_uuid, Resume.is_base == True)
+    resume_result = await db.execute(resume_stmt)
+    base_resume = resume_result.scalars().first()
+    if not base_resume:
+        raise HTTPException(
+            status_code=400,
+            detail="Candidate has no base resume. Please upload a resume first."
+        )
+
     # Enforce ownership: BD users can only trigger apply for their own candidates
     if current_user.role != UserRole.admin:
         if candidate.user_id is None or str(candidate.user_id) != str(current_user.id):
@@ -270,10 +283,14 @@ async def trigger_apply(
     from app.tasks.dynamic_apply import dynamic_apply
 
     try:
-        dynamic_apply.apply_async(args=[candidate_id, request_body.max_apps, bd_user_id])
+        dynamic_apply.apply_async(
+            args=[candidate_id, request_body.max_apps, bd_user_id],
+            kwargs={"time_filter": request_body.time_filter, "platform": request_body.platform}
+        )
         _bg_log.info(
             f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} "
-            f"max_apps={request_body.max_apps} triggered_by={current_user.email}"
+            f"max_apps={request_body.max_apps} time_filter={request_body.time_filter} "
+            f"platform={request_body.platform} triggered_by={current_user.email}"
         )
     except Exception as e:
         _bg_log.error(f"[Apply] Failed to dispatch Celery task for candidate={candidate_id}: {e}")
@@ -281,8 +298,166 @@ async def trigger_apply(
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
 
-from app.config import get_settings
+
+# ── Pipeline stop / resume (BG-08) ────────────────────────────────────────────
+# Statuses the pipeline stop can safely hold. APPLICATION_STARTED/FORM_COMPLETED
+# are excluded: a browser session is actively driving those forms and flagging
+# them wouldn't stop the browser — it would only hide them from the watchdog.
+# They finish their current run; everything not yet in a browser freezes.
+PIPELINE_PAUSABLE_STATUSES = (
+    "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED", "QUEUED",
+)
+
+
+async def _get_owned_candidate(candidate_id: str, db: AsyncSession, current_user: User) -> Candidate:
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    if current_user.role != UserRole.admin:
+        if candidate.user_id is None or str(candidate.user_id) != str(current_user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: this candidate is not assigned to your account.",
+            )
+    return candidate
+
+
+@router.post("/{candidate_id}/pipeline/pause")
+async def pause_pipeline(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stop the whole apply pipeline for a candidate (BG-08).
+
+    Sets candidate.automation_paused (blocks new matching runs and halts an
+    active run at its next job boundary) and bulk-pauses every in-flight
+    application (paused=2) so none of them run or count toward the active cap.
+    Apps already inside a live browser run are left to finish and reported back.
+    """
+    from datetime import datetime as _dt
+
+    from app.models.application_history import ApplicationHistory
+    from app.services.events import publish_event
+
+    candidate = await _get_owned_candidate(candidate_id, db, current_user)
+    candidate.automation_paused = 1
+
+    apps_result = await db.execute(
+        select(Application).where(
+            Application.candidate_id == candidate.id,
+            Application.status.in_(PIPELINE_PAUSABLE_STATUSES),
+            Application.paused == 0,
+        )
+    )
+    apps = apps_result.scalars().all()
+    for app in apps:
+        app.paused = 2  # pipeline-paused; distinguishes from an individual row pause
+        db.add(ApplicationHistory(
+            application_id=app.id,
+            from_status=app.status,
+            to_status=app.status,
+            meta_data={"info": "Paused via pipeline stop (candidate-level)"},
+        ))
+
+    # Count in-browser rows we deliberately can't hold, so the UI can say
+    # "N applications already in a browser run will finish".
+    in_browser_result = await db.execute(
+        select(Application.id).where(
+            Application.candidate_id == candidate.id,
+            Application.status.in_(("APPLICATION_STARTED", "FORM_COMPLETED")),
+        )
+    )
+    in_browser_count = len(in_browser_result.scalars().all())
+
+    await db.commit()
+
+    await publish_event("application.paused", {
+        "candidate_id": str(candidate.id),
+        "paused": True,
+        "pipeline": True,
+        "count": len(apps),
+        "timestamp": _dt.utcnow().isoformat(),
+    })
+
+    return {
+        "status": "pipeline_paused",
+        "candidate_id": str(candidate.id),
+        "paused_applications": len(apps),
+        "in_browser_finishing": in_browser_count,
+    }
+
+
+@router.post("/{candidate_id}/pipeline/resume")
+async def resume_pipeline(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Resume a stopped pipeline: clear automation_paused and release only the
+    apps the pipeline stop paused (paused=2), re-dispatching QUEUED ones.
+    Individually-paused apps (paused=1) stay held."""
+    from datetime import datetime as _dt
+
+    from app.models.application_history import ApplicationHistory
+    from app.routers.applications import _dispatch_execute_application
+    from app.services.events import publish_event
+
+    candidate = await _get_owned_candidate(candidate_id, db, current_user)
+    candidate.automation_paused = 0
+
+    apps_result = await db.execute(
+        select(Application).where(
+            Application.candidate_id == candidate.id,
+            Application.paused == 2,
+        )
+    )
+    apps = apps_result.scalars().all()
+    for app in apps:
+        app.paused = 0
+        db.add(ApplicationHistory(
+            application_id=app.id,
+            from_status=app.status,
+            to_status=app.status,
+            meta_data={"info": "Resumed via pipeline resume (candidate-level)"},
+        ))
+
+    await db.commit()
+
+    # QUEUED rows' original Celery messages were consumed and skipped while
+    # paused — re-dispatch them. Other states are re-driven by the pipeline.
+    redispatched = 0
+    for app in apps:
+        if app.status == "QUEUED":
+            await _dispatch_execute_application(db, app)
+            redispatched += 1
+
+    await publish_event("application.paused", {
+        "candidate_id": str(candidate.id),
+        "paused": False,
+        "pipeline": True,
+        "count": len(apps),
+        "timestamp": _dt.utcnow().isoformat(),
+    })
+
+    return {
+        "status": "pipeline_resumed",
+        "candidate_id": str(candidate.id),
+        "resumed_applications": len(apps),
+        "redispatched_queued": redispatched,
+    }
+
+
 import httpx
+
+from app.config import get_settings
 
 settings = get_settings()
 
@@ -299,14 +474,14 @@ async def get_google_auth_url(candidate_id: str, db: AsyncSession = Depends(get_
     candidate = result.scalar_one_or_none()
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     client_id = settings.google_client_id
     if not client_id:
         return {
             "auth_url": "",
             "is_mock": True
         }
-        
+
     from urllib.parse import urlencode
     params = {
         "client_id": client_id,
@@ -333,10 +508,10 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
     db_candidate = result.scalar_one_or_none()
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     client_id = settings.google_client_id
     client_secret = settings.google_client_secret
-    
+
     if not client_id or not client_secret:
         # Store mock token (plaintext is fine for development mock)
         db_candidate.google_refresh_token = encrypt_token(f"mock_refresh_token_for_{candidate_id}")
@@ -346,7 +521,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
             await db.rollback()
             raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
         return {"status": "success", "message": "Simulated Google OAuth connected successfully", "mock": True}
-        
+
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             "https://oauth2.googleapis.com/token",
@@ -363,7 +538,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
                 status_code=400,
                 detail=f"Failed to exchange Google authorization code: {resp.text}"
             )
-        
+
         token_data = resp.json()
         refresh_token = token_data.get("refresh_token")
         if not refresh_token:
@@ -371,7 +546,7 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
                 status_code=400,
                 detail="No refresh token returned by Google. Try removing access and connecting again."
             )
-            
+
         db_candidate.google_refresh_token = encrypt_token(refresh_token)
         try:
             await db.commit()
@@ -384,25 +559,27 @@ async def google_callback(candidate_id: str, request: GoogleCallbackRequest, db:
 @router.post("/{candidate_id}/google/disconnect")
 async def disconnect_google(candidate_id: str, db: AsyncSession = Depends(get_db)):
     from uuid import UUID
+
     from fastapi import HTTPException
+
     from app.models.candidate import Candidate
-    
+
     try:
         cand_uuid = UUID(candidate_id) if isinstance(candidate_id, str) else candidate_id
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid candidate UUID")
-        
+
     db_candidate = await db.get(Candidate, cand_uuid)
     if not db_candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     db_candidate.google_refresh_token = None
     try:
         await db.commit()
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=500, detail=f"Database error: {str(e)}")
-        
+
     return {"status": "success", "message": "Google OAuth disconnected successfully"}
 
 
@@ -415,17 +592,18 @@ async def run_matching_endpoint(
     current_user: User = Depends(get_current_user)
 ):
     from uuid import UUID
+
     from app.services.matching import run_matching_for_candidate
-    
+
     try:
         cand_uuid = UUID(candidate_id)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid candidate UUID")
-        
+
     candidate = await db.get(Candidate, cand_uuid)
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
-        
+
     try:
         result = await run_matching_for_candidate(cand_uuid, db)
         if "error" in result:

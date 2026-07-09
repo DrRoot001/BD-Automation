@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # "development" | "staging" | "production"
     environment: str = "development"
 
+    # ── Scheduled scraping ────────────────────────────────────────────────────
+    # Whether the periodic job-discovery scraper is registered in the Celery beat
+    # schedule. Default OFF so that dev laptops sharing one Redis/DB don't each
+    # trigger the Gemini-backed scraper (5 machines → 5× the scrape → 5× tokens).
+    # Turn this on (ENABLE_AUTO_SCRAPE=1) on exactly ONE machine that also runs beat.
+    enable_auto_scrape: bool = False
+
     # ── Supabase ──────────────────────────────────────────────────────────────
     supabase_url: str = ""
     supabase_service_role_key: str = ""
@@ -54,6 +61,10 @@ class Settings(BaseSettings):
     max_daily_applications_per_candidate: int = 50
     job_matching_lookback_hours: int = 24
     job_matching_monday_lookback_hours: int = 72
+    # Max pgvector cosine distance for a job to count as stack-relevant to a
+    # candidate's resume. Used by both the daily beat matcher and the manual
+    # "Run Now" path so they select the same stack-aligned jobs.
+    job_matching_max_distance: float = 0.35
 
     # ── Developer/Queue Isolation ─────────────────────────────────────────────
     queue_suffix: str = ""

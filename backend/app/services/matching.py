@@ -1,24 +1,24 @@
 import asyncio
-import os
-import logging
 import json
-from datetime import datetime, timezone, timedelta
-from typing import List, Dict, Any, Optional
-from sqlalchemy import select, func
-from sqlalchemy.ext.asyncio import AsyncSession
+import logging
+import os
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
+from app.config import get_settings
+from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.job import Job
 from app.models.resume import Resume
-from app.models.application import Application
-from app.config import get_settings
-from app.services.llm_cache import get_cached_score, cache_score
-from module3.parser.resume_parser import ResumeData, ResumeSection
+from app.services.llm_cache import cache_score, get_cached_score
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from module2.normalization.schemas import NormalizedJob
-from module3.scoring.fit_scorer import score_job_fit
 from module3.orchestrator import orchestrate_application_package
-from app.tasks.browser_automation import execute_application
+from module3.parser.resume_parser import ResumeData, ResumeSection
+from module3.scoring.fit_scorer import score_job_fit
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -35,10 +35,11 @@ async def get_active_application_count(
     Optionally filters to applications created after since_datetime.
     If inflight_only is True, only counts applications currently being processed.
     """
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
+
     from app.models.application import Application
     from app.models.application_history import ApplicationHistory
-    
+
     if inflight_only:
         active_statuses = {
             "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
@@ -48,30 +49,46 @@ async def get_active_application_count(
         active_statuses = {
             "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
             "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED",
-            "SUBMITTED", "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2", 
+            "SUBMITTED", "CONFIRMED", "INTERVIEW_R1", "INTERVIEW_R2",
             "INTERVIEW_R3", "INTERVIEW_R4", "OFFER"
         }
-    
+
     is_mock = type(session).__name__ in ("AsyncMock", "MagicMock") or hasattr(session, "_mock_self")
-    
+
     from sqlalchemy import or_
     stmt = select(Application).where(
         Application.candidate_id == candidate_id,
         Application.status.in_(list(active_statuses)),
+        # Paused apps are intentionally held by an operator — they must not count
+        # toward the active cap, otherwise pausing a stuck app wouldn't unblock the
+        # queue (the whole point of the pause control).
+        Application.paused == 0,
         or_(Application.failure_reason.is_(None), Application.failure_reason != "JOB_EXPIRED")
     )
     if since_datetime is not None:
         stmt = stmt.where(Application.created_at >= since_datetime)
-        
+
     apps = (await session.execute(stmt)).scalars().all()
-    
+
     if is_mock:
         return len(apps)
-        
+
+    # Staleness thresholds must mirror recover_stuck_applications_async so a row
+    # the watchdog is about to fail is not counted as "active" here. Includes the
+    # tailoring hand-off states (MATCHED/RESUME_UPDATED/COVER_LETTER_CREATED) which
+    # would otherwise pin the cap forever if their pipeline died mid-tailor.
+    STALE_THRESHOLDS_MIN = {
+        "QUEUED": 15,
+        "APPLICATION_STARTED": 20,
+        "FORM_COMPLETED": 20,
+        "MATCHED": 20,
+        "RESUME_UPDATED": 20,
+        "COVER_LETTER_CREATED": 20,
+    }
     count = 0
     now = datetime.now(timezone.utc)
     for app in apps:
-        if app.status in ["QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED"]:
+        if app.status in STALE_THRESHOLDS_MIN:
             # Check if stale (duration based on latest history transition)
             hist_stmt = (
                 select(ApplicationHistory)
@@ -80,7 +97,7 @@ async def get_active_application_count(
                 .limit(1)
             )
             latest_history = (await session.execute(hist_stmt)).scalars().first()
-            
+
             start_time = None
             if latest_history and hasattr(latest_history, "created_at"):
                 val = latest_history.created_at
@@ -88,11 +105,11 @@ async def get_active_application_count(
                     start_time = val
             if start_time is None:
                 start_time = app.created_at
-                
+
             if start_time.tzinfo is None:
                 start_time = start_time.replace(tzinfo=timezone.utc)
-                
-            threshold_min = 15 if app.status == "QUEUED" else 30
+
+            threshold_min = STALE_THRESHOLDS_MIN[app.status]
             if start_time < now - timedelta(minutes=threshold_min):
                 continue
         count += 1
@@ -118,9 +135,9 @@ async def run_matching_for_candidate(
     import time
     logger.info(f"[Matching] START run_matching_for_candidate for candidate={candidate_id}")
     t_start = time.time()
-    
+
     is_mock = type(session).__name__ in ("AsyncMock", "MagicMock") or hasattr(session, "_mock_self")
-    
+
     t0 = time.time()
     candidate = await session.get(Candidate, candidate_id)
     if not candidate:
@@ -174,7 +191,7 @@ async def run_matching_for_candidate(
             # If parsed_json already exists, only re-generate the embedding (skip PDF re-parsing).
             # This avoids crashing on corrupt/small PDFs when the JSON data is already good.
             if base_resume.parsed_json is not None:
-                logger.info(f"[Matching] parsed_json is present — generating embedding from existing JSON (skipping PDF re-parse).")
+                logger.info("[Matching] parsed_json is present — generating embedding from existing JSON (skipping PDF re-parse).")
                 base_resume.embedding = await asyncio.to_thread(
                     _generate_resume_embedding_from_json, base_resume.parsed_json
                 )
@@ -234,12 +251,12 @@ async def run_matching_for_candidate(
         max_daily = getattr(candidate, "max_daily_apps_override", None)
         if max_daily is None:
             max_daily = settings.max_daily_applications_per_candidate
-            
+
         time_24h_ago = datetime.now(timezone.utc) - timedelta(hours=24)
-        
+
         already_applied_today = await get_active_application_count(candidate_id, session, since_datetime=time_24h_ago)
         remaining_slots = max(0, max_daily - already_applied_today)
-        
+
         logger.info(f"[Matching] Candidate {candidate.name}: applied today={already_applied_today}, remaining={remaining_slots}")
 
 
@@ -280,7 +297,7 @@ async def run_matching_for_candidate(
             skipped_jobs.add(app.job_id)
 
     # 4. Fetch jobs added in lookback window (defaults to 24h, 72h on Mondays) that are not duplicates and pass pgvector distance < 0.35
-    from sqlalchemy import or_, and_
+    from sqlalchemy import and_, or_
     exclusions = or_(
         Job.source == 'manual',
         Job.source_url.is_(None),
@@ -299,14 +316,22 @@ async def run_matching_for_candidate(
     # Applied only to automatic discovery; explicitly targeted jobs
     # (target_job_ids) are honored as operator intent (e.g. Dice credentials
     # stored on the candidate profile instead of env vars).
+    has_candidate_creds = bool(
+        (getattr(candidate, "password", "") or "").strip()
+        and (
+            (getattr(candidate, "gmail", "") or "").strip()
+            or (getattr(candidate, "email", "") or "").strip()
+        )
+    )
+
     _unviable = []
-    if not (os.getenv("DICE_EMAIL") and os.getenv("DICE_PASSWORD")):
+    if not (has_candidate_creds or (os.getenv("DICE_EMAIL") and os.getenv("DICE_PASSWORD"))):
         _unviable.append(Job.source_url.ilike('%dice.com%'))
-    if not (os.getenv("WORKDAY_USERNAME") and os.getenv("WORKDAY_PASSWORD")):
+    if not (has_candidate_creds or (os.getenv("WORKDAY_USERNAME") and os.getenv("WORKDAY_PASSWORD"))):
         _unviable.append(Job.source_url.ilike('%myworkdayjobs.com%'))
-    if not (os.getenv("GLASSDOOR_EMAIL") and os.getenv("GLASSDOOR_PASSWORD")):
+    if not (has_candidate_creds or (os.getenv("GLASSDOOR_EMAIL") and os.getenv("GLASSDOOR_PASSWORD"))):
         _unviable.append(Job.source_url.ilike('%glassdoor.com%'))
-    if not (os.getenv("ZIPRECRUITER_EMAIL") and os.getenv("ZIPRECRUITER_PASSWORD")):
+    if not (has_candidate_creds or (os.getenv("ZIPRECRUITER_EMAIL") and os.getenv("ZIPRECRUITER_PASSWORD"))):
         _unviable.append(Job.source_url.ilike('%ziprecruiter.com%'))
     if not os.getenv("PROXY_URL"):
         # builtin.com /job/ pages are Cloudflare IP-banned from datacenter egress.
@@ -334,7 +359,7 @@ async def run_matching_for_candidate(
                 pass
 
         if not valid_uuids:
-            logger.warning(f"[Matching] target_job_ids provided but no valid UUIDs found.")
+            logger.warning("[Matching] target_job_ids provided but no valid UUIDs found.")
             return {"error": "invalid_target_job_ids"}
 
         jobs_stmt = select(Job).where(Job.id.in_(valid_uuids), ~exclusions)
@@ -356,7 +381,7 @@ async def run_matching_for_candidate(
     jobs = (await session.execute(jobs_stmt)).scalars().all()
     pgvector_passed_count = len(jobs)
     logger.info(f"[Matching] jobs fetch done in {time.time()-t0:.2f}s — found {pgvector_passed_count} jobs")
-    
+
     if target_job_ids:
         logger.info(f"[Matching] Candidate {candidate.name}: executing on {pgvector_passed_count} target jobs.")
     else:
@@ -381,7 +406,7 @@ async def run_matching_for_candidate(
     enqueued_job_ids = []
     skipped_details = []
     details = []
-    
+
     try:
         sections = ResumeSection(**base_resume.parsed_json)
         resume_data = ResumeData(
@@ -400,6 +425,28 @@ async def run_matching_for_candidate(
     api_base_url = api_base[:-4] if api_base.endswith("/api") else api_base
 
     for job in jobs:
+        # Operator stop: automation_paused is set by POST /candidates/{id}/pipeline/pause.
+        # The start-of-run check above only guards NEW runs; a single tailoring pass can
+        # take minutes, so re-read the flag each iteration to halt an ACTIVE run at the
+        # next job boundary. Fresh column SELECT (not session.get) to bypass the
+        # identity map and see a commit made by the API process mid-run.
+        if not is_mock:
+            paused_now = (await session.execute(
+                select(Candidate.automation_paused).where(Candidate.id == candidate_id)
+            )).scalar()
+            if paused_now:
+                from app.services.events import publish_event
+                logger.info(
+                    f"[Matching] Pipeline stopped by operator for {candidate.name} — "
+                    f"halting run ({len(enqueued)} enqueued so far)."
+                )
+                await publish_event("pipeline.progress", {
+                    "candidate_id": str(candidate_id),
+                    "step": "paused",
+                    "message": f"Pipeline stopped. {len(enqueued)} application(s) had already been queued.",
+                })
+                break
+
         if job.id in skipped_jobs:
             logger.info(f"[Matching] Skipping job {job.title} at {job.company}: already applied and not eligible for retry.")
             skipped_details.append({
@@ -409,7 +456,7 @@ async def run_matching_for_candidate(
                 "reason": "already_applied"
             })
             continue
-            
+
         if remaining_slots <= 0:
             cap_desc = max_daily if max_daily is not None else manual_limit
             logger.info(f"[Matching] Application cap ({cap_desc}) reached for {candidate.name}. Skipping LLM evaluation.")
@@ -429,7 +476,7 @@ async def run_matching_for_candidate(
                 skills = []
         elif not skills:
             skills = []
-            
+
         job_obj = NormalizedJob(
             title=job.title or "",
             company=job.company or "",
@@ -767,7 +814,7 @@ async def run_matching_for_candidate(
                 "score": score,
                 "reason": f"error: {str(e)}"
             })
-            
+
         details.append({
             "job_title": job.title,
             "company": job.company,

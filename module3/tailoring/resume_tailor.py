@@ -6,7 +6,7 @@ import json
 import asyncio
 import re
 import logging
-from typing import List, Union
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types as genai_types
@@ -171,13 +171,20 @@ async def tailor_resume(
     elif job.title and "contract" in job.title.lower():
         is_contract = True
 
+    # If the job description is missing/empty/None/not-found, there is nothing to
+    # tailor against — pass the base resume through unchanged (no fabrication loop).
+    jd_missing = not (job.description and str(job.description).strip())
+    if jd_missing:
+        logger.info("[TAILOR] Job description is missing/empty — passing base resume through without tailoring.")
+
     max_loops = 2
     loop_count = 0
     final_resume_json = resume_json
 
     # Always run at least one iteration if it's a contract role,
     # otherwise run if the score is less than or equal to 75.0 (not greater than 75).
-    while (current_ats_score <= 75.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
+    # A missing job description short-circuits tailoring entirely (base resume passes through).
+    while (not jd_missing) and (current_ats_score <= 75.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (

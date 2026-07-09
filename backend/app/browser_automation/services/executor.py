@@ -1,23 +1,21 @@
-import os
-import time
-import logging
 import asyncio
+import logging
+import os
 import tempfile
-import httpx
+import time
 import traceback
+from typing import Dict, Literal, Optional
+from urllib.parse import unquote, urlparse
+
+import httpx
 import redis.asyncio as redis
-from urllib.parse import urlparse, unquote
-
-from typing import Optional, Dict, Literal
-from playwright.async_api import async_playwright, Page, BrowserContext
 from dotenv import load_dotenv
+from playwright.async_api import BrowserContext, Page
 
-from ..browser import BrowserContextManager
-from ..adapters import get_adapter, BasePlatformAdapter
-from ..forms import detect_form, fill_form, fill_form_with_llm
-from ..captcha import CaptchaService
+from ..adapters import BasePlatformAdapter, get_adapter
 from ..agent import AgentLoop, LoopResult, PageAgent, diagnose_failure, get_learned_fixes
-
+from ..browser import BrowserContextManager
+from ..forms import detect_form, fill_form_with_llm
 from .models import ApplicationPackage, ApplicationResult
 from .screenshot import capture_and_store_screenshot
 from .state_machine import transition_status
@@ -119,16 +117,16 @@ async def is_job_url_active(url: str) -> bool:
                     "deferring decision to real browser session (could be bot wall)"
                 )
                 return True
-                
+
             final_url = str(resp.url)
-            
+
             if final_url != url:
                 parsed_orig = urlparse(url)
                 parsed_final = urlparse(final_url)
-                
+
                 orig_path = parsed_orig.path.strip("/")
                 final_path = parsed_final.path.strip("/")
-                
+
                 orig_segments = [s for s in orig_path.split("/") if s]
                 final_segments = [s for s in final_path.split("/") if s]
 
@@ -156,7 +154,7 @@ async def is_job_url_active(url: str) -> bool:
                     if len(final_segments) < len(orig_segments) and (not final_path or "jobs" not in final_path or final_path == "jobs" or final_path == "careers"):
                         logger.info(f"[Job Check] Redirected away to homepage or directory: {url} -> {final_url}")
                         return False
-            
+
             text = resp.text.lower()
             expired_patterns = [
                 "job no longer available",
@@ -173,7 +171,7 @@ async def is_job_url_active(url: str) -> bool:
             if any(p in text for p in expired_patterns):
                 logger.info(f"[Job Check] Job page contains expired text patterns: {url}")
                 return False
-                
+
             return True
     except Exception as e:
         logger.warning(f"Lightweight job check failed for {url}: {e}")
@@ -219,7 +217,7 @@ async def check_page_indicates_expired(page: Page, original_url: str) -> bool:
         if "404" in title or "page not found" in title or "job not found" in title:
             logger.info(f"[Browser Check] Page title indicates not found: {title}")
             return True
-            
+
         content = (await page.content()).lower()
         expired_patterns = [
             "job no longer available",
@@ -234,9 +232,9 @@ async def check_page_indicates_expired(page: Page, original_url: str) -> bool:
             "this listing has expired",
         ]
         if any(p in content for p in expired_patterns):
-            logger.info(f"[Browser Check] Page content indicates expired/removed")
+            logger.info("[Browser Check] Page content indicates expired/removed")
             return True
-            
+
     except Exception as e:
         logger.warning(f"Error checking if page indicates expired: {e}")
     return False
@@ -444,11 +442,45 @@ class ApplicationExecutor:
         def _elapsed() -> float:
             return time.monotonic() - start_time
 
+        async def _captcha_unsupported_terminal(detail: str) -> ApplicationResult:
+            """Clean terminal for a captcha the provider reported as genuinely
+            unsolvable (CaptchaService returns error='CAPTCHA_UNSUPPORTED: ...',
+            e.g. Turnstile managed-mode on a datacenter IP). Resolves to status
+            BLOCKED WITHOUT a hard crash/traceback and WITHOUT burning a Celery
+            retry (the task layer treats a BLOCKED *result* as terminal). The
+            browser is torn down by execute()'s finally, not here."""
+            msg = (detail or "").strip()
+            # Callers may pass "CAPTCHA_UNSUPPORTED: ...", a defensively
+            # "BLOCKED: CAPTCHA_UNSUPPORTED: ..."-prefixed loop error, or a bare
+            # detail. Normalize to a single clean "CAPTCHA_UNSUPPORTED: ...".
+            idx = msg.find("CAPTCHA_UNSUPPORTED")
+            if idx > 0:
+                msg = msg[idx:]
+            if not msg.startswith("CAPTCHA_UNSUPPORTED"):
+                msg = f"CAPTCHA_UNSUPPORTED: {msg}" if msg else "CAPTCHA_UNSUPPORTED"
+            logger.error(f"[M4] {msg} — resolving to clean BLOCKED terminal (no retry)")
+            shot: Optional[str] = None
+            try:
+                if page and not page.is_closed():
+                    shot = await capture_and_store_screenshot(page, package.application_id)
+            except Exception:
+                pass
+            _cleanup_temp(_temp_resume, _temp_cover)
+            return ApplicationResult(
+                application_id=package.application_id,
+                status="BLOCKED",
+                screenshot_url=shot,
+                error_message=msg[:500],
+                execution_time_seconds=_elapsed(),
+                retry_count=retry_count,
+                platform_response={"failure_reason": "CAPTCHA_UNSUPPORTED"},
+            )
+
         try:
             # Check platform review status
             from .platform_review import (
-                is_platform_flagged,
                 get_spam_backoff_remaining,
+                is_platform_flagged,
             )
             if is_platform_flagged(package.platform):
                 raise Exception(f"PLATFORM_NEEDS_REVIEW: Platform {package.platform} is flagged as needing review due to previous failures.")
@@ -520,7 +552,7 @@ class ApplicationExecutor:
                 job_url_active = await is_job_url_active(package.job_url)
             except Exception as e:
                 logger.warning(f"Error checking job URL existence: {e}")
-                
+
             if not job_url_active:
                 raise Exception("JOB_EXPIRED: Job posting no longer exists or has been removed")
 
@@ -582,7 +614,12 @@ class ApplicationExecutor:
                 "glassdoor":    ("GLASSDOOR_EMAIL",     "GLASSDOOR_PASSWORD"),
                 "ziprecruiter": ("ZIPRECRUITER_EMAIL",  "ZIPRECRUITER_PASSWORD"),
             }
-            _plat_key = (package.platform or "").lower().strip()
+            # package.platform may arrive as a HOST ("www.dice.com") rather than
+            # the bare slug ("dice") the walled-creds map is keyed on, so a plain
+            # lookup misses and the fast LOGIN_REQUIRED skip never fires. Resolve
+            # to the canonical slug first (same helper the rate-limit/step-budget
+            # paths use).
+            _plat_key = _canonical_platform_key(package.platform, _walled_creds.keys())
             _creds = _walled_creds.get(_plat_key)
             if _creds:
                 u_env, p_env = _creds
@@ -705,7 +742,104 @@ class ApplicationExecutor:
                         f"reason={state.reason!r}"
                     )
                     if state.kind == "BLOCKED":
-                        raise RuntimeError(f"BLOCKED: vision-agent flagged page state: {state.reason}")
+                        # Wait a brief moment for any dynamic iframes to attach/settle
+                        await page.wait_for_timeout(2000)
+                        content_lower = (await page.content()).lower()
+
+                        has_turnstile = (
+                            "challenges.cloudflare.com" in content_lower
+                            or "cf-turnstile" in content_lower
+                            or "turnstile" in content_lower
+                            or await page.locator("iframe[src*='challenges.cloudflare.com'], .cf-turnstile").count() > 0
+                        )
+                        if not has_turnstile:
+                            for frame in page.frames:
+                                try:
+                                    if "challenges.cloudflare.com" in frame.url.lower() or "turnstile" in frame.url.lower():
+                                        has_turnstile = True
+                                        break
+                                except Exception:
+                                    pass
+
+                        has_recaptcha = (
+                            "recaptcha" in content_lower
+                            or await page.locator("iframe[src*='recaptcha']").count() > 0
+                        )
+                        if not has_recaptcha:
+                            for frame in page.frames:
+                                try:
+                                    if "recaptcha" in frame.url.lower():
+                                        has_recaptcha = True
+                                        break
+                                except Exception:
+                                    pass
+
+                        has_hcaptcha = (
+                            "hcaptcha" in content_lower
+                            or await page.locator("iframe[src*='hcaptcha'], .h-captcha").count() > 0
+                        )
+                        if not has_hcaptcha:
+                            for frame in page.frames:
+                                try:
+                                    if "hcaptcha" in frame.url.lower():
+                                        has_hcaptcha = True
+                                        break
+                                except Exception:
+                                    pass
+
+                        captcha_type = None
+                        if has_turnstile:
+                            captcha_type = "turnstile"
+                        elif has_recaptcha:
+                            captcha_type = "recaptcha_v2"
+                        elif has_hcaptcha:
+                            captcha_type = "hcaptcha"
+
+                        if captcha_type:
+                            logger.info(f"[Agent] {captcha_type} detected on BLOCKED page. Invoking CaptchaService...")
+                            from ..captcha import CaptchaService
+                            provider = os.getenv("CAPTCHA_PROVIDER", "capsolver").lower()
+                            captcha_svc = CaptchaService(provider=provider)
+                            solution = await captcha_svc.solve(page, captcha_type)
+                            if solution.success:
+                                logger.info(f"[Agent] {captcha_type} solved successfully. Re-evaluating page state...")
+                                if captcha_type == "turnstile":
+                                    # Wait for the Cloudflare Turnstile iframe / challenge to disappear or settle
+                                    for _ in range(6):
+                                        await asyncio.sleep(2.0)
+                                        still_has_turnstile = False
+                                        for frame in page.frames:
+                                            try:
+                                                if "challenges.cloudflare.com" in frame.url.lower():
+                                                    still_has_turnstile = True
+                                                    break
+                                            except Exception:
+                                                pass
+                                        if not still_has_turnstile:
+                                            logger.info("[Agent] Cloudflare challenge frame disappeared — page settled.")
+                                            break
+                                    else:
+                                        logger.warning("[Agent] Cloudflare challenge frame did not disappear after 12s.")
+                                else:
+                                    await asyncio.sleep(3.0) # Settle page for other captchas
+                                state = await page_agent.classify_page(page, frame=frame_loc)
+                                logger.info(f"[Agent] Post-solve page_state={state.kind} reason={state.reason!r}")
+                                if state.kind == "BLOCKED":
+                                    raise RuntimeError(f"BLOCKED: vision-agent flagged page state after {captcha_type} solve: {state.reason}")
+                            else:
+                                # A genuinely unsolvable captcha (e.g. Turnstile
+                                # managed-mode on a datacenter IP) is reported by
+                                # CaptchaService as error='CAPTCHA_UNSUPPORTED: ...'.
+                                # Resolve to a CLEAN BLOCKED terminal instead of
+                                # raising (which would log a traceback and, worse,
+                                # look like a transient failure). Other solve
+                                # failures keep the original raise.
+                                _solve_err = (getattr(solution, "error", None) or "")
+                                if _solve_err.startswith("CAPTCHA_UNSUPPORTED"):
+                                    return await _captcha_unsupported_terminal(_solve_err)
+                                raise RuntimeError(f"BLOCKED: {captcha_type} solve failed.")
+                        else:
+                            raise RuntimeError(f"BLOCKED: vision-agent flagged page state: {state.reason}")
                     if state.kind == "LISTING" and state.next_action == "click_apply":
                         # Try the agent's suggested selector first, then any learned ones
                         candidates: list = []
@@ -739,7 +873,7 @@ class ApplicationExecutor:
                 except Exception as exc:
                     logger.warning(f"[Agent] classify/click-apply failed (non-fatal): {exc}")
 
-            # Always refresh the frame before starting AgentLoop because cross-origin 
+            # Always refresh the frame before starting AgentLoop because cross-origin
             # navigations or delayed iframe loads might have detached the old Frame object.
             if hasattr(adapter, 'refresh_frame'):
                 try:
@@ -834,6 +968,20 @@ class ApplicationExecutor:
                         f"steps={loop_result.steps_taken} error={loop_result.error!r}"
                     )
 
+                    # ── Captcha genuinely unsolvable → clean BLOCKED terminal ──
+                    # The loop surfaces CAPTCHA_UNSUPPORTED (e.g. Turnstile
+                    # managed-mode on a datacenter IP) via loop_result.error.
+                    # Return a CLEAN terminal WITHOUT a traceback and WITHOUT the
+                    # scripted fallback (which would just re-hit the same wall).
+                    # BLOCKED status is terminal in the task layer → no retry.
+                    # Guarded on NOT _submit_fired so a genuinely-submitted form
+                    # (the captcha path aborts pre-submit, so this is defensive)
+                    # is never masked as BLOCKED — that would lose the submit
+                    # record and risk a duplicate application on any re-run.
+                    if (loop_result.error and "CAPTCHA_UNSUPPORTED" in loop_result.error
+                            and not getattr(agent_loop, "_submit_fired", False)):
+                        return await _captcha_unsupported_terminal(loop_result.error)
+
                     if loop_result.status == "SUBMITTED":
                         _agent_submitted = True
                         _agent_confirmation = loop_result.confirmation
@@ -891,7 +1039,7 @@ class ApplicationExecutor:
 
                     else:
                         # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR
-                        # Mutual Exclusion: We no longer fall back to the deterministic 
+                        # Mutual Exclusion: We no longer fall back to the deterministic
                         # pipeline if AgentLoop gets stuck. Running both on the same
                         # React DOM causes conflicting state and lost data.
                         logger.error(
@@ -919,14 +1067,14 @@ class ApplicationExecutor:
                         await adapter.refresh_frame(page)
                     except Exception as exc:
                         logger.warning(f"[M4] Failed to refresh frame before detect_form: {exc}")
-                
+
                 from ..frame_utils import get_live_frame
                 frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                 if getattr(adapter, '_iframe_mode', False):
                     ctx = await get_live_frame(frame_loc)
                 else:
                     ctx = page
-                    
+
                 form = await detect_form(ctx, container_selector=adapter.container_selector)
 
                 # ── STEP 6.5: Call M3 only for screening answers (URLs already resolved) ──
@@ -1158,9 +1306,21 @@ class ApplicationExecutor:
                             retry_count=retry_count,
                         )
                     else:
+                        # Local import mirrors the BLOCKED-page branch above. Both
+                        # branches must import CaptchaService locally: because that
+                        # branch's `from ..captcha import CaptchaService` binds the
+                        # name as function-local, a bare reference here (when the
+                        # other branch didn't run) raised UnboundLocalError.
+                        from ..captcha import CaptchaService
                         captcha_svc = CaptchaService(provider=provider)
                         solution = await captcha_svc.solve(page, form.captcha_type)
                         if not solution.success:
+                            # Genuinely unsolvable (CAPTCHA_UNSUPPORTED) → clean
+                            # BLOCKED terminal, no traceback, no retry. Other
+                            # solve failures keep the CAPTCHA_FAILED path below.
+                            _solve_err = (getattr(solution, "error", None) or "")
+                            if _solve_err.startswith("CAPTCHA_UNSUPPORTED"):
+                                return await _captcha_unsupported_terminal(_solve_err)
                             status = "CAPTCHA_FAILED"
                             error_message = f"BLOCKED: Captcha solving exhausted all attempts: {form.captcha_type}"
                             screenshot_path = await capture_and_store_screenshot(page, package.application_id)
@@ -1505,3 +1665,18 @@ class ApplicationExecutor:
             )
         finally:
             _cleanup_temp(_temp_resume, _temp_cover)
+            # ── Browser lifecycle teardown (fixes the Chrome/driver/redis leak) ──
+            # destroy_context() (called on every path above) only closes the
+            # CONTEXT. The underlying Chrome process, the node driver, and the
+            # redis connection live on the manager and leak once per run without
+            # this — under Celery concurrency that exhausts RAM/FDs. close() is
+            # idempotent and exception-safe; wrap it here too so a teardown
+            # failure is logged but NEVER masks/overwrites the run's real result
+            # or raises out of finally. This is correct end-of-run cleanup and
+            # does NOT violate the "never close mid-run" guardrail (that rule is
+            # about the AgentLoop action space, which has no close action).
+            if context_mgr is not None:
+                try:
+                    await context_mgr.close()
+                except Exception as close_exc:
+                    logger.warning(f"[M4] context_mgr.close() failed (non-fatal): {close_exc}")

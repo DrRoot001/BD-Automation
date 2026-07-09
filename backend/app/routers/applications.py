@@ -395,6 +395,260 @@ async def retry_application(
     return app
 
 
+async def _dispatch_execute_application(db: AsyncSession, app: Application) -> None:
+    """Build the browser-automation package for an application and enqueue it.
+
+    Used by the resume (unpause) endpoint to re-drive a QUEUED row whose original
+    Celery message was consumed and skipped while the row was paused.
+    """
+    from app.models.job import Job
+    from app.models.resume import Resume
+    from app.tasks.browser_automation import execute_application
+
+    job = await db.get(Job, app.job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+
+    resume_url = ""
+    if app.resume_id:
+        resume = await db.get(Resume, app.resume_id)
+        if resume:
+            resume_url = resume.file_url
+
+    # Screening answers were persisted in the QUEUED transition's history metadata.
+    history_stmt = (
+        select(ApplicationHistory)
+        .where(
+            ApplicationHistory.application_id == app.id,
+            ApplicationHistory.to_status == "QUEUED",
+        )
+        .order_by(ApplicationHistory.created_at.desc())
+        .limit(1)
+    )
+    history_rec = (await db.execute(history_stmt)).scalars().first()
+    screening_answers: dict = {}
+    if history_rec:
+        meta = getattr(history_rec, "meta_data", None) or getattr(history_rec, "metadata", None)
+        if isinstance(meta, dict):
+            screening_answers = meta.get("screening_answers") or {}
+
+    package = {
+        "application_id": str(app.id),
+        "candidate_id": str(app.candidate_id),
+        "job_id": str(app.job_id),
+        "job_url": job.source_url or "",
+        "platform": (job.source or "").lower(),
+        "ats_type": job.job_type or "",
+        "resume_url": resume_url,
+        "cover_letter_url": app.cover_letter_url or "",
+        "screening_answers": screening_answers,
+    }
+    execute_application.apply_async(args=[package], queue="queue:application_execution")
+
+
+@router.post("/{application_id}/cancel", response_model=ApplicationResponse)
+async def cancel_application(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Cancel (withdraw) an application without deleting its record.
+
+    Moves the row to the terminal WITHDRAWN state, which immediately frees the
+    candidate's active-application slot so new jobs can start, while preserving
+    the full audit trail. Use DELETE for a hard removal.
+    """
+    result = await db.execute(select(Application).where(Application.id == application_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+    if app.status == "WITHDRAWN":
+        return app  # idempotent
+
+    try:
+        validate_transition(app.status, "WITHDRAWN")
+    except InvalidTransitionError:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot cancel an application in status {app.status}",
+        )
+
+    old_status = app.status
+    app.status = "WITHDRAWN"
+    app.paused = 0  # terminal — clear any pause hold
+
+    db.add(ApplicationHistory(
+        application_id=application_id,
+        from_status=old_status,
+        to_status="WITHDRAWN",
+        meta_data={"info": "Cancelled from dashboard"},
+    ))
+    await db.commit()
+    await db.refresh(app)
+
+    await publish_event("application.status_changed", {
+        "application_id": str(application_id),
+        "candidate_id": str(app.candidate_id),
+        "from_status": old_status,
+        "to_status": "WITHDRAWN",
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    return app
+
+
+async def _detach_application_children(db: AsyncSession, application_ids: list) -> None:
+    """Detach or remove every child row referencing the given applications so a
+    hard delete cannot hit a ForeignKeyViolation.
+
+    Explicit on purpose: some model FKs declare ON DELETE CASCADE/SET NULL, but
+    the live DB constraints predate those declarations (emails has no ON DELETE
+    at all, which 500'd the delete button). Do the work here instead of trusting
+    the DB schema.
+
+    - emails / interview_tracking: SET NULL — they belong to the candidate's
+      inbox/interview funnel, not the application row; keep them.
+    - interviews / cover_letters / application_history: application-scoped
+      artifacts — delete.
+    """
+    from app.models.cover_letter import CoverLetter
+    from app.models.email import Email
+    from app.models.interview import Interview
+    from app.models.interview_tracking import InterviewTracking
+
+    await db.execute(
+        update(Email)
+        .where(Email.application_id.in_(application_ids))
+        .values(application_id=None)
+    )
+    await db.execute(
+        update(InterviewTracking)
+        .where(InterviewTracking.application_id.in_(application_ids))
+        .values(application_id=None)
+    )
+    await db.execute(delete(Interview).where(Interview.application_id.in_(application_ids)))
+    await db.execute(delete(CoverLetter).where(CoverLetter.application_id.in_(application_ids)))
+    await db.execute(delete(ApplicationHistory).where(ApplicationHistory.application_id.in_(application_ids)))
+
+
+@router.delete("/{application_id}")
+async def delete_application(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Hard-delete a single application and its history.
+
+    Destructive: the audit trail is lost. The job stays in the DB and can be
+    re-discovered/re-matched later. Prefer /cancel to keep the record.
+    """
+    result = await db.execute(select(Application).where(Application.id == application_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        return {"deleted": 0, "application_id": str(application_id)}
+
+    candidate_id = app.candidate_id
+    # Child rows first (FK constraints), then the application.
+    await _detach_application_children(db, [application_id])
+    await db.execute(delete(Application).where(Application.id == application_id))
+    await db.commit()
+
+    await publish_event("application.deleted", {
+        "application_id": str(application_id),
+        "candidate_id": str(candidate_id),
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    return {"deleted": 1, "application_id": str(application_id)}
+
+
+# Statuses where a pause is meaningful and safe. APPLICATION_STARTED /
+# FORM_COMPLETED are excluded: a browser session is actively driving the form and
+# cannot be interrupted mid-run without stranding a half-filled application.
+# Terminal states have nothing to pause.
+PAUSABLE_STATUSES = {
+    "FOUND", "ANALYZED", "MATCHED", "RESUME_UPDATED",
+    "COVER_LETTER_CREATED", "QUEUED", "FAILED", "BLOCKED",
+}
+
+
+@router.post("/{application_id}/pause", response_model=ApplicationResponse)
+async def pause_application(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Hold an application so the worker skips it and it stops counting toward the
+    candidate's active-application cap. Does not change status. Resume to release."""
+    result = await db.execute(select(Application).where(Application.id == application_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+    if app.status not in PAUSABLE_STATUSES:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Cannot pause an application in status {app.status} "
+            f"(a browser run may be in progress or the application is already finished)",
+        )
+
+    if app.paused:
+        return app  # idempotent
+
+    app.paused = 1
+    db.add(ApplicationHistory(
+        application_id=application_id,
+        from_status=app.status,
+        to_status=app.status,
+        meta_data={"info": f"Paused from dashboard (was {app.status})"},
+    ))
+    await db.commit()
+    await db.refresh(app)
+
+    await publish_event("application.paused", {
+        "application_id": str(application_id),
+        "candidate_id": str(app.candidate_id),
+        "paused": True,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    return app
+
+
+@router.post("/{application_id}/unpause", response_model=ApplicationResponse)
+async def unpause_application(
+    application_id: UUID,
+    db: AsyncSession = Depends(get_db),
+):
+    """Release a paused application. If it is QUEUED, re-dispatch the browser task
+    (its original Celery message was consumed and skipped while paused)."""
+    result = await db.execute(select(Application).where(Application.id == application_id))
+    app = result.scalar_one_or_none()
+    if not app:
+        raise HTTPException(404, "Application not found")
+
+    if not app.paused:
+        return app  # idempotent
+
+    app.paused = 0
+    db.add(ApplicationHistory(
+        application_id=application_id,
+        from_status=app.status,
+        to_status=app.status,
+        meta_data={"info": f"Resumed from dashboard (status {app.status})"},
+    ))
+    await db.commit()
+    await db.refresh(app)
+
+    # A QUEUED row's Celery message was already acked (skipped) while paused, so it
+    # needs a fresh dispatch. Other states are re-driven by the normal pipeline.
+    if app.status == "QUEUED":
+        await _dispatch_execute_application(db, app)
+
+    await publish_event("application.paused", {
+        "application_id": str(application_id),
+        "candidate_id": str(app.candidate_id),
+        "paused": False,
+        "timestamp": datetime.utcnow().isoformat(),
+    })
+    return app
+
+
 @router.post("/admin/fail-stuck")
 async def admin_fail_stuck_applications(
     hours: int = 5,
@@ -418,8 +672,6 @@ async def admin_reset_candidate_applications(
 ):
     """Delete all applications (and their history) for a candidate so the
     pipeline can re-process them from scratch. Intended for dev/testing only."""
-    from app.models.application_history import ApplicationHistory
-
     # Fetch application IDs for this candidate first
     id_rows = (await db.execute(
         select(Application.id).where(Application.candidate_id == candidate_id)
@@ -428,11 +680,8 @@ async def admin_reset_candidate_applications(
     if not id_rows:
         return {"deleted": 0, "candidate_id": str(candidate_id)}
 
-    # Delete history rows first (FK constraint)
-    await db.execute(
-        delete(ApplicationHistory).where(ApplicationHistory.application_id.in_(id_rows))
-    )
-    # Delete the applications
+    # Child rows first (FK constraints), then the applications.
+    await _detach_application_children(db, id_rows)
     await db.execute(
         delete(Application).where(Application.candidate_id == candidate_id)
     )

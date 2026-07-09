@@ -10,6 +10,7 @@ import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
 import { Search, Send, Target, Award, Briefcase, Clock, Sparkles, RefreshCw, Play, Trash2 } from 'lucide-react'
 import { formatDistanceToNow } from '@/lib/utils'
+import { formatJobUrl } from '@/components/utils'
 
 interface MatchingDetail {
   job_title: string
@@ -258,7 +259,7 @@ export default function AdminPage() {
                         <td className="px-4 py-3">
                           <div className="font-medium text-text-primary truncate max-w-[200px]" title={app.job_title}>
                             {app.job_url ? (
-                              <a href={app.job_url} target="_blank" rel="noopener noreferrer" className="hover:text-accent hover:underline">
+                              <a href={formatJobUrl(app.job_url)} target="_blank" rel="noopener noreferrer" className="hover:text-accent hover:underline">
                                 {app.job_title}
                               </a>
                             ) : app.job_title}

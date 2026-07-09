@@ -480,9 +480,14 @@ class DiceAdapter(BasePlatformAdapter):
         await self._click_first(page, _EMAIL_CONTINUE_SELECTORS)
 
         # Step 2 — password screen (/dashboard/login/password).
-        await self._wait_visible(page, _PASSWORD_SELECTORS, timeout_ms=15_000)
+        if not await self._wait_visible(page, _PASSWORD_SELECTORS, timeout_ms=15_000):
+            content = (await self._safe_content(page)).lower()
+            if "couldn't find" in content or "could not find" in content or "create account" in content or "create an account" in content:
+                raise RuntimeError(f"BLOCKED: No Dice account exists for email {email!r}. Please create one.")
+            raise RuntimeError("BLOCKED: Dice login password field not found (Timeout waiting for password screen)")
+            
         if not await self._fill_first(page, _PASSWORD_SELECTORS, password):
-            raise RuntimeError("BLOCKED: Dice login password field not found")
+            raise RuntimeError("BLOCKED: Dice login password field not fillable")
         await self.human_delay(0.3, 0.8)
 
         # Best-effort captcha solve if Dice gates the login behind one.
@@ -543,7 +548,7 @@ class DiceAdapter(BasePlatformAdapter):
         if not (has_recaptcha or has_hcaptcha):
             return False
 
-        captcha_type = "hcaptcha" if has_hcaptcha else "recaptcha"
+        captcha_type = "hcaptcha" if has_hcaptcha else "recaptcha_v2"
         logger.info(f"[Dice] Login captcha detected ({captcha_type}); attempting solve")
         try:
             from ..captcha import CaptchaService
