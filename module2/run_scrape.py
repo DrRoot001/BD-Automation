@@ -11,7 +11,6 @@
 
 import json
 import os
-import random
 import subprocess
 import time
 from datetime import datetime
@@ -53,6 +52,9 @@ API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:8000")
 SCRAPE_TIMEOUT_SECONDS = int(os.environ.get("SCRAPE_TIMEOUT_SECONDS", "300"))
 SCRAPE_PAGES = int(os.environ.get("SCRAPE_PAGES", "3"))
 SCRAPE_PAGE_SIZE = int(os.environ.get("SCRAPE_PAGE_SIZE", "20"))
+# Optional cooldown between page fetches. Default 0 (no delay). Set to e.g. "5"
+# if a job board's WAF starts rate-limiting the scraper again.
+SCRAPE_PAGE_COOLDOWN_SECONDS = float(os.environ.get("SCRAPE_PAGE_COOLDOWN_SECONDS", "0"))
 
 
 def run_node_scraper(link: str) -> list[dict[str, Any]]:
@@ -325,10 +327,9 @@ def run_all() -> dict[str, int]:
 
             print(f"[run_scrape] page {page}: {len(page_items)} scraped, {new_count} new")
 
-            # Add a random cooldown sleep between pages to respect rate limits and prevent WAF blocking
-            sleep_time = random.uniform(3.0, 7.0)
-            print(f"[run_scrape] Sleeping for {sleep_time:.2f}s to respect rate limits...")
-            time.sleep(sleep_time)
+            if SCRAPE_PAGE_COOLDOWN_SECONDS > 0 and page < SCRAPE_PAGES:
+                print(f"[run_scrape] Sleeping for {SCRAPE_PAGE_COOLDOWN_SECONDS:.2f}s (SCRAPE_PAGE_COOLDOWN_SECONDS)...")
+                time.sleep(SCRAPE_PAGE_COOLDOWN_SECONDS)
 
         stats["scraped"] += len(aggregated_raw)
 
