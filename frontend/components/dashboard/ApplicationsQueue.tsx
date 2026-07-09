@@ -1,14 +1,16 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
 import { formatDistanceToNow, resolveFileUrl, formatJobUrl } from '../utils'
 import { useRouter } from 'next/navigation'
-import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import {
+  ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2,
+  MoreVertical, Pause, Play, XCircle, Trash2, AlertTriangle,
+} from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { useQueryClient } from '@tanstack/react-query'
 import { StatusBadge } from '../shared/StatusBadge'
 
 const COMPLETED_STATUSES = [
@@ -41,6 +43,34 @@ function isInFlight(status: string) {
   return IN_FLIGHT_STATUSES.includes(status?.toUpperCase())
 }
 
+// Mirrors PAUSABLE_STATUSES in the applications router. A browser run in
+// APPLICATION_STARTED / FORM_COMPLETED can't be safely interrupted, so pause
+// isn't offered there.
+const PAUSABLE_STATUSES = [
+  'FOUND', 'ANALYZED', 'MATCHED', 'RESUME_UPDATED',
+  'COVER_LETTER_CREATED', 'QUEUED', 'FAILED', 'BLOCKED',
+]
+// Statuses from which the FSM allows a WITHDRAWN (cancel) transition.
+const CANCELLABLE_STATUSES = [
+  ...PAUSABLE_STATUSES, 'APPLICATION_STARTED', 'FORM_COMPLETED', 'GHOSTED',
+]
+
+function canPause(status: string) {
+  return PAUSABLE_STATUSES.includes(status?.toUpperCase())
+}
+function canCancel(status: string) {
+  return CANCELLABLE_STATUSES.includes(status?.toUpperCase())
+}
+
+// pipeline.progress steps that end a run. matches_found is terminal for the
+// per-candidate matcher; error/limit_reached are failure ends that the old code
+// never cleared, leaving the "Matching…" spinner stuck forever (BG-07).
+// 'paused' is emitted when the operator stops the pipeline mid-run (BG-08).
+const TERMINAL_PIPELINE_STEPS = ['matches_found', 'no_matches', 'done', 'limit_reached', 'error', 'paused']
+// If no pipeline.progress event arrives within this window, assume the run died
+// without emitting a terminal step and clear the banner anyway.
+const PIPELINE_STALE_MS = 120_000
+
 const PAGE_SIZE = 15
 
 function TableSkeleton() {
@@ -63,7 +93,14 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
   const router = useRouter()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
-  const [pipelineState, setPipelineState] = useState<{ step: string; message: string; ts: Date } | null>(null)
+  const [pipelineState, setPipelineState] = useState<{ step: string; message: string; isError: boolean } | null>(null)
+  const pipelineHideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pipelineStaleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const clearPipelineTimers = () => {
+    if (pipelineHideTimer.current) clearTimeout(pipelineHideTimer.current)
+    if (pipelineStaleTimer.current) clearTimeout(pipelineStaleTimer.current)
+  }
 
   // Coalesce WebSocket-driven refetches. During an active pipeline run these
   // events (pipeline.progress / application.created / application.status_changed)
@@ -80,6 +117,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
   }
   useEffect(() => () => {
     if (invalidateTimer.current) clearTimeout(invalidateTimer.current)
+    clearPipelineTimers()
   }, [])
 
   useWebSocket((evt) => {
@@ -91,16 +129,25 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
       const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (evtCandidateId && candidateId && evtCandidateId !== candidateId) return
 
-      setPipelineState({ step, message, ts: new Date() })
+      const isTerminal = TERMINAL_PIPELINE_STEPS.includes(step)
+      const isError = step === 'error' || step === 'limit_reached'
+      setPipelineState({ step, message, isError })
 
-      // If it's a terminal step for the background matcher, hide the status after a delay
-      if (step === 'matches_found' || step === 'no_matches' || step === 'done') {
-        if (step !== 'matches_found') {
-          setTimeout(() => setPipelineState(null), 5000)
-        }
+      // Reset the hide timer on every event.
+      clearPipelineTimers()
+
+      if (isTerminal) {
+        // Auto-hide every terminal step (including matches_found and error/
+        // limit_reached, which the old code left on screen indefinitely).
+        pipelineHideTimer.current = setTimeout(() => setPipelineState(null), isError ? 8000 : 5000)
         scheduleRefetch()
+      } else {
+        // Non-terminal step: if the run dies without a terminal event, the banner
+        // would otherwise spin forever. Force-clear it after the stale window.
+        pipelineStaleTimer.current = setTimeout(() => setPipelineState(null), PIPELINE_STALE_MS)
       }
-    } else if (evt.event === 'application.created' || evt.event === 'application.status_changed') {
+    } else if (evt.event === 'application.created' || evt.event === 'application.status_changed'
+               || evt.event === 'application.deleted' || evt.event === 'application.paused') {
       // Only refetch if the event is for our candidate
       const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (!evtCandidateId || !candidateId || evtCandidateId === candidateId) {
@@ -137,8 +184,17 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
         </div>
         <div className="flex items-center gap-3">
           {pipelineState && (
-            <div className="flex items-center gap-2 text-xs font-medium text-accent animate-pulse bg-accent/10 px-3 py-1 rounded-full border border-accent/20">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <div
+              className={clsx(
+                'flex items-center gap-2 text-xs font-medium px-3 py-1 rounded-full border',
+                pipelineState.isError
+                  ? 'text-danger bg-danger/10 border-danger/20'
+                  : 'text-accent bg-accent/10 border-accent/20 animate-pulse',
+              )}
+            >
+              {pipelineState.isError
+                ? <AlertTriangle className="w-3.5 h-3.5" />
+                : <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>{pipelineState.message}</span>
             </div>
           )}
@@ -169,7 +225,8 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                 <th className="text-left px-3 py-2.5 font-medium hidden lg:table-cell">JD</th>
                 <th className="text-right px-3 py-2.5 font-medium hidden md:table-cell">Fit</th>
                 <th className="text-right px-3 py-2.5 font-medium hidden md:table-cell">Submitted</th>
-                <th className="text-right px-5 py-2.5 font-medium">Added</th>
+                <th className="text-right px-3 py-2.5 font-medium">Added</th>
+                <th className="text-right px-3 py-2.5 font-medium w-10" aria-label="Actions"></th>
               </tr>
             </thead>
             <tbody>
@@ -198,7 +255,18 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                   </td>
 
                   <td className="px-3 py-3">
-                    <StatusBadge status={app.status} />
+                    <div className="flex items-center gap-1.5">
+                      <StatusBadge status={app.status} />
+                      {app.paused && (
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-warning/10 text-warning border border-warning/20 font-medium inline-flex items-center gap-1"
+                          title="Paused by operator — skipped by automation and not counted toward the active limit"
+                        >
+                          <Pause className="w-2.5 h-2.5" />
+                          Paused
+                        </span>
+                      )}
+                    </div>
                   </td>
 
                   {/* Resume link + base/tailored badge */}
@@ -313,8 +381,12 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                       : '—'}
                   </td>
 
-                  <td className="px-5 py-3 text-right text-xs text-text-muted whitespace-nowrap">
+                  <td className="px-3 py-3 text-right text-xs text-text-muted whitespace-nowrap">
                     {formatDistanceToNow(app.created_at)}
+                  </td>
+
+                  <td className="px-3 py-3 text-right" onClick={(e) => e.stopPropagation()}>
+                    <RowActions app={app} />
                   </td>
                 </tr>
               ))}
@@ -344,6 +416,99 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
             </button>
           </div>
         </div>
+      )}
+    </div>
+  )
+}
+
+// ── Per-row action menu: Pause/Resume, Cancel (withdraw), Delete ──────────────
+function RowActions({ app }: { app: ApplicationSummary }) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+
+  const refresh = () => {
+    queryClient.invalidateQueries({ queryKey: ['applications'] })
+    queryClient.invalidateQueries({ queryKey: ['kpis'] })
+  }
+
+  const mutation = useMutation({
+    mutationFn: ({ fn }: { fn: () => Promise<unknown> }) => fn(),
+    onSuccess: () => {
+      refresh()
+      setOpen(false)
+    },
+    onError: (err: unknown) => {
+      setOpen(false)
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      // eslint-disable-next-line no-alert
+      window.alert(`Action failed: ${msg}`)
+    },
+  })
+
+  const run = (fn: () => Promise<unknown>, confirmMsg?: string) => {
+    // eslint-disable-next-line no-alert
+    if (confirmMsg && !window.confirm(confirmMsg)) return
+    mutation.mutate({ fn })
+  }
+
+  const paused = !!app.paused
+  const id = app.application_id
+  const showPause = !paused && canPause(app.status)
+  const showCancel = canCancel(app.status)
+
+  const itemClass = 'w-full flex items-center gap-2 px-3 py-1.5 text-xs text-text-primary hover:bg-bg-hover transition-colors text-left'
+
+  return (
+    <div className="relative inline-block text-left">
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o) }}
+        disabled={mutation.isPending}
+        className="p-1.5 rounded hover:bg-bg-hover transition-colors disabled:opacity-50"
+        title="Actions"
+        aria-label="Application actions"
+      >
+        {mutation.isPending
+          ? <Loader2 className="w-4 h-4 animate-spin text-text-muted" />
+          : <MoreVertical className="w-4 h-4 text-text-muted" />}
+      </button>
+
+      {open && (
+        <>
+          {/* click-outside backdrop */}
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 z-20 mt-1 w-44 rounded-md border border-bg-border bg-bg-secondary shadow-lg py-1">
+            {paused && (
+              <button className={itemClass} onClick={() => run(() => api.resumeApplication(id))}>
+                <Play className="w-3.5 h-3.5 text-success" /> Resume
+              </button>
+            )}
+            {showPause && (
+              <button className={itemClass} onClick={() => run(() => api.pauseApplication(id))}>
+                <Pause className="w-3.5 h-3.5 text-warning" /> Pause
+              </button>
+            )}
+            {showCancel && (
+              <button
+                className={itemClass}
+                onClick={() => run(
+                  () => api.cancelApplication(id),
+                  'Cancel this application? It will be withdrawn (removed from the queue) but kept for the record.',
+                )}
+              >
+                <XCircle className="w-3.5 h-3.5 text-text-muted" /> Cancel
+              </button>
+            )}
+            <button
+              className={clsx(itemClass, 'text-danger hover:bg-danger/10')}
+              onClick={() => run(
+                () => api.deleteApplication(id),
+                'Permanently delete this application and its history? This cannot be undone.',
+              )}
+            >
+              <Trash2 className="w-3.5 h-3.5" /> Delete
+            </button>
+          </div>
+        </>
       )}
     </div>
   )

@@ -37,6 +37,9 @@ class CandidateResponse(CandidateCreate):
     created_at: datetime
     updated_at: datetime
     google_connected: bool = False
+    # 0 = pipeline running normally, 1 = stopped by operator via
+    # POST /candidates/{id}/pipeline/pause (BG-08).
+    automation_paused: int = 0
     # SECURITY: never expose the stored portal password in API responses. It is
     # read server-side (browser-automation) straight from the DB; the frontend
     # must NOT receive it — and must not pre-fill its edit field with it, since

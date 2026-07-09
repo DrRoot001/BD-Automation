@@ -11,7 +11,7 @@ import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useCurrentUser } from '@/hooks/useCurrentUser'
 import { api } from '@/lib/api'
-import { Mail, Check, Loader2, AlertTriangle, Activity, FileText, ExternalLink, ArrowLeft, UserCheck } from 'lucide-react'
+import { Mail, Check, Loader2, AlertTriangle, Activity, FileText, ExternalLink, ArrowLeft, UserCheck, OctagonPause, Play } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 
 function ViewResumeButton({ resumeId }: { resumeId: string; fileUrl?: string }) {
@@ -127,6 +127,59 @@ export default function CandidateDetailPage() {
       toast.error(errorObj.message || 'Failed to assign candidate')
     },
   })
+
+  // BG-08: stop/resume the whole apply pipeline for this candidate. Stop pauses
+  // every in-flight application (they stop counting toward the active cap) and
+  // blocks new matching runs; resume releases them and re-dispatches queued ones.
+  const pipelineMutation = useMutation({
+    mutationFn: (action: 'stop' | 'resume'): Promise<{
+      status: string
+      paused_applications?: number
+      in_browser_finishing?: number
+      resumed_applications?: number
+      redispatched_queued?: number
+    }> =>
+      action === 'stop'
+        ? api.stopPipeline(id as string)
+        : api.resumePipeline(id as string),
+    onSuccess: (res, action) => {
+      queryClient.invalidateQueries({ queryKey: ['candidate', id] })
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+      queryClient.invalidateQueries({ queryKey: ['kpis'] })
+      if (action === 'stop') {
+        toast.success(
+          `Pipeline stopped — ${res.paused_applications ?? 0} application(s) paused` +
+          ((res.in_browser_finishing ?? 0) > 0
+            ? `. ${res.in_browser_finishing} already in a browser run will finish.`
+            : '.'),
+        )
+      } else {
+        toast.success(
+          `Pipeline resumed — ${res.resumed_applications ?? 0} application(s) released` +
+          ((res.redispatched_queued ?? 0) > 0 ? `, ${res.redispatched_queued} re-queued.` : '.'),
+        )
+      }
+    },
+    onError: (err: unknown) => {
+      const errorObj = err as { message?: string }
+      toast.error(errorObj.message || 'Pipeline action failed')
+    },
+  })
+
+  const handlePipelineToggle = async () => {
+    if (!candidate) return
+    if (candidate.automation_paused) {
+      pipelineMutation.mutate('resume')
+      return
+    }
+    const isConfirmed = await confirm({
+      title: 'Stop Pipeline?',
+      message: `Stop the auto-apply pipeline for ${candidate.name}? All in-flight applications will be paused and no new applications will start until you resume. Applications already inside a live browser run will finish their current attempt.`,
+      confirmLabel: 'Stop Pipeline',
+      variant: 'danger',
+    })
+    if (isConfirmed) pipelineMutation.mutate('stop')
+  }
 
   const handleAssignChange = async (newUserId: string) => {
     if (!newUserId || candidate?.user_id === newUserId) return
@@ -328,12 +381,41 @@ export default function CandidateDetailPage() {
             <ArrowLeft className="w-3 h-3" /> Back to Candidates
           </Link>
         </div>
-        <button
-          onClick={() => setShowAutoApply(!showAutoApply)}
-          className="btn-primary shrink-0"
-        >
-          {showAutoApply ? 'Hide Auto-Apply Control' : 'Start Auto-Apply'}
-        </button>
+        <div className="flex items-center gap-2 shrink-0">
+          {/* BG-08: candidate-level pipeline stop/resume */}
+          <button
+            onClick={handlePipelineToggle}
+            disabled={pipelineMutation.isPending}
+            className={
+              candidate.automation_paused
+                ? 'btn-secondary !border-success/40 !text-success hover:!bg-success/10'
+                : 'btn-secondary !border-danger/40 !text-danger hover:!bg-danger/10'
+            }
+            title={
+              candidate.automation_paused
+                ? 'Pipeline is stopped — release paused applications and allow new runs'
+                : 'Pause all in-flight applications and block new runs for this candidate'
+            }
+          >
+            {pipelineMutation.isPending ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : candidate.automation_paused ? (
+              <>
+                <Play className="w-4 h-4" /> Resume Pipeline
+              </>
+            ) : (
+              <>
+                <OctagonPause className="w-4 h-4" /> Stop Pipeline
+              </>
+            )}
+          </button>
+          <button
+            onClick={() => setShowAutoApply(!showAutoApply)}
+            className="btn-primary"
+          >
+            {showAutoApply ? 'Hide Auto-Apply Control' : 'Start Auto-Apply'}
+          </button>
+        </div>
       </div>
 
       {/* Auto Apply Panel */}

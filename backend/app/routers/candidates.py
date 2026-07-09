@@ -298,6 +298,163 @@ async def trigger_apply(
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
 
+
+# ── Pipeline stop / resume (BG-08) ────────────────────────────────────────────
+# Statuses the pipeline stop can safely hold. APPLICATION_STARTED/FORM_COMPLETED
+# are excluded: a browser session is actively driving those forms and flagging
+# them wouldn't stop the browser — it would only hide them from the watchdog.
+# They finish their current run; everything not yet in a browser freezes.
+PIPELINE_PAUSABLE_STATUSES = (
+    "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED", "QUEUED",
+)
+
+
+async def _get_owned_candidate(candidate_id: str, db: AsyncSession, current_user: User) -> Candidate:
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
+    candidate = result.scalar_one_or_none()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    if current_user.role != UserRole.admin:
+        if candidate.user_id is None or str(candidate.user_id) != str(current_user.id):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied: this candidate is not assigned to your account.",
+            )
+    return candidate
+
+
+@router.post("/{candidate_id}/pipeline/pause")
+async def pause_pipeline(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Stop the whole apply pipeline for a candidate (BG-08).
+
+    Sets candidate.automation_paused (blocks new matching runs and halts an
+    active run at its next job boundary) and bulk-pauses every in-flight
+    application (paused=2) so none of them run or count toward the active cap.
+    Apps already inside a live browser run are left to finish and reported back.
+    """
+    from datetime import datetime as _dt
+
+    from app.models.application_history import ApplicationHistory
+    from app.services.events import publish_event
+
+    candidate = await _get_owned_candidate(candidate_id, db, current_user)
+    candidate.automation_paused = 1
+
+    apps_result = await db.execute(
+        select(Application).where(
+            Application.candidate_id == candidate.id,
+            Application.status.in_(PIPELINE_PAUSABLE_STATUSES),
+            Application.paused == 0,
+        )
+    )
+    apps = apps_result.scalars().all()
+    for app in apps:
+        app.paused = 2  # pipeline-paused; distinguishes from an individual row pause
+        db.add(ApplicationHistory(
+            application_id=app.id,
+            from_status=app.status,
+            to_status=app.status,
+            meta_data={"info": "Paused via pipeline stop (candidate-level)"},
+        ))
+
+    # Count in-browser rows we deliberately can't hold, so the UI can say
+    # "N applications already in a browser run will finish".
+    in_browser_result = await db.execute(
+        select(Application.id).where(
+            Application.candidate_id == candidate.id,
+            Application.status.in_(("APPLICATION_STARTED", "FORM_COMPLETED")),
+        )
+    )
+    in_browser_count = len(in_browser_result.scalars().all())
+
+    await db.commit()
+
+    await publish_event("application.paused", {
+        "candidate_id": str(candidate.id),
+        "paused": True,
+        "pipeline": True,
+        "count": len(apps),
+        "timestamp": _dt.utcnow().isoformat(),
+    })
+
+    return {
+        "status": "pipeline_paused",
+        "candidate_id": str(candidate.id),
+        "paused_applications": len(apps),
+        "in_browser_finishing": in_browser_count,
+    }
+
+
+@router.post("/{candidate_id}/pipeline/resume")
+async def resume_pipeline(
+    candidate_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Resume a stopped pipeline: clear automation_paused and release only the
+    apps the pipeline stop paused (paused=2), re-dispatching QUEUED ones.
+    Individually-paused apps (paused=1) stay held."""
+    from datetime import datetime as _dt
+
+    from app.models.application_history import ApplicationHistory
+    from app.routers.applications import _dispatch_execute_application
+    from app.services.events import publish_event
+
+    candidate = await _get_owned_candidate(candidate_id, db, current_user)
+    candidate.automation_paused = 0
+
+    apps_result = await db.execute(
+        select(Application).where(
+            Application.candidate_id == candidate.id,
+            Application.paused == 2,
+        )
+    )
+    apps = apps_result.scalars().all()
+    for app in apps:
+        app.paused = 0
+        db.add(ApplicationHistory(
+            application_id=app.id,
+            from_status=app.status,
+            to_status=app.status,
+            meta_data={"info": "Resumed via pipeline resume (candidate-level)"},
+        ))
+
+    await db.commit()
+
+    # QUEUED rows' original Celery messages were consumed and skipped while
+    # paused — re-dispatch them. Other states are re-driven by the pipeline.
+    redispatched = 0
+    for app in apps:
+        if app.status == "QUEUED":
+            await _dispatch_execute_application(db, app)
+            redispatched += 1
+
+    await publish_event("application.paused", {
+        "candidate_id": str(candidate.id),
+        "paused": False,
+        "pipeline": True,
+        "count": len(apps),
+        "timestamp": _dt.utcnow().isoformat(),
+    })
+
+    return {
+        "status": "pipeline_resumed",
+        "candidate_id": str(candidate.id),
+        "resumed_applications": len(apps),
+        "redispatched_queued": redispatched,
+    }
+
+
 import httpx
 
 from app.config import get_settings

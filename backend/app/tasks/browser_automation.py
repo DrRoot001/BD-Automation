@@ -69,10 +69,22 @@ async def publish_event(event_name: str, payload: dict) -> None:
         "data": payload,
         "timestamp": datetime.datetime.utcnow().isoformat(),
     })
-    async with client.pipeline(transaction=False) as pipe:
-        pipe.publish(f"event:{clean_name}", plain)
-        pipe.publish(f"events:{clean_name}", wrapped)
-        await pipe.execute()
+    # Best-effort: the WebSocket progress feed is cosmetic — the DB (via
+    # transition_status) is the source of truth for application state, and the
+    # watchdog recovers anything genuinely stuck. A transient Redis blip while
+    # publishing a progress event must NEVER abort an in-flight browser run, so
+    # swallow connection errors here rather than letting them propagate into
+    # execute_application's retry path (which was killing healthy applies).
+    try:
+        async with client.pipeline(transaction=False) as pipe:
+            pipe.publish(f"event:{clean_name}", plain)
+            pipe.publish(f"events:{clean_name}", wrapped)
+            await pipe.execute()
+    except Exception as exc:
+        logger.warning(
+            "[Events] publish %r skipped — Redis unavailable (%s): %s",
+            clean_name, type(exc).__name__, exc,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +172,21 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
         app_resp = await client.get(f"{api_base}/applications/{app_id}")
         app_resp.raise_for_status()
         app_data = app_resp.json()
+
+        # Honour an operator pause. The QUEUED Celery message may already have been
+        # enqueued when the operator paused this row; the worker still picks it up,
+        # so bail out here WITHOUT mutating status (leave it QUEUED). Resuming re-
+        # dispatches a fresh execute_application task. Returning PAUSED skips the
+        # retry/fail handling in execute_application.
+        if app_data.get("paused"):
+            logger.info(f"[M4] Application {app_id} is paused — skipping browser execution.")
+            return ApplicationResult(
+                application_id=str(app_id),
+                status="PAUSED",
+                error_message="Application is paused by operator",
+                execution_time_seconds=0.0,
+                retry_count=retry_count,
+            )
 
         cand_id = app_data["candidate_id"]
         job_id  = app_data["job_id"]

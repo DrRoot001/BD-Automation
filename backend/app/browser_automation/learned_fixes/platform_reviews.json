@@ -77,6 +77,30 @@
       {
         "timestamp": "2026-07-08T18:27:39.853807",
         "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-09T15:03:41.041129",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-09T15:12:06.423449",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:14:38.373873",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-09T15:16:50.003544",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:21:55.715574",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:22:43.193552",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]
   },
@@ -161,6 +185,10 @@
       {
         "timestamp": "2026-07-07T18:14:54.712676",
         "error": "BLOCKED: Dice login did not complete (still on a login/challenge page: url='https://www.dice.com/dashboard/login/password'). May require MFA, email code, or a captcha the solver could not pass."
+      },
+      {
+        "timestamp": "2026-07-09T13:25:51.633285",
+        "error": "Resume file could not be resolved: https://rdfnydteruigmajebxsm.supabase.co/storage/v1/object/public/updated_resume/a1a05db4-7877-420e-93be-b5fad7f59edd/79221fe6-b722-453d-b95b-2638e39c84e2/v25/Dexter_Watts_resume.pdf"
       }
     ]
   },
@@ -190,6 +218,14 @@
       {
         "timestamp": "2026-06-30T22:02:45.116377",
         "error": "BrowserType.launch: Connection closed while reading from the driver"
+      },
+      {
+        "timestamp": "2026-07-09T15:09:23.609969",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-09T15:16:09.548387",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
       }
     ]
   },
@@ -370,6 +406,14 @@
       {
         "timestamp": "2026-07-08T18:31:08.222968",
         "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/jobs?l=Summit&id=602338154174221431'"
+      },
+      {
+        "timestamp": "2026-07-09T13:37:17.357343",
+        "error": "BLOCKED: Talent.com apply link not found (neither native Quick Apply nor an external 'f-link' apply). Posting may be expired, region-gated, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-09T14:49:23.441580",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=626992598654986625&pid=6c16c38ca32c&action=f-link'"
       }
     ]
   },
@@ -378,6 +422,14 @@
     "failures": [
       {
         "timestamp": "2026-07-07T10:21:42.292633",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T14:55:43.031479",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-09T15:06:56.726184",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
       }
     ]
@@ -397,6 +449,15 @@
       {
         "timestamp": "2026-07-08T18:06:38.968688",
         "error": "cannot access local variable 'CaptchaService' where it is not associated with a value"
+      }
+    ]
+  },
+  "builtin.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-09T15:01:35.728567",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
       }
     ]
   }

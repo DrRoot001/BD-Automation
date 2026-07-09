@@ -59,6 +59,10 @@ async def get_active_application_count(
     stmt = select(Application).where(
         Application.candidate_id == candidate_id,
         Application.status.in_(list(active_statuses)),
+        # Paused apps are intentionally held by an operator — they must not count
+        # toward the active cap, otherwise pausing a stuck app wouldn't unblock the
+        # queue (the whole point of the pause control).
+        Application.paused == 0,
         or_(Application.failure_reason.is_(None), Application.failure_reason != "JOB_EXPIRED")
     )
     if since_datetime is not None:
@@ -69,10 +73,22 @@ async def get_active_application_count(
     if is_mock:
         return len(apps)
 
+    # Staleness thresholds must mirror recover_stuck_applications_async so a row
+    # the watchdog is about to fail is not counted as "active" here. Includes the
+    # tailoring hand-off states (MATCHED/RESUME_UPDATED/COVER_LETTER_CREATED) which
+    # would otherwise pin the cap forever if their pipeline died mid-tailor.
+    STALE_THRESHOLDS_MIN = {
+        "QUEUED": 15,
+        "APPLICATION_STARTED": 20,
+        "FORM_COMPLETED": 20,
+        "MATCHED": 20,
+        "RESUME_UPDATED": 20,
+        "COVER_LETTER_CREATED": 20,
+    }
     count = 0
     now = datetime.now(timezone.utc)
     for app in apps:
-        if app.status in ["QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED"]:
+        if app.status in STALE_THRESHOLDS_MIN:
             # Check if stale (duration based on latest history transition)
             hist_stmt = (
                 select(ApplicationHistory)
@@ -93,7 +109,7 @@ async def get_active_application_count(
             if start_time.tzinfo is None:
                 start_time = start_time.replace(tzinfo=timezone.utc)
 
-            threshold_min = 15 if app.status == "QUEUED" else 20
+            threshold_min = STALE_THRESHOLDS_MIN[app.status]
             if start_time < now - timedelta(minutes=threshold_min):
                 continue
         count += 1
@@ -409,6 +425,28 @@ async def run_matching_for_candidate(
     api_base_url = api_base[:-4] if api_base.endswith("/api") else api_base
 
     for job in jobs:
+        # Operator stop: automation_paused is set by POST /candidates/{id}/pipeline/pause.
+        # The start-of-run check above only guards NEW runs; a single tailoring pass can
+        # take minutes, so re-read the flag each iteration to halt an ACTIVE run at the
+        # next job boundary. Fresh column SELECT (not session.get) to bypass the
+        # identity map and see a commit made by the API process mid-run.
+        if not is_mock:
+            paused_now = (await session.execute(
+                select(Candidate.automation_paused).where(Candidate.id == candidate_id)
+            )).scalar()
+            if paused_now:
+                from app.services.events import publish_event
+                logger.info(
+                    f"[Matching] Pipeline stopped by operator for {candidate.name} — "
+                    f"halting run ({len(enqueued)} enqueued so far)."
+                )
+                await publish_event("pipeline.progress", {
+                    "candidate_id": str(candidate_id),
+                    "step": "paused",
+                    "message": f"Pipeline stopped. {len(enqueued)} application(s) had already been queued.",
+                })
+                break
+
         if job.id in skipped_jobs:
             logger.info(f"[Matching] Skipping job {job.title} at {job.company}: already applied and not eligible for retry.")
             skipped_details.append({

@@ -36,6 +36,7 @@ class ApplicationSummary(BaseModel):
     company: str
     platform: str
     status: str
+    paused: bool = False
     fit_score: Optional[float] = None
     ats_score: Optional[float] = None
     # ATS score of the base resume vs the JD (before tailoring) and of the
@@ -213,7 +214,7 @@ async def get_applications(
 
     rows = await db.execute(text(f"""
         SELECT a.id, a.job_id, j.title, j.company, j.source AS platform,
-               a.status, a.fit_score, a.ats_score,
+               a.status, a.paused, a.fit_score, a.ats_score,
                a.submitted_at, a.created_at, a.error_message, a.failure_reason,
                r.file_url AS resume_url,
                r.is_base AS resume_is_base,
@@ -256,6 +257,7 @@ async def get_applications(
             company=r.company or "",
             platform=r.platform or "",
             status=r.status or "",
+            paused=bool(r.paused),
             fit_score=float(r.fit_score) if r.fit_score is not None else None,
             ats_score=float(r.ats_score) if r.ats_score is not None else None,
             ats_score_before=float(r.ats_score_before) if r.ats_score_before is not None else None,

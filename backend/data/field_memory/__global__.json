@@ -47,6 +47,14 @@
     "source": "agent_loop",
     "value": "While I appreciate the analytical depth and data-driven insights in fantasy sports and sportsbooks, my primary interest lies in applying data science and AI to optimize platform performance and user experience, rather than personal participation."
   },
+  "are you a us citizen": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you a US Citizen?*",
+    "last_seen": 1783609521,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
   "are you a veteran or active member of the united states armed forces": {
     "count": 11,
     "field_type": "text",
@@ -191,6 +199,22 @@
     "source": "rules",
     "value": "Yes"
   },
+  "are you willing to relocate if needed": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Are you willing to relocate if needed?",
+    "last_seen": 1783610010,
+    "source": "agent_loop",
+    "value": "No"
+  },
+  "are you willing to relocate if needed✱": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you willing to relocate if needed?✱",
+    "last_seen": 1783608936,
+    "source": "rules",
+    "value": "Yes"
+  },
   "are you willing to relocate?": {
     "count": 1,
     "field_type": "radio",
@@ -206,6 +230,14 @@
     "last_seen": 1782761904,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "availability": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Availability",
+    "last_seen": 1783610257,
+    "source": "agent_loop",
+    "value": "Immediately"
   },
   "by submitting my application, i acknowledge that i have read and understand verc": {
     "count": 12,
@@ -343,6 +375,22 @@
     "source": "agent_loop",
     "value": "I am highly interested in working at Egen as a Principal AI Engineer, as my experience in designing and scaling AI-driven products, particularly in architecting production-grade SaaS platforms and leading cross-functional teams, aligns perfectly with the role's focus on setting technical direction for Generative AI and hands-on building. I am passionate about leveraging AI to optimize processes and drive organizational growth, which resonates with Egen's mission."
   },
+  "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field1]": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field1]",
+    "last_seen": 1783609572,
+    "source": "screening",
+    "value": "Question prompt missing."
+  },
+  "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field2]": {
+    "count": 1,
+    "field_type": "text",
+    "label": "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field2]",
+    "last_seen": 1783610120,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
   "cards[a58cac90-d192-4fdb-a2ca-4f6918ff8b07][field0]": {
     "count": 1,
     "field_type": "text",
@@ -391,6 +439,30 @@
     "source": "agent_loop",
     "value": "N/A"
   },
+  "certifications": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Certifications",
+    "last_seen": 1783610297,
+    "source": "agent_loop",
+    "value": "ITSM, ITOM, ServiceNow"
+  },
+  "confirm password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Confirm password",
+    "last_seen": 1783608522,
+    "source": "agent_loop",
+    "value": "Password123!"
+  },
+  "date": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Date*",
+    "last_seen": 1783610740,
+    "source": "agent_loop",
+    "value": "2024-07-20"
+  },
   "degree": {
     "count": 2,
     "field_type": "text",
@@ -398,6 +470,14 @@
     "last_seen": 1782890279,
     "source": "agent_loop",
     "value": "Other"
+  },
+  "desired salary": {
+    "count": 3,
+    "field_type": "text",
+    "label": "Desired Salary:*",
+    "last_seen": 1783610244,
+    "source": "agent_loop",
+    "value": "Negotiable"
   },
   "disability status": {
     "count": 1,
@@ -551,6 +631,14 @@
     "source": "agent_loop",
     "value": "While I do not have direct experience with Daily Fantasy Sports or Sportsbook products, my background as a Lead Data & AI Automation Engineer and Data Engineer has provided me with extensive experience in designing scalable data pipelines, building robust monitoring systems, and leveraging AI for process automation and analytical solutions. This experience is highly relevant to managing risk and liability through data-driven insights and predictive modeling, which I believe is crucial for a DFS product."
   },
+  "do you have servicenow experience": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Do you have ServiceNow experience?",
+    "last_seen": 1783609532,
+    "source": "agent_loop",
+    "value": "Yes"
+  },
   "do you incorporate ai into your daily work": {
     "count": 8,
     "field_type": "text",
@@ -583,6 +671,14 @@
     "source": "llm:0.90",
     "value": "Immediately"
   },
+  "employee id (if applicable)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Employee ID (if applicable)",
+    "last_seen": 1783610492,
+    "source": "screening",
+    "value": "N/A"
+  },
   "end date year": {
     "count": 1,
     "field_type": "text",
@@ -590,6 +686,14 @@
     "last_seen": 1782075699,
     "source": "screening",
     "value": "2024"
+  },
+  "expected salary": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Expected Salary?",
+    "last_seen": 1783610100,
+    "source": "agent_loop",
+    "value": "$140,000 - $160,000"
   },
   "have you been employed by cockroach labs in the past": {
     "count": 1,
@@ -751,6 +855,14 @@
     "source": "screening",
     "value": "Fluent"
   },
+  "i acknowledge": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "I Acknowledge",
+    "last_seen": 1783608937,
+    "source": "rules",
+    "value": "Yes"
+  },
   "i confirm and agree": {
     "count": 1,
     "field_type": "checkbox",
@@ -791,6 +903,14 @@
     "source": "agent_loop",
     "value": "N/A"
   },
+  "if you have a college degree, what was your field of study": {
+    "count": 4,
+    "field_type": "text",
+    "label": "If you have a college degree, what was your field of study?",
+    "last_seen": 1783610283,
+    "source": "agent_loop",
+    "value": "ServiceNow"
+  },
   "immediate family member": {
     "count": 2,
     "field_type": "text",
@@ -808,12 +928,12 @@
     "value": "MST Developers"
   },
   "password": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
-    "label": "Password*",
-    "last_seen": 1783419512,
+    "label": "Password",
+    "last_seen": 1783608507,
     "source": "agent_loop",
-    "value": "AmmarHanif@123"
+    "value": "Password123!"
   },
   "pick your favorite color": {
     "count": 1,
@@ -1047,21 +1167,37 @@
     "source": "llm:0.70",
     "value": "Yes"
   },
+  "today's date": {
+    "count": 2,
+    "field_type": "date",
+    "label": "Today's Date*",
+    "last_seen": 1783610490,
+    "source": "llm:0.40",
+    "value": "2024-07-20"
+  },
   "twitter url": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "Twitter URL",
-    "last_seen": 1783419656,
+    "last_seen": 1783608930,
     "source": "screening",
-    "value": "Not provided"
+    "value": "N/A"
+  },
+  "type or paste your resume here": {
+    "count": 5,
+    "field_type": "text",
+    "label": "Type or paste your Resume here",
+    "last_seen": 1783610158,
+    "source": "agent_loop",
+    "value": "james William\nLead ServiceNow Developer / Architect\nNewark, NJ | james12william893@gmail.com | +15512166306\nProfessional Summary\nServiceNow professional with 12+ years of progressive experience delivering enterprise-scale automation and workflow\nsolutions across ITSM, ITOM, CMDB, HRSD, GRC, and SPM modules. Proven expertise in designing, developing, and\noptimizing ServiceNow platforms for global organizations. Skilled in implementing ITIL-aligned and governance-driven\nframeworks to enhance service delivery and operational excellence. Strong background in Virtual Agent deployment,\nintegrations, performance tuning, and end-to-end platform governance. Experienced in leading and mentoring developer\nteams while driving innovation through scalable ServiceNow architecture and automation.\nSkills\nServiceNow Modules: ITSM, ITOM, CMDB, HRSD, GRC, SPM, Virtual Agent, CSM, Discovery, Service Portal,\nService Catalog, Asset Management, Knowledge Management\nDevelopment & Scripting: JavaScript, Glide API, Business Rules, Client Scripts, UI Policies, UI Actions, Script\nIncludes, Flow Designer, Data Policies, Notifications\nIntegration & Automation: IntegrationHub, MID Server, REST APIs, SOAP APIs, Web Services, JSON/XML, LDAP,\nSSO, OAuth, API Gateway\nPlatform Architecture & Instance Management, Multi-Instance Strategy, Upgrades, Security ACLs, Performance\nGovernance: Optimization, Cloning, Scoped Apps, Data Policies, Dev Instance Governance\nConfiguration Management CMDB Design, Discovery Patterns, Service Mapping, Dependency Views, Reconciliation,\n& Discovery: Data Normalization, Asset Relationships, CI Classes, Identification Rules, Discovery\nSchedules\nWorkflow & Process Catalog Workflows, Approval Flows, Flow Designer, Orchestration, SLA/OLA\nAutomation: Management, Event Management, Task Automation, Notifications, Scripted Workflows,\nProcess Optimization\nReporting & Analytics: Performance Analytics, Dashboards, Reports, KPIs, Metrics Definition, Trend Analysis,\nData Visualization, Service Level Reports, Business Intelligence Integration, Custom\nAnalytics\nTools, Frameworks & ITIL Framework, Agile, Scrum, CI/CD, DevOps, Version Control (Git), Data Management,\nPractice: Testing Automation, Change Governance, Continual Service Improvement (CSI),\nDocumentation\nLeadership & Collaboration:Team Mentorship, Leading 20 Developers, Code Governance, Solution Design Reviews,\nTechnical Training, Stakeholder Communication, Sprint Planning, Cross-Team\nCollaboration, Project Coordination, Conflict Resolution\nCloud, Infrastructure & AWS, Azure, MID Server Configuration, Network Discovery, Cloud Integrations, Identity &\nSecurity: Access Management, SSL Configuration, Vulnerability Response, Patch Automation,\nMonitoring Integrations, Security Compliance\nProfessional Experience\nBluestone Innovations 10-2021 - Present\nLead ServiceNow Developer / Architect\nTechnologies: ServiceNow, ITSM, ITOM, HRSD, GRC, SPM, Virtual Agent, REST APIs, SOAP APIs, IntegrationHub, MID\nServer, CI/CD, CMDB\n(cid:127) Designed and implemented enterprise-scale ServiceNow solutions across ITSM, ITOM, HRSD, GRC, and SPM\nmodules to modernize service delivery and governance.\n(cid:127) Integrated Virtual Agent to automate end-user interactions and enhance self-service capabilities.\n(cid:127) Led and mentored a global team of 20 developers, establishing coding standards, architecture patterns, and\ngovernance frameworks.\n(cid:127) Architected integrations with third-party tools using REST/SOAP APIs, IntegrationHub, and MID Server for seamless\ndata exchange.\n(cid:127) Deployed CI/CD automation pipelines to accelerate platform releases and ensure instance consistency.\n(cid:127) Optimized CMDB structure, discovery schedules, and reconciliation rules to enhance visibility and dependency\naccuracy.\n(cid:127) Implemented SPM for demand, project, and resource management, aligning IT initiatives with business goals.\n(cid:127) Applied GRC and risk compliance automation to ensure adherence to organizational and regulatory frameworks.\n(cid:127) Directed platform performance tuning, instance cloning, and upgrade readiness assessments.\n(cid:127) Collaborated with IT leadership and stakeholders to align platform strategy with enterprise IT governance and\nsecurity compliance.\nCOPAINS 06-2018 - 09-2021\nSenior ServiceNow Developer / Engineer\nTechnologies: ServiceNow, ITSM, HRSD, Incident Management, Problem Management, Change Management, Request\nManagement, Virtual Agent, Flow Designer, Orchestration, CMD"
   },
   "type your response": {
-    "count": 11,
+    "count": 16,
     "field_type": "text",
     "label": "Type your response",
-    "last_seen": 1782932431,
+    "last_seen": 1783610087,
     "source": "agent_loop",
-    "value": "$150,000 - $180,000"
+    "value": "My background includes extensive experience in business process consulting and leveraging ServiceNow for digital transformation."
   },
   "verify new password": {
     "count": 1,
@@ -1072,12 +1208,28 @@
     "value": "AmmarHanif@123"
   },
   "veteran status": {
-    "count": 3,
+    "count": 4,
+    "field_type": "select",
+    "label": "Veteran status",
+    "last_seen": 1783608934,
+    "source": "rules",
+    "value": "I am not a protected veteran"
+  },
+  "what": {
+    "count": 1,
     "field_type": "text",
-    "label": "Veteran Status",
-    "last_seen": 1782915058,
+    "label": "What?",
+    "last_seen": 1783609017,
+    "source": "screening",
+    "value": "I bring 12 years of experience as a ServiceNow Engineer, specializing in architecting and implementing comprehensive solutions across ITSM, ITOM, HRSD, GRC, and SPM."
+  },
+  "what % of travel are you open to": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What % of travel are you open to?",
+    "last_seen": 1783609958,
     "source": "agent_loop",
-    "value": "No"
+    "value": "0%"
   },
   "what additional accommodations do you need to feel comfortable during your interview process all responses will be kept private": {
     "count": 1,
@@ -1135,6 +1287,14 @@
     "source": "agent_loop",
     "value": "$120,000 - $150,000"
   },
+  "what is your highest degree of education achieved": {
+    "count": 3,
+    "field_type": "text",
+    "label": "What is your highest degree of education achieved?",
+    "last_seen": 1783610270,
+    "source": "agent_loop",
+    "value": "Master's Degree"
+  },
   "what specifically interests you about working at sleeper": {
     "count": 1,
     "field_type": "text",
@@ -1150,6 +1310,14 @@
     "last_seen": 1782028431,
     "source": "llm:0.90",
     "value": "Immediately"
+  },
+  "where": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Where?",
+    "last_seen": 1783608590,
+    "source": "agent_loop",
+    "value": "Newark, NJ"
   },
   "where did you first hear about this role": {
     "count": 10,
@@ -1216,10 +1384,18 @@
     "value": "Yes"
   },
   "work authorization": {
-    "count": 3,
+    "count": 6,
     "field_type": "text",
     "label": "Work Authorization",
-    "last_seen": 1783543021,
+    "last_seen": 1783603568,
+    "source": "agent_loop",
+    "value": "US Citizen"
+  },
+  "work authorization status (us citizen, green card holder, etc.)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Work Authorization status (US Citizen, Green Card Holder, etc.)",
+    "last_seen": 1783610130,
     "source": "agent_loop",
     "value": "US Citizen"
   },
@@ -1238,5 +1414,13 @@
     "last_seen": 1781982233,
     "source": "llm:0.95",
     "value": "Yes"
+  },
+  "zip": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Zip*",
+    "last_seen": 1783609898,
+    "source": "screening",
+    "value": "Not provided."
   }
 }

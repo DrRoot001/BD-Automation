@@ -24,10 +24,10 @@
     "value": "Watts"
   },
   "work authorization": {
-    "count": 3,
+    "count": 6,
     "field_type": "text",
     "label": "Work Authorization",
-    "last_seen": 1783543021,
+    "last_seen": 1783603568,
     "source": "agent_loop",
     "value": "US Citizen"
   }
