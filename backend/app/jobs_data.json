@@ -12623,5 +12623,93 @@
     "embedding": null,
     "id": "d82d3ae1-9f78-469b-bddc-532944b30dee",
     "created_at": "2026-07-07T13:03:46.180386+00:00"
+  },
+  {
+    "title": "React Developer",
+    "company": "TechCorp",
+    "location": "Remote, US",
+    "source": "linkedin",
+    "source_url": "https://linkedin.com/jobs/123",
+    "canonical_url": null,
+    "description": "Building beautiful React apps",
+    "skills": [
+      "React",
+      "TypeScript",
+      "Tailwind"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": null,
+    "posted_at": null,
+    "embedding": null,
+    "id": "638b8469-90f5-41d4-9b8f-9d24494f94fb",
+    "created_at": "2026-07-09T22:35:26.811255+00:00"
+  },
+  {
+    "title": "FastAPI Engineer",
+    "company": "DataSoft",
+    "location": "New York",
+    "source": "glassdoor",
+    "source_url": "https://glassdoor.com/jobs/456",
+    "canonical_url": null,
+    "description": "Python API development",
+    "skills": [
+      "Python",
+      "FastAPI",
+      "Docker"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": null,
+    "posted_at": null,
+    "embedding": null,
+    "id": "a49b3d51-0677-440f-a440-7883d5aa1192",
+    "created_at": "2026-07-09T22:35:30.447741+00:00"
+  },
+  {
+    "title": "React Developer",
+    "company": "TechCorp",
+    "location": "Remote, US",
+    "source": "linkedin",
+    "source_url": "https://linkedin.com/jobs/123",
+    "canonical_url": null,
+    "description": "Building beautiful React apps",
+    "skills": [
+      "React",
+      "TypeScript",
+      "Tailwind"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": null,
+    "posted_at": null,
+    "embedding": null,
+    "id": "7ce7a5e3-fbae-473b-8ee0-0a65e8936620",
+    "created_at": "2026-07-09T22:36:37.326895+00:00"
+  },
+  {
+    "title": "FastAPI Engineer",
+    "company": "DataSoft",
+    "location": "New York",
+    "source": "glassdoor",
+    "source_url": "https://glassdoor.com/jobs/456",
+    "canonical_url": null,
+    "description": "Python API development",
+    "skills": [
+      "Python",
+      "FastAPI",
+      "Docker"
+    ],
+    "salary_min": null,
+    "salary_max": null,
+    "pay_period": null,
+    "job_type": null,
+    "posted_at": null,
+    "embedding": null,
+    "id": "d1ae3e09-ca21-4a54-b896-c49bb13a8ed8",
+    "created_at": "2026-07-09T22:36:38.716190+00:00"
   }
 ]

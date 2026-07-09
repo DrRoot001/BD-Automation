@@ -339,7 +339,7 @@ async def tailor_resume(
         generate_resume_pdf,
         output_path=output_pdf_path,
         name=basics.get("name", "Candidate"),
-        headline=basics.get("headline", ""),
+        headline=getattr(resume.sections, "current_title", "") or "",
         email=basics.get("email", ""),
         phone=basics.get("phone", ""),
         location=basics.get("location", ""),
