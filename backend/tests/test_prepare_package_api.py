@@ -225,7 +225,9 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "Tailored ATS score (30.0) is below gate threshold of 45.0." in data["reason"]
+    import os
+    threshold = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+    assert f"Tailored ATS score (30.0) is below gate threshold of {threshold}." in data["reason"]
 
     # Assert gating works
     mock_tailor_resume.assert_called_once()
