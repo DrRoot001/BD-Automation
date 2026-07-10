@@ -279,7 +279,10 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
 @celery_app.task(
     bind=True,
     name="task:dynamic_apply",
-    queue="queue:job_processing",
+    # NOTE: do NOT add queue= here — task_routes in celery_app.py routes this
+    # task to queue:job_processing{suffix}. A decorator queue= beats task_routes
+    # on .delay() and would silently send tasks to the bare (unsuffixed) queue
+    # where no worker is listening.
     max_retries=1,
 )
 def dynamic_apply(self, candidate_id: str, max_apps: Optional[int] = None, bd_user_id: Optional[str] = None, time_filter: Optional[str] = None, platform: Optional[str] = None):
