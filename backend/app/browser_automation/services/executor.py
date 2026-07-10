@@ -487,7 +487,7 @@ class ApplicationExecutor:
             from .state_machine import fetch_application_status
             _SUBMITTED_STATES = {"SUBMITTED", "CONFIRMED", "INTERVIEW_R1",
                                  "INTERVIEW_R2", "OFFER"}
-            _TERMINAL_NEG_STATES = {"REJECTED", "GHOSTED", "WITHDRAWN"}
+            _TERMINAL_NEG_STATES = {"REJECTED", "GHOSTED", "WITHDRAWN", "FAILED", "BLOCKED"}
             _current_status = await fetch_application_status(package.application_id)
             if _current_status in _SUBMITTED_STATES or _current_status in _TERMINAL_NEG_STATES:
                 logger.warning(
