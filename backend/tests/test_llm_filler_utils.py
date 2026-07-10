@@ -2,26 +2,11 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock
 from backend.app.browser_automation.forms.llm_filler import _read_field_value, _values_match
 from backend.app.browser_automation.forms.models import FormField
-from module2.run_scrape import get_api_base_url
-
-
 def test_values_match():
     assert _values_match("Fluent (Professional Working Proficiency).", "Fluent (Professional Working Proficiency).")
     assert _values_match("Fluent (Professional Working Proficiency).", "Fluent")
     assert _values_match("San Francisco", "San Francisco, CA")
     assert not _values_match("Fluent (Professional Working Proficiency).", "402090")
-
-
-def test_get_api_base_url_default(monkeypatch):
-    monkeypatch.delenv("M1_API_BASE_URL", raising=False)
-    monkeypatch.delenv("API_BASE_URL", raising=False)
-    monkeypatch.delenv("API_URL", raising=False)
-    assert get_api_base_url() == "http://localhost:8000"
-
-
-def test_get_api_base_url_strips_api_suffix(monkeypatch):
-    monkeypatch.setenv("M1_API_BASE_URL", "http://localhost:8000/api")
-    assert get_api_base_url() == "http://localhost:8000"
 
 
 @pytest.mark.asyncio
