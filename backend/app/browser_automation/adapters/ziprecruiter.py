@@ -321,8 +321,8 @@ class ZipRecruiterAdapter(BasePlatformAdapter):
 
         logger.info("[ZipRecruiter] hCaptcha detected; attempting solve")
         try:
-            from ..captcha import CaptchaService
-            provider = os.getenv("CAPTCHA_PROVIDER", "ai").lower()
+            from ..captcha import CaptchaService, resolve_captcha_provider
+            provider = resolve_captcha_provider()
             solution = await CaptchaService(provider=provider).solve(page, "hcaptcha")
             logger.info(f"[ZipRecruiter] hCaptcha solve success={getattr(solution, 'success', False)}")
         except Exception as exc:

@@ -81,7 +81,7 @@ _SUCCESS_TEXT_PATTERNS = (
     "we've received your application",
     "successfully applied",
     "thank you for applying",
-    "thank you",
+    "thank you for your application",
 )
 
 
@@ -346,8 +346,8 @@ class TalentAdapter(BasePlatformAdapter):
             captcha_type = "recaptcha_v2"
 
         logger.info(f"[Talent] Captcha detected ({captcha_type}); solving (AI + Whisper audio)")
-        from ..captcha import CaptchaService
-        provider = os.getenv("CAPTCHA_PROVIDER", "ai").lower()
+        from ..captcha import CaptchaService, resolve_captcha_provider
+        provider = resolve_captcha_provider()
         # reCAPTCHA v2 free-solving (AI checkbox-pass + Whisper audio) is
         # probabilistic — retry a few times to maximize the FIRST-pass success.
         # Once passed, the session cookies are trusted and subsequent runs skip

@@ -94,11 +94,12 @@ async def orchestrate_application_package(
     Score -> (tailor resume IF resume<->JD ATS < threshold, else use base) ->
     Cover Letter -> QA -> Queue for browser automation.
 
-    There is NO apply-gate: every matched job is queued for browser automation.
-    The score threshold (TAILOR_ATS_THRESHOLD, default 70) ONLY decides whether
-    the resume is tailored to the posting or the base resume is used as-is.
-    (`skip_gate` is retained for backwards-compat but no longer has any effect,
-    since the gate has been removed.)
+    APPLY GATE (active): after tailoring, if the tailored ATS score
+    (`ats_score_after`) is below APPLY_SCORE_THRESHOLD (default 45) the app is
+    transitioned to ANALYZED and NOT queued for browser automation. Jobs at or
+    above the threshold return status "QUEUED" and matching.py dispatches
+    execute_application. Pass `skip_gate=True` to bypass the gate (e.g. manual
+    force-apply); the tailored resume/cover letter are persisted either way.
 
     If existing_app_id is provided the orchestrator reuses that record instead
     of creating a new one (prevents duplicates when matching.py pre-creates it).
@@ -290,8 +291,11 @@ async def orchestrate_application_package(
         )
         print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
 
-        # Check Gate Threshold on TAILORED score
-        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        # Check Gate Threshold on the TAILORED ATS score (the post-tailoring
+        # fit). Default MUST match the documented value (CLAUDE.md / .env.example
+        # = 45); the old hardcoded 75 silently gated out most jobs when
+        # APPLY_SCORE_THRESHOLD was unset.
+        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "45"))
         if tailored_resume.ats_score_after < threshold_val and not skip_gate:
             print(f"[ORCHESTRATOR] ats_score_after ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}. Transitioning status to ANALYZED and STOPPING.")
             
@@ -374,21 +378,29 @@ async def orchestrate_application_package(
             raw_text="[Tailored Resume]"
         )
 
-        # Step 2: Cover Letter (utilizing tailored resume details)
-        print("[ORCHESTRATOR] Running Step 2: Cover Letter Generation...")
-        cover_letter = await generate_cover_letter(tailored_resume_data, job, candidate)
-        cover_letter_url = cover_letter.pdf_url
-        print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
-        
-        # Upload Cover letter to Supabase
-        candidate_name = candidate.get("name") or candidate_id
-        clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
-        remote_cl_url = await upload_file_to_supabase(
-            cover_letter_url, 
-            "cover_letter",
-            f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_cover_letter.pdf"
-        )
-        cover_letter_url = remote_cl_url
+        # Step 2: Cover Letter (utilizing tailored resume details). A cover
+        # letter is OPTIONAL — a generation/upload failure must NEVER abort the
+        # whole application (which would silently drop the browser apply, as a
+        # cover-letter JSON-shape crash just did). Degrade to no cover letter and
+        # continue; the executor/AgentLoop already handle a missing one.
+        cover_letter_url = None
+        try:
+            print("[ORCHESTRATOR] Running Step 2: Cover Letter Generation...")
+            cover_letter = await generate_cover_letter(tailored_resume_data, job, candidate)
+            local_cl_path = cover_letter.pdf_url
+            print(f"[ORCHESTRATOR] Cover Letter compiled to: {local_cl_path}")
+
+            # Upload Cover letter to Supabase
+            candidate_name = candidate.get("name") or candidate_id
+            clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
+            cover_letter_url = await upload_file_to_supabase(
+                local_cl_path,
+                "cover_letter",
+                f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_cover_letter.pdf"
+            )
+        except Exception as _cl_exc:
+            print(f"[ORCHESTRATOR] Cover letter step failed (non-fatal — continuing without a cover letter): {_cl_exc}")
+            cover_letter_url = None
 
         # Step 3: Screening Questions (utilizing tailored resume details)
         screening_answers = {}
@@ -605,8 +617,11 @@ async def prepare_package_for_live_application(
         )
         print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
 
-        # Check Gate Threshold on TAILORED score
-        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        # Check Gate Threshold on the TAILORED ATS score (the post-tailoring
+        # fit). Default MUST match the documented value (CLAUDE.md / .env.example
+        # = 45); the old hardcoded 75 silently gated out most jobs when
+        # APPLY_SCORE_THRESHOLD was unset.
+        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "45"))
         if tailored_resume.ats_score_after < threshold_val and not skip_gate:
             print(f"[ORCHESTRATOR] ats_score_after ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}. Transitioning status to ANALYZED and STOPPING.")
             

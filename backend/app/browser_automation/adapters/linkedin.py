@@ -175,17 +175,34 @@ class LinkedInEasyApplyAdapter(BasePlatformAdapter):
         return await self._click_one(page, "submit", _SUBMIT_SELECTORS)
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
+        # Scope to the post-submit confirmation dialog and match SPECIFIC text.
+        # The old bare "Done" substring matched aria-labels/JS bundles/i18n on
+        # essentially every LinkedIn page → phantom SUBMITTED records.
+        patterns = (
+            "your application was sent",
+            "application submitted",
+            "you've applied",
+            "your application has been submitted",
+        )
+        # Prefer the confirmation modal's own text; fall back to whole-page text
+        # but only for the same specific phrases (never a bare "done").
         try:
-            content = await page.content()
+            for sel in ("[role='dialog']", ".artdeco-modal", ".jobs-easy-apply-modal"):
+                dlg = page.locator(sel).first
+                if await dlg.count() > 0 and await dlg.is_visible():
+                    txt = (await dlg.inner_text()).lower()
+                    for p in patterns:
+                        if p in txt:
+                            return True, p
+        except Exception:
+            pass
+        try:
+            content = (await page.content()).lower()
         except Exception:
             return False, None
-        for pattern in (
-            "Your application was sent",
-            "Application sent",
-            "Done",
-        ):
-            if pattern in content:
-                return True, pattern
+        for p in patterns:
+            if p in content:
+                return True, p
         return False, None
 
     async def _click_one(self, page: Page, channel: str, candidates: list) -> bool:

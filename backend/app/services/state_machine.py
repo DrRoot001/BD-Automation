@@ -34,6 +34,7 @@ def validate_transition(current: str, target: str) -> bool:
 
 
 import logging
+import os
 from datetime import datetime, timedelta, timezone
 
 from app.models.application import Application
@@ -94,10 +95,22 @@ async def recover_stuck_applications_async(session: AsyncSession) -> None:
             # This prevents stale QUEUED jobs from appearing as "limit reached".
             threshold_min = 15
         else:
-            # APPLICATION_STARTED / FORM_COMPLETED: reduce to 20 min so stuck browser
-            # sessions don't block worker slots for a full 30 minutes. The 30 min threshold
-            # was causing live workers to appear "full" even though the browser had crashed.
-            threshold_min = 20
+            # APPLICATION_STARTED / FORM_COMPLETED: this MUST sit ABOVE the Celery
+            # hard time-limit (task_time_limit=3600s/60min in celery_app.py) plus a
+            # safety buffer. A browser apply on a multi-step ATS (Workday/iCIMS)
+            # can legitimately run many minutes (form-fill + captcha + OTP polling);
+            # the OLD 20-min threshold reaped LIVE-but-slow applies, marking them
+            # FAILED/INFRA_ERROR while the browser was still submitting — and a
+            # FAILED→SUBMITTED transition is invalid, so the real submission was
+            # lost and the job became eligible for a duplicate re-apply. Celery
+            # itself hard-kills a hung task at 60 min and frees the worker slot, so
+            # the watchdog only needs to fix the DB status of TRULY dead workers
+            # (process gone, finally never ran) — anything still APPLICATION_STARTED
+            # past ~70 min. Overridable via STUCK_APP_THRESHOLD_MIN.
+            try:
+                threshold_min = int(os.getenv("STUCK_APP_THRESHOLD_MIN", "70"))
+            except (TypeError, ValueError):
+                threshold_min = 70
 
         time_limit = now - timedelta(minutes=threshold_min)
 

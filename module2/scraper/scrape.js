@@ -17,7 +17,7 @@ import { FIELDS, DEFAULT_LIMIT } from './fields.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(__dirname, '../../backend/.env') });
 
-const DEFAULT_MODEL = process.env.AI_MODEL || 'google:gemini-2.5-flash';
+const DEFAULT_MODEL = process.env.AI_MODEL || 'google:gemini-3.5-flash';
 const FALLBACK_MODEL = null;
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

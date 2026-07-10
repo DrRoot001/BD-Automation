@@ -37,14 +37,18 @@ _SUBMIT_SELECTORS = [
     "[role='button']:has-text('Submit')",
 ]
 
+# Specific confirmation phrases only. A bare "thank you" matches page footers,
+# cookie notices and newsletter confirmations on almost any site and caused
+# false-positive SUBMITTED records — it is deliberately excluded.
 _SUCCESS_PATTERNS = (
     "thank you for applying",
-    "thank you",
+    "thank you for your application",
     "application received",
     "successfully submitted",
-    "we'll be in touch",
     "application complete",
     "your application has been",
+    "we've received your application",
+    "we have received your application",
 )
 
 

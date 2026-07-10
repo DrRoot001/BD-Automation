@@ -99,8 +99,35 @@ async def generate_cover_letter(
             ]
         }
 
-    # Extract the strict single paragraph for the PDF generator
-    letter_paragraphs = cl_json.get("paragraphs", [])
+    # Extract the paragraphs for the PDF generator. The LLM's JSON shape varies
+    # by model/run: gemini-3.5-flash sometimes returns a BARE LIST of paragraph
+    # strings, other times a dict keyed "paragraphs"/"cover_letter"/"body", or a
+    # single string. The old code assumed a dict and crashed with
+    # "'list' object has no attribute 'get'". Normalize every shape here.
+    def _coerce_paragraphs(obj) -> list:
+        if isinstance(obj, list):
+            return [str(p).strip() for p in obj if str(p).strip()]
+        if isinstance(obj, dict):
+            val = (obj.get("paragraphs") or obj.get("cover_letter")
+                   or obj.get("body") or obj.get("content") or [])
+            if isinstance(val, str):
+                return [s.strip() for s in val.split("\n\n") if s.strip()]
+            if isinstance(val, list):
+                return [str(p).strip() for p in val if str(p).strip()]
+            return []
+        if isinstance(obj, str):
+            return [s.strip() for s in obj.split("\n\n") if s.strip()]
+        return []
+
+    letter_paragraphs = _coerce_paragraphs(cl_json)
+    if not letter_paragraphs:
+        # Never emit an empty cover letter — fall back to a generic body.
+        letter_paragraphs = [
+            "I am writing to express my strong interest in the open position. My "
+            "technical background aligns well with the core requirements outlined "
+            "in the job description, and I would welcome the opportunity to discuss "
+            "how I can contribute to your team. Thank you for your time and consideration."
+        ]
     letter_content = "\n\n".join(letter_paragraphs)
     
     candidate_name = _first_non_blank(candidate_profile.get("name"), "Candidate")

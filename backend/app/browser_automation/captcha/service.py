@@ -36,8 +36,24 @@ _OCILAR_BASE = "https://api.ocilar.com/v1"
 _PAID_TOKEN_TYPES = {"recaptcha_v2", "turnstile", "hcaptcha"}
 
 
+def resolve_captcha_provider(default: str = "anticaptcha") -> str:
+    """Single source of truth for the configured captcha provider.
+
+    Every call site MUST use this instead of an ad-hoc os.getenv(..., "<x>")
+    default so provider selection is deterministic across every code path. The
+    operator's funded Anti-Captcha key is the universal primary: when
+    CAPTCHA_PROVIDER is unset (or set to something unknown) we fall back to
+    "anticaptcha" rather than to a placeholder/free provider that would silently
+    bypass the paid key.
+    """
+    prov = (os.getenv("CAPTCHA_PROVIDER") or default).lower().strip()
+    return prov if prov in _PROVIDER_ENV else default
+
+
 class CaptchaService:
-    def __init__(self, api_key: Optional[str] = None, provider: str = "2captcha"):
+    def __init__(self, api_key: Optional[str] = None, provider: Optional[str] = None):
+        if provider is None:
+            provider = resolve_captcha_provider()
         self.provider = provider.lower()
         if self.provider not in _PROVIDER_ENV:
             raise ValueError(f"Provider must be one of {list(_PROVIDER_ENV)}")
@@ -161,12 +177,27 @@ class CaptchaService:
             return True, None
 
         if body.get("errorId") not in (0, None):
-            code = body.get("errorCode") or ""
+            code = (body.get("errorCode") or "").upper()
             desc = body.get("errorDescription") or code or "unknown error"
-            logger.error(f"[CAPTCHA] {self.provider} auth check failed: {desc} ({code})")
-            self._balance_ok = False
-            self._balance_reason = f"{self.provider} key rejected: {desc}"
-            return False, self._balance_reason
+            # Only a genuine key/auth/balance rejection should gate off the
+            # provider for the whole run. A transient error (rate limit, brief
+            # server trouble) must NOT turn a solvable captcha into a terminal
+            # BLOCKED — fall through and let the real solve surface any error.
+            _FATAL = (
+                "ERROR_KEY_DOES_NOT_EXIST", "ERROR_ZERO_BALANCE",
+                "ERROR_ACCOUNT_SUSPENDED", "ERROR_KEY_DENIED_ACCESS",
+                "ERROR_IP_BLOCKED", "ERROR_IP_BANNED",
+            )
+            if any(f in code for f in _FATAL):
+                logger.error(f"[CAPTCHA] {self.provider} auth check failed: {desc} ({code})")
+                self._balance_ok = False
+                self._balance_reason = f"{self.provider} key rejected: {desc}"
+                return False, self._balance_reason
+            logger.warning(
+                f"[CAPTCHA] {self.provider} getBalance transient error "
+                f"({desc}/{code}); proceeding to a real solve attempt"
+            )
+            return True, None
 
         balance = body.get("balance")
         if isinstance(balance, (int, float)) and balance <= 0:
@@ -663,6 +694,27 @@ class CaptchaService:
         if not image_b64:
             return CaptchaSolution(captcha_type=captcha_type, success=False,  # type: ignore[arg-type]
                                    solve_time_seconds=0, cost_usd=0)
+
+        # Prefer the funded universal provider (Anti-Captcha ImageToTextTask)
+        # for OCR when it is the configured provider — so the paid key covers
+        # image captchas too, not just token captchas. Ocilar remains the
+        # fallback below.
+        anti_key = self._resolve_anticaptcha_key()
+        if self.provider == "anticaptcha" and anti_key:
+            try:
+                async with httpx.AsyncClient(timeout=40) as client:
+                    tid = await self._anticaptcha_submit(
+                        client, {"type": "ImageToTextTask", "body": image_b64},
+                        client_key=anti_key)
+                    text = await self._anticaptcha_poll(client, tid, client_key=anti_key)
+                if text:
+                    logger.info("[CAPTCHA] image solved via Anti-Captcha ImageToTextTask")
+                    return CaptchaSolution(captcha_type=captcha_type, token=text, success=True,  # type: ignore[arg-type]
+                                           solve_time_seconds=time.monotonic() - start, cost_usd=0.001)
+                logger.info("[CAPTCHA] Anti-Captcha image OCR empty; falling back to Ocilar")
+            except Exception as exc:
+                logger.warning(f"[CAPTCHA] Anti-Captcha image OCR failed: {exc}; falling back to Ocilar")
+
         ocilar_key = os.getenv("OCILAR_API_KEY", "") if self.provider != "ocilar" else self.api_key
         if not ocilar_key:
             logger.warning("[CAPTCHA] No OCILAR_API_KEY configured — cannot solve image captcha")
@@ -798,16 +850,80 @@ class CaptchaService:
             }
         }""", token)
 
+    async def _extract_v3_sitekey(self, page: Page) -> Optional[str]:
+        """Pull the reCAPTCHA v3 site key from the anchor iframe (?k=…) or a
+        data-sitekey attribute so Anti-Captcha can mint a scored token."""
+        anchor = await self._extract_v3_anchor_url(page)
+        if anchor:
+            import urllib.parse
+            k = urllib.parse.parse_qs(urllib.parse.urlparse(anchor).query).get("k", [None])[0]
+            if k:
+                return k
+        try:
+            el = await page.query_selector("[data-sitekey]")
+            if el:
+                key = await el.get_attribute("data-sitekey")
+                if key:
+                    return key
+        except Exception:
+            pass
+        return None
+
+    async def _solve_recaptcha_v3_anticaptcha(self, page: Page) -> Optional[str]:
+        """Mint a scored reCAPTCHA v3 token via Anti-Captcha RecaptchaV3TaskProxyless."""
+        site_key = await self._extract_v3_sitekey(page)
+        if not site_key:
+            return None
+        try:
+            min_score = float(os.getenv("RECAPTCHA_V3_MIN_SCORE", "0.7"))
+        except (TypeError, ValueError):
+            min_score = 0.7
+        anti_key = self._resolve_anticaptcha_key()
+        task: dict = {
+            "type": "RecaptchaV3TaskProxyless",
+            "websiteURL": page.url,
+            "websiteKey": site_key,
+            "minScore": min_score,
+        }
+        page_action = os.getenv("RECAPTCHA_V3_ACTION", "").strip()
+        if page_action:
+            task["pageAction"] = page_action
+        async with httpx.AsyncClient(timeout=30) as client:
+            tid = await self._anticaptcha_submit(client, task, client_key=anti_key or self.api_key)
+            return await self._anticaptcha_poll(client, tid, polls=20,
+                                                client_key=anti_key or self.api_key)
+
     async def solve_recaptcha_v3(self, page: Page) -> CaptchaSolution:
-        """Solve reCAPTCHA v3 using the freecaptcha library without an API key."""
+        """Solve reCAPTCHA v3, preferring the funded Anti-Captcha key.
+
+        Order: (1) Anti-Captcha RecaptchaV3TaskProxyless (mints a scored token
+        we inject), (2) the free freecaptcha library, (3) a last-resort
+        auto-bypass — legitimate for v3 specifically, which is invisible and
+        score-based (there is no client-side "passed" signal to verify; the
+        page's own grecaptcha.execute() may still pass on a stealth session)."""
         start = time.monotonic()
+
+        # 1) Preferred — mint a real scored token via Anti-Captcha.
+        if self.provider == "anticaptcha" and (self._resolve_anticaptcha_key() or self.api_key):
+            try:
+                token = await self._solve_recaptcha_v3_anticaptcha(page)
+                if token:
+                    logger.info("[CAPTCHA] reCAPTCHA v3 token minted via Anti-Captcha")
+                    await self._inject_recaptcha_v3_token(page, token)
+                    return CaptchaSolution(
+                        captcha_type="recaptcha_v3", token=token, success=True,
+                        solve_time_seconds=time.monotonic() - start, cost_usd=0.002)
+                logger.info("[CAPTCHA] Anti-Captcha v3 returned no token; trying freecaptcha")
+            except Exception as exc:
+                logger.warning(f"[CAPTCHA] Anti-Captcha v3 solve failed: {exc}; trying freecaptcha")
+
         anchor_url = await self._extract_v3_anchor_url(page)
 
         if not anchor_url:
             logger.info("[CAPTCHA] reCAPTCHA v3 anchor URL not found on page; trusting auto-bypass")
             return CaptchaSolution(
                 captcha_type="recaptcha_v3", token="auto_bypassed",
-                success=True, solve_time_seconds=0, cost_usd=0
+                success=True, solve_time_seconds=time.monotonic() - start, cost_usd=0
             )
 
         logger.info("[CAPTCHA] Attempting reCAPTCHA v3 bypass with freecaptcha...")
@@ -903,12 +1019,13 @@ class CaptchaService:
     async def solve(self, page: Page, captcha_type: str, max_attempts: int = 3) -> CaptchaSolution:
         """Solve a captcha with up to *max_attempts* retries.
 
-        Layered strategy (AI-first):
-          1. AI vision solver — silent checkbox pass / image-grid / OCR.
-             Free, fast, no external API key needed. Works on a fraction
-             of reCAPTCHA v2 cases and most simple OCR captchas.
-          2. Configured paid provider (2Captcha / AntiCaptcha / Ocilar).
-          3. Ocilar OCR fallback for image captchas.
+        Layered strategy (Anti-Captcha-primary):
+          1. PRIORITY: the funded Anti-Captcha key runs FIRST for every token
+             type it supports (reCAPTCHA v2/v3, hCaptcha, Turnstile) and for
+             image OCR — this is the operator's universal primary solver.
+          2. Free in-process AI vision solver + Whisper audio (v2) — fallback
+             when the paid provider is unavailable or exhausted.
+          3. Ocilar OCR as the final image-captcha fallback.
 
         Between attempts the captcha widget is refreshed so the next attempt
         gets a fresh challenge.
@@ -936,11 +1053,19 @@ class CaptchaService:
         # / Whisper solvers below are free and still run regardless.
         paid_ok, paid_reason = await self._ensure_provider_ok()
 
+        # Tracks whether the anticaptcha priority phase already ran the paid
+        # provider — if it did, the standard paid loop below MUST NOT run it
+        # again (that was a bug: up to 6 paid attempts instead of 3, doubling
+        # both wall-clock and cost).
+        priority_ran = False
+        priority_last: Optional[CaptchaSolution] = None
+
         # ── Priority Phase: anticaptcha first ──────────────────────────────────
         # If the provider is anticaptcha and it has a valid API key + balance, run
         # it first as priority instead of fallback.
         if self.provider == "anticaptcha" and self.api_key and paid_ok:
             logger.info("[CAPTCHA] anticaptcha key detected and configured as priority. Solving via anticaptcha first.")
+            priority_ran = True
             last: Optional[CaptchaSolution] = None
             for attempt in range(1, max_attempts + 1):
                 logger.info(f"[CAPTCHA] Priority Attempt {attempt}/{max_attempts} | type={captcha_type} | provider=anticaptcha")
@@ -965,6 +1090,7 @@ class CaptchaService:
                     await self._refresh_captcha_widget(page, captcha_type)
                     await asyncio.sleep(jitter)
 
+            priority_last = last
             logger.warning("[CAPTCHA] anticaptcha priority solve failed or exhausted all attempts; falling back to default AI/Whisper solvers.")
 
         # ── Phase 0: try the in-process AI solver first ─────────────────────
@@ -1023,17 +1149,25 @@ class CaptchaService:
             except Exception as exc:
                 logger.warning(f"[CAPTCHA] Whisper audio solver raised (non-fatal): {exc}")
 
-        last: Optional[CaptchaSolution] = None
+        # Preserve any failed-but-informative solution from the priority phase.
+        last: Optional[CaptchaSolution] = priority_last
 
-        # Skip the paid retry loop for token types when the provider auth/balance
-        # gate already reported the configured provider is dead/zero-balance —
-        # retrying would only burn timed-out attempts. ("image" is exempt because
-        # it routes to Ocilar, independent of the configured provider.)
-        _skip_paid = (not paid_ok) and (captcha_type in _PAID_TOKEN_TYPES)
-        if _skip_paid:
+        # Skip the paid retry loop when either (a) the provider auth/balance gate
+        # reported the configured provider dead/zero-balance for a token type, or
+        # (b) the anticaptcha priority phase already exhausted the paid attempts —
+        # re-running the same provider would only burn duplicate timed-out
+        # attempts. ("image" is exempt from (a) because it routes to Ocilar.)
+        _gate_skip = (not paid_ok) and (captcha_type in _PAID_TOKEN_TYPES)
+        _skip_paid = _gate_skip or priority_ran
+        if _gate_skip:
             logger.error(
                 f"[CAPTCHA] Skipping {max_attempts} paid attempts for type={captcha_type}: "
                 f"{self.provider} unavailable ({paid_reason})."
+            )
+        elif priority_ran:
+            logger.info(
+                "[CAPTCHA] Skipping standard paid loop — anticaptcha priority "
+                "phase already exhausted the paid attempts for this captcha."
             )
         else:
             for attempt in range(1, max_attempts + 1):
@@ -1071,10 +1205,12 @@ class CaptchaService:
             except Exception as exc:
                 logger.error(f"[CAPTCHA] Ocilar fallback failed: {exc}")
 
-        # Paid loop was skipped because the configured provider is dead/exhausted
-        # and no free solver succeeded — surface a distinguishable clean-fail so
-        # the executor maps it to a terminal BLOCKED rather than a generic error.
-        if _skip_paid and not (last and last.success):
+        # Paid loop was skipped because the configured provider's key is
+        # dead/zero-balance and no free solver succeeded — surface a
+        # distinguishable clean-fail so the executor maps it to a terminal
+        # BLOCKED rather than a generic error. (Only the auth/balance gate skip
+        # is "unsupported"; a priority-phase exhaustion is a normal failure.)
+        if _gate_skip and not (last and last.success):
             return CaptchaSolution(captcha_type=captcha_type, success=False,  # type: ignore[arg-type]
                                    error=f"CAPTCHA_UNSUPPORTED: {paid_reason}",
                                    solve_time_seconds=0, cost_usd=0)

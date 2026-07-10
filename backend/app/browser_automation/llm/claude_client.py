@@ -23,8 +23,10 @@ import asyncio
 import base64
 import json
 import logging
+import asyncio
 import os
 import re
+import weakref
 from typing import Any, List, Optional
 
 import httpx
@@ -60,10 +62,12 @@ _MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
-# Free tier on gemini-2.5-flash gives generous quota; no separate top-up needed.
+# Default model is gemini-3.5-flash (multimodal — handles the AgentLoop's
+# screenshot+DOM vision turns and text turns). Overridable via GEMINI_MODEL /
+# GEMINI_VISION_MODEL without a code change.
 _GEMINI_BASE = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
-_GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-_GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+_GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+_GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash")
 
 
 def _resolve_api_keys() -> list[str]:
@@ -153,8 +157,11 @@ class ClaudeClient:
         self.api_key = self._keys[0]
         self.provider = provider or _detect_provider(self.api_key)
         self._anthropic = self._make_anthropic_client(self.api_key)
+        # Show the model that will ACTUALLY be used for this provider — logging
+        # the Anthropic default while running on Gemini was misleading.
+        _disp_model = _GEMINI_TEXT_MODEL if self.provider == "gemini" else self.model_name
         logger.info(
-            f"[Claude] provider={self.provider} model={self.model_name} "
+            f"[LLM] provider={self.provider} model={_disp_model} "
             f"key_prefix={self.api_key[:7]!r} fallback_keys={len(self._keys) - 1}"
         )
 
@@ -723,10 +730,33 @@ class ClaudeClient:
 
 
 _singleton: Optional[ClaudeClient] = None
+# One client PER EVENT LOOP. Each concurrent Celery browser task runs in its own
+# thread with its own asyncio loop (asyncio.run), so keying by the running loop
+# gives every concurrent AgentLoop its OWN ClaudeClient. This eliminates the
+# cross-task race where _call() temporarily mutates shared self.api_key /
+# self._anthropic during key rotation (task A could send a request with task B's
+# key mid-flight). Within a single task the client is reused across steps, so
+# per-run rotation state (dropped/exhausted keys) is preserved. Keyed weakly by
+# the loop object so entries evict automatically when the loop is GC'd — no leak.
+_loop_clients: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
 
 def get_llm() -> ClaudeClient:
+    """Return the ClaudeClient bound to the current event loop (task-isolated).
+
+    Falls back to a process-global singleton only when called with no running
+    loop (pure-sync context), where there is no concurrency to race."""
     global _singleton
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is not None:
+        client = _loop_clients.get(loop)
+        if client is None:
+            client = ClaudeClient()
+            _loop_clients[loop] = client
+        return client
     if _singleton is None:
         _singleton = ClaudeClient()
     return _singleton

@@ -298,11 +298,19 @@ class GlassdoorAdapter(BasePlatformAdapter):
                 invalidate_session_file("glassdoor")
             except Exception:
                 pass
-            raise RuntimeError(
-                "BLOCKED: Glassdoor login did not complete (still on a login/"
-                f"challenge page: url={page.url!r}). May require MFA, an email "
-                "code, or a Turnstile the solver could not pass."
+            # NON-FATAL: do NOT hard-BLOCK here. The vision AgentLoop is now
+            # credential-aware (it receives the candidate's login email + the
+            # secure password) and is given explicit login-handling instructions,
+            # so hand the login wall to the AI instead of dead-ending. Worst case
+            # the AI can't pass a hard Turnstile/MFA and the run ends at a login
+            # state anyway — but this gives the "log in with the DB creds, then
+            # fill the form" flow a real chance to succeed.
+            logger.warning(
+                "[Glassdoor] scripted login did not complete "
+                f"(url={page.url!r}) — handing the login to the AgentLoop, "
+                "which will sign in with the candidate's stored credentials."
             )
+            return
         logger.info(f"[Glassdoor] Login OK (url={page.url!r})")
         await self._save_storage_state(page)
 
@@ -334,8 +342,8 @@ class GlassdoorAdapter(BasePlatformAdapter):
 
         logger.info("[Glassdoor] Cloudflare Turnstile detected; attempting solve")
         try:
-            from ..captcha import CaptchaService
-            provider = os.getenv("CAPTCHA_PROVIDER", "ai").lower()
+            from ..captcha import CaptchaService, resolve_captcha_provider
+            provider = resolve_captcha_provider()
             solution = await CaptchaService(provider=provider).solve(page, "turnstile")
             logger.info(f"[Glassdoor] Turnstile solve success={getattr(solution, 'success', False)}")
         except Exception as exc:

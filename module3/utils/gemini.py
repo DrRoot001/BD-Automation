@@ -174,6 +174,14 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
     )
 
     config_args = {}
+    # Generous output cap so structured JSON (scoring / tailoring / cover-letter /
+    # QA) is never truncated mid-object. gemini-3.5-flash occasionally cut a
+    # response off before its closing brace under the implicit default, yielding
+    # unparseable JSON ("Expecting ',' delimiter"). Env-overridable.
+    try:
+        config_args["max_output_tokens"] = int(os.getenv("GEMINI_MAX_OUTPUT_TOKENS", "8192"))
+    except (TypeError, ValueError):
+        config_args["max_output_tokens"] = 8192
     if response_schema:
         config_args["response_schema"] = response_schema
         config_args["response_mime_type"] = "application/json"
@@ -441,7 +449,7 @@ async def generate_content_with_retry(
     temperature: float = 0.3,
     max_retries: int = 10,
     initial_delay: float = 5.0,
-    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
     response_mime_type: str = None,
     system_instruction: str = None
 ) -> Any:
