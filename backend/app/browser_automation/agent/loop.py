@@ -447,8 +447,9 @@ DECISION POLICY — read in order:
         do you live in?" / any location-or-residence question whose options are
         a list of COUNTRY NAMES → **ALWAYS "United States"**. Pick the option
         whose text is "United States" (or "United States of America" / "USA" —
-        whichever exact spelling the option list uses). The candidate lives in
-        San Francisco, USA.
+        whichever exact spelling the option list uses). The candidate is
+        US-based; their exact city and state are on the identity card above
+        (Location) — use THAT, never a different city.
         **CRITICAL:** "Are you currently based in any of these countries?" is
         NOT a yes/no question — its options are country names, and you must
         pick "United States", NOT "No". Answering "No" to a country-list
@@ -458,6 +459,22 @@ DECISION POLICY — read in order:
         Never pick another country, never pick "Prefer not to say". This rule
         does NOT apply to "Country of citizenship" or "Country code" (phone)
         fields — those follow the candidate's actual data.
+      * "Location" / "City" / "Current city of residence" / "Where are you
+        located?" / any address-or-city field → use the candidate's Location
+        from the identity card above (e.g. "Austin, TX, USA"). NEVER substitute
+        a different city and NEVER invent one — if the card says Austin, the
+        answer is Austin, always.
+          - City-only field → enter just the CITY (e.g. "Austin").
+          - Free-text location field → enter the card's "City, ST" or
+            "City, ST, USA" as shown.
+          - AUTOCOMPLETE / typeahead (a text box that pops up a suggestion
+            list) → type the CITY, wait for the suggestions, then SELECT the
+            suggestion that matches the candidate's city. ANY option that
+            starts with that city is correct regardless of format
+            ("Austin, TX" / "Austin, TX, USA" / "Austin, Texas, United States").
+            Pick the first city-matching suggestion; never pick a suggestion for
+            a different city. If no suggestion appears, leave the typed
+            "City, ST" text and move on.
     These are the candidate's declared answers — NOT defaults. Do NOT pick
     "Prefer not to say" for these six unless the option list literally does
     not contain a closer match.
