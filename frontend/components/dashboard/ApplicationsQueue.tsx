@@ -12,6 +12,8 @@ import {
 } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { StatusBadge } from '../shared/StatusBadge'
+import { useConfirm } from '../ui/ConfirmDialog'
+import { useToast } from '../ui/Toast'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -425,6 +427,8 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
 function RowActions({ app }: { app: ApplicationSummary }) {
   const queryClient = useQueryClient()
   const [open, setOpen] = useState(false)
+  const confirm = useConfirm()
+  const toast = useToast()
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ['applications'] })
@@ -440,14 +444,19 @@ function RowActions({ app }: { app: ApplicationSummary }) {
     onError: (err: unknown) => {
       setOpen(false)
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      // eslint-disable-next-line no-alert
-      window.alert(`Action failed: ${msg}`)
+      toast.error(`Action failed: ${msg}`)
     },
   })
 
-  const run = (fn: () => Promise<unknown>, confirmMsg?: string) => {
-    // eslint-disable-next-line no-alert
-    if (confirmMsg && !window.confirm(confirmMsg)) return
+  const run = async (fn: () => Promise<unknown>, confirmMsg?: string) => {
+    if (confirmMsg) {
+      const ok = await confirm({
+        title: 'Are you sure?',
+        message: confirmMsg,
+        variant: 'danger',
+      })
+      if (!ok) return
+    }
     mutation.mutate({ fn })
   }
 

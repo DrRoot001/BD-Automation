@@ -89,6 +89,9 @@ export interface Candidate {
   location?: string
   work_auth?: string
   tech_stack: string[]
+  // Primary stack category (ml / data / salesforce / servicenow / dynamics …);
+  // mirrors jobs.job_category so matching can scope to the candidate's stack.
+  job_category?: string | null
   years_exp?: number
   linkedin_url?: string
   title?: string
@@ -413,6 +416,13 @@ export const api = {
   runMatching: (candidateId: string) =>
     postJSON<MatchingRunResponse>(`/candidates/${candidateId}/run-matching`, {}),
 
+  // Apply this candidate to ONE specific job (Jobs Feed "Apply" button).
+  // Runs the same match→tailor→browser pipeline scoped to the given job.
+  applyToJob: (candidateId: string, jobId: string) =>
+    postJSON<MatchingRunResponse>(`/candidates/${candidateId}/run-matching`, {
+      job_ids: [jobId],
+    }),
+
   // Stop the whole apply pipeline for a candidate: blocks new matching runs,
   // halts an active run at its next job boundary, and bulk-pauses every
   // in-flight application so none of them block new job queues.
@@ -432,4 +442,29 @@ export const api = {
 
   getPlatforms: () =>
     fetchJSON<string[]>('/jobs/platforms'),
+
+  // ── Job categories & category-aware matching ─────────────────────────────
+  getJobCategories: () =>
+    fetchJSON<JobCategoryCount[]>('/jobs/categories'),
+
+  // ── Admin: candidate assignment (dedicated, auditable endpoint) ──────────
+  assignCandidate: (candidateId: string, userId: string | null) =>
+    patchJSON<Candidate>(`/candidates/${candidateId}/assign`, { user_id: userId }),
+
+  // ── Admin: live pipeline / queue operations view ──────────────────────────
+  getOpsStats: () =>
+    fetchJSON<OpsStats>('/dashboard/ops'),
+}
+
+export interface JobCategoryCount {
+  category: string
+  count: number
+}
+
+export interface OpsStats {
+  queues: { name: string; depth: number }[]
+  workers: { name: string; active_tasks: number }[]
+  applications_in_flight: number
+  applications_today: number
+  submitted_today: number
 }

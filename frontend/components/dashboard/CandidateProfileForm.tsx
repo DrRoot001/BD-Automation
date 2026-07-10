@@ -1,7 +1,12 @@
 'use client'
 
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { api } from '@/lib/api'
 import { Upload, FileText, CheckCircle, AlertTriangle, Loader2, X, Plus, ExternalLink } from 'lucide-react'
+
+// Sentinel select value that reveals the free-text "Other…" category input.
+const OTHER_CATEGORY = '__other__'
 
 const TECH_OPTIONS = [
   'Python', 'JavaScript', 'TypeScript', 'Java', 'C++', 'C#', 'Go', 'Rust', 'Ruby', 'PHP',
@@ -147,9 +152,31 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
     years_exp: '',
     gmail: '',
     password: '',
+    linkedin_url: '',
   })
   const [techStack, setTechStack] = useState<string[]>([])
   const [errors, setErrors] = useState<Record<string, string>>({})
+
+  // Job category: select value is either a known category, '' (none) or the
+  // "Other…" sentinel that reveals a free-text input.
+  const [categorySelect, setCategorySelect] = useState('')
+  const [categoryOther, setCategoryOther] = useState('')
+
+  const { data: jobCategories = [] } = useQuery({
+    queryKey: ['job-categories'],
+    queryFn: () => api.getJobCategories(),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const categoryOptions = useMemo(() => {
+    const opts = jobCategories.map((c) => c.category)
+    // Keep an existing candidate value selectable even if the categories
+    // endpoint doesn't list it (e.g. no jobs currently carry it).
+    if (categorySelect && categorySelect !== OTHER_CATEGORY && !opts.includes(categorySelect)) {
+      opts.push(categorySelect)
+    }
+    return opts
+  }, [jobCategories, categorySelect])
 
   const [resumeFile, setResumeFile] = useState<File | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -173,8 +200,11 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
         // Never pre-fill the password: the API no longer returns it, and leaving
         // it blank means "keep the existing password". Typing a value updates it.
         password: '',
+        linkedin_url: candidate.linkedin_url || '',
       })
       setTechStack(Array.isArray(candidate.tech_stack) ? candidate.tech_stack : [])
+      setCategorySelect(candidate.job_category || '')
+      setCategoryOther('')
     }
   }, [candidate])
 
@@ -259,7 +289,11 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
         work_auth: formData.work_auth,
         tech_stack: techStack,
         years_exp: formData.years_exp ? parseInt(formData.years_exp) : null,
-        linkedin_url: null,
+        linkedin_url: formData.linkedin_url.trim() || null,
+        job_category:
+          (categorySelect === OTHER_CATEGORY ? categoryOther : categorySelect)
+            .trim()
+            .toLowerCase() || null,
         gmail: formData.gmail.trim() || null,
       }
       // Only send the password when the user actually typed one. Omitting it
@@ -317,8 +351,10 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
       })
 
       if (!candidate) {
-        setFormData({ name: '', email: '', phone: '', location: 'US', work_auth: 'us_authorized', years_exp: '', gmail: '', password: '' })
+        setFormData({ name: '', email: '', phone: '', location: 'US', work_auth: 'us_authorized', years_exp: '', gmail: '', password: '', linkedin_url: '' })
         setTechStack([])
+        setCategorySelect('')
+        setCategoryOther('')
         setResumeFile(null)
         if (fileInputRef.current) fileInputRef.current.value = ''
       }
@@ -443,6 +479,42 @@ export default function CandidateProfileForm({ candidate, onSuccess }: Candidate
             <option value="visa_required">Requires Visa Sponsorship</option>
             <option value="remote_global">Remote Global</option>
           </select>
+        </div>
+
+        {/* Job category + LinkedIn */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label className="input-label">Job Category</label>
+            <select
+              value={categorySelect}
+              onChange={(e) => setCategorySelect(e.target.value)}
+              className="input appearance-none"
+            >
+              <option value="">— Not set —</option>
+              {categoryOptions.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+              <option value={OTHER_CATEGORY}>Other…</option>
+            </select>
+            {categorySelect === OTHER_CATEGORY && (
+              <input
+                type="text"
+                value={categoryOther}
+                onChange={(e) => setCategoryOther(e.target.value)}
+                placeholder="e.g. devops"
+                className="input mt-2"
+              />
+            )}
+            <p className="text-text-muted text-xs mt-1">Scopes job matching to this stack.</p>
+          </div>
+          <div>
+            <label className="input-label">LinkedIn URL</label>
+            <input
+              type="url" name="linkedin_url"
+              value={formData.linkedin_url} onChange={handleChange}
+              placeholder="https://linkedin.com/in/…" className="input"
+            />
+          </div>
         </div>
 
         {/* Tech Stack */}

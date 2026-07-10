@@ -165,7 +165,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                 {application.resume_url && (
                   <a href={application.resume_url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 bg-blue-500/10 text-blue-400 rounded-md">
+                      <div className="p-2 bg-info/10 text-info rounded-md">
                         <FileText className="w-4 h-4" />
                       </div>
                       <span className="text-sm text-text-primary font-medium">Tailored Resume</span>
@@ -177,7 +177,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                 {application.cover_letter_url && (
                   <a href={application.cover_letter_url} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 bg-purple-500/10 text-purple-400 rounded-md">
+                      <div className="p-2 bg-purple/10 text-purple rounded-md">
                         <FileText className="w-4 h-4" />
                       </div>
                       <span className="text-sm text-text-primary font-medium">Tailored Cover Letter</span>
@@ -189,7 +189,7 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                 {application.job_url && (
                   <a href={formatJobUrl(application.job_url)} target="_blank" rel="noreferrer" className="flex items-center justify-between p-3 bg-bg-primary border border-bg-border rounded-lg hover:border-accent/50 transition-colors group">
                     <div className="flex items-center gap-3">
-                      <div className="p-2 bg-purple-500/10 text-purple-400 rounded-md">
+                      <div className="p-2 bg-purple/10 text-purple rounded-md">
                         <ExternalLink className="w-4 h-4" />
                       </div>
                       <span className="text-sm text-text-primary font-medium">Original Job Posting</span>

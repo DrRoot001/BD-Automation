@@ -1,21 +1,27 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { useAdminJobs, useAdminJobsCount } from '@/hooks/useAdminJobs'
-import { Search, ChevronLeft, ChevronRight, Eye, Briefcase, MapPin, Building2, Calendar, FileText, ExternalLink } from 'lucide-react'
+import { Search, ChevronLeft, ChevronRight, Eye, Briefcase, MapPin, Building2, Calendar, FileText, ExternalLink, Tag } from 'lucide-react'
 import { formatDistanceToNow, formatSalary } from '@/lib/utils'
 import { Modal } from '@/components/ui/Modal'
 import { StatusBadge } from '@/components/shared/StatusBadge'
-import { JobSummary } from '@/lib/api'
+import { api, JobSummary } from '@/lib/api'
+
+// The list endpoint may include the job's stack category (ml / data / salesforce /
+// servicenow / dynamics …) even though it isn't part of the base JobSummary type.
+type JobRow = JobSummary & { job_category?: string | null }
 
 export default function JobManagementPage() {
   const [search, setSearch] = useState('')
   const [sourceFilter, setSourceFilter] = useState('')
   const [typeFilter, setTypeFilter] = useState('')
   const [timeFilter, setTimeFilter] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState('')
   const [page, setPage] = useState(0)
   const limit = 50
-  
+
   const activeFilters = {
     search: search.trim() || undefined,
     source: sourceFilter || undefined,
@@ -28,14 +34,26 @@ export default function JobManagementPage() {
   const totalCount = countData?.total_count ?? 0
   const totalPages = Math.ceil(totalCount / limit)
 
-  const [selectedJob, setSelectedJob] = useState<JobSummary | null>(null)
+  const { data: categories } = useQuery({
+    queryKey: ['job-categories'],
+    queryFn: () => api.getJobCategories(),
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const [selectedJob, setSelectedJob] = useState<JobRow | null>(null)
 
   // Reset page to 0 on filter change
   useEffect(() => {
     setPage(0)
-  }, [search, sourceFilter, typeFilter, timeFilter])
+  }, [search, sourceFilter, typeFilter, timeFilter, categoryFilter])
 
-  const filteredJobs = jobs
+  const jobRows: JobRow[] = jobs ?? []
+  // Category is filtered client-side over the fetched page of rows.
+  const filteredJobs = categoryFilter
+    ? jobRows.filter((job) => job.job_category === categoryFilter)
+    : jobRows
+  // Only show the Category column when the API actually returns categories.
+  const hasCategoryData = jobRows.some((job) => job.job_category)
 
   const handleNextPage = () => setPage(p => p + 1)
   const handlePrevPage = () => setPage(p => Math.max(0, p - 1))
@@ -87,7 +105,20 @@ export default function JobManagementPage() {
             <option value="part">Part-time</option>
           </select>
           
-          <select 
+          <select
+            value={categoryFilter}
+            onChange={(e) => setCategoryFilter(e.target.value)}
+            className="input !w-auto"
+          >
+            <option value="">All Categories</option>
+            {categories?.map((c) => (
+              <option key={c.category} value={c.category}>
+                {c.category} ({c.count})
+              </option>
+            ))}
+          </select>
+
+          <select
             value={timeFilter}
             onChange={(e) => setTimeFilter(e.target.value)}
             className="input !w-auto"
@@ -119,6 +150,7 @@ export default function JobManagementPage() {
                   <th className="px-6 py-4 font-medium">Job Title & Company</th>
                   <th className="px-6 py-4 font-medium">Location</th>
                   <th className="px-6 py-4 font-medium">Type & Source</th>
+                  {hasCategoryData && <th className="px-6 py-4 font-medium">Category</th>}
                   <th className="px-6 py-4 font-medium">Salary</th>
                   <th className="px-6 py-4 font-medium">Posted</th>
                   <th className="px-6 py-4 font-medium text-right">Actions</th>
@@ -144,12 +176,12 @@ export default function JobManagementPage() {
                   ))
                 ) : !filteredJobs || filteredJobs.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-6 py-16 text-center">
+                    <td colSpan={hasCategoryData ? 7 : 6} className="px-6 py-16 text-center">
                       <div className="flex flex-col items-center justify-center">
                         <Briefcase className="w-12 h-12 text-bg-border mb-4 opacity-50" />
                         <h3 className="text-base font-semibold text-text-primary mb-1">No jobs found</h3>
                         <p className="text-text-muted text-xs max-w-sm mb-4">
-                          {search || sourceFilter || typeFilter || timeFilter ? "No jobs match your current filters." : "No jobs have been scraped or imported yet."}
+                          {search || sourceFilter || typeFilter || timeFilter || categoryFilter ? "No jobs match your current filters." : "No jobs have been scraped or imported yet."}
                         </p>
                       </div>
                     </td>
@@ -179,6 +211,17 @@ export default function JobManagementPage() {
                         <div className="capitalize font-medium text-text-primary mb-0.5">{job.job_type?.replace('-', ' ') || 'Unknown'}</div>
                         <div className="text-text-muted capitalize">{job.source}</div>
                       </td>
+                      {hasCategoryData && (
+                        <td className="px-6 py-4 text-xs">
+                          {job.job_category ? (
+                            <span className="badge bg-purple/10 border border-purple/20 text-purple">
+                              {job.job_category}
+                            </span>
+                          ) : (
+                            <span className="text-text-muted">—</span>
+                          )}
+                        </td>
+                      )}
                       <td className="px-6 py-4 text-text-muted text-xs">
                         {formatSalary(job.salary_min, job.salary_max, job.pay_period)}
                       </td>
@@ -260,12 +303,21 @@ export default function JobManagementPage() {
       >
         {selectedJob && (
           <div className="space-y-6">
-            <div className="text-text-muted text-xs flex items-center gap-2">
+            <div className="text-text-muted text-xs flex items-center gap-2 flex-wrap">
               <Building2 className="w-4 h-4" />
               <span className="font-semibold text-text-primary">{selectedJob.company}</span>
               <span>•</span>
               <MapPin className="w-4 h-4" />
               <span>{selectedJob.location || 'Remote'}</span>
+              {selectedJob.job_category && (
+                <>
+                  <span>•</span>
+                  <span className="badge bg-purple/10 border border-purple/20 text-purple inline-flex items-center gap-1">
+                    <Tag className="w-3 h-3" />
+                    {selectedJob.job_category}
+                  </span>
+                </>
+              )}
             </div>
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">

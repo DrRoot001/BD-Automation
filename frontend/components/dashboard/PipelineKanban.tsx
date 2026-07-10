@@ -8,6 +8,8 @@ import { StatusBadge } from '../shared/StatusBadge'
 import { Skeleton } from '../shared/Skeleton'
 import { useRouter } from 'next/navigation'
 import { MoreHorizontal, Pause, Play, XCircle, Trash2, Loader2 } from 'lucide-react'
+import { useConfirm } from '../ui/ConfirmDialog'
+import { useToast } from '../ui/Toast'
 
 const PIPELINE_STAGES = [
   { id: 'SOURCING', statuses: ['FOUND', 'ANALYZED', 'MATCHED'] },
@@ -43,20 +45,28 @@ function CardActions({ app }: { app: ApplicationSummary }) {
     queryClient.invalidateQueries({ queryKey: ['kpis'] })
   }
 
+  const confirm = useConfirm()
+  const toast = useToast()
+
   const mutation = useMutation({
     mutationFn: ({ fn }: { fn: () => Promise<unknown> }) => fn(),
     onSuccess: () => { refresh(); setOpen(false) },
     onError: (err: unknown) => {
       setOpen(false)
       const msg = err instanceof Error ? err.message : 'Unknown error'
-      // eslint-disable-next-line no-alert
-      window.alert(`Action failed: ${msg}`)
+      toast.error(`Action failed: ${msg}`)
     },
   })
 
-  const run = (fn: () => Promise<unknown>, confirmMsg?: string) => {
-    // eslint-disable-next-line no-alert
-    if (confirmMsg && !window.confirm(confirmMsg)) return
+  const run = async (fn: () => Promise<unknown>, confirmMsg?: string) => {
+    if (confirmMsg) {
+      const ok = await confirm({
+        title: 'Are you sure?',
+        message: confirmMsg,
+        variant: 'danger',
+      })
+      if (!ok) return
+    }
     mutation.mutate({ fn })
   }
 

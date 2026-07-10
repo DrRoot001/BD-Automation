@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Plus, Search, MoreVertical, Edit2, Key, Trash2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { api, BDUser } from '@/lib/api'
-import { formatDistanceToNow } from '@/lib/utils'
+import { formatDate } from '@/lib/utils'
 import { useToast } from '@/components/ui/Toast'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import {
@@ -146,7 +146,6 @@ export default function UserManagementPage() {
               <tr>
                 <th className="px-6 py-4 font-medium">Name & Email</th>
                 <th className="px-6 py-4 font-medium">Role</th>
-                <th className="px-6 py-4 font-medium">Status</th>
                 <th className="px-6 py-4 font-medium">Created</th>
                 <th className="px-6 py-4 font-medium text-right">Actions</th>
               </tr>
@@ -160,14 +159,13 @@ export default function UserManagementPage() {
                       <div className="h-3 bg-bg-border rounded w-48 animate-pulse"></div>
                     </td>
                     <td className="px-6 py-4"><div className="h-6 bg-bg-border rounded w-20 animate-pulse"></div></td>
-                    <td className="px-6 py-4"><div className="h-6 bg-bg-border rounded w-16 animate-pulse"></div></td>
                     <td className="px-6 py-4"><div className="h-4 bg-bg-border rounded w-24 animate-pulse"></div></td>
                     <td className="px-6 py-4 text-right"><div className="h-8 bg-bg-border rounded w-8 animate-pulse ml-auto"></div></td>
                   </tr>
                 ))
               ) : !filteredUsers || filteredUsers.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-16 text-center">
+                  <td colSpan={4} className="px-6 py-16 text-center">
                     <div className="flex flex-col items-center justify-center">
                       <h3 className="text-lg font-medium text-text-primary mb-1">No users found</h3>
                       <p className="text-text-muted text-sm max-w-sm mb-4">
@@ -188,7 +186,18 @@ export default function UserManagementPage() {
                 filteredUsers.map((user, index) => (
                   <tr key={user.id} className="hover:bg-bg-hover transition-colors">
                     <td className="px-6 py-4">
-                      <div className="font-medium text-text-primary">{user.full_name || 'Unknown User'}</div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-text-primary">{user.full_name || 'Unknown User'}</span>
+                        <span
+                          className={`badge border ${
+                            user.role === 'admin'
+                              ? 'bg-purple/10 border-purple/20 text-purple'
+                              : 'bg-info/10 border-info/20 text-info'
+                          }`}
+                        >
+                          {user.role === 'admin' ? 'Admin' : 'BD User'}
+                        </span>
+                      </div>
                       <div className="text-text-muted mt-0.5">{user.email}</div>
                     </td>
                     <td className="px-6 py-4">
@@ -202,14 +211,8 @@ export default function UserManagementPage() {
                         <option value="admin">Admin</option>
                       </select>
                     </td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-success/10 border border-success/20 text-success text-xs rounded-full font-semibold">
-                        <span className="w-1.5 h-1.5 rounded-full bg-success"></span>
-                        Active
-                      </span>
-                    </td>
                     <td className="px-6 py-4 text-text-muted whitespace-nowrap text-xs">
-                      {user.created_at ? formatDistanceToNow(user.created_at) + ' ago' : 'Unknown'}
+                      {user.created_at ? formatDate(user.created_at) : 'Unknown'}
                     </td>
                     <td className="px-6 py-4 text-right relative">
                       <button

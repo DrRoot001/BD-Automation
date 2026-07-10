@@ -7,6 +7,7 @@ import {
   LayoutDashboard, Users, FileText, Briefcase,
   ChevronLeft, ChevronRight, Menu,
   Radar, CalendarClock, UserCog,
+  Activity, Upload, BarChart3,
 } from 'lucide-react'
 
 import { useCurrentUser } from '@/hooks/useCurrentUser'
@@ -38,12 +39,15 @@ const ADMIN_NAV: NavSection[] = [
       { id: 'admin-candidates', label: 'Candidates',       path: '/candidates',         icon: Users },
       { id: 'admin-apps',       label: 'Applications',     path: '/dashboard/applications', icon: FileText },
       { id: 'admin-interviews', label: 'Interviews',       path: '/dashboard/interviews',   icon: CalendarClock },
+      { id: 'admin-analytics',  label: 'Analytics',        path: '/admin/analytics',    icon: BarChart3 },
     ],
   },
   {
     title: 'Automation & Tools',
     items: [
       { id: 'admin-discovery',  label: 'Job Discovery',    path: '/admin/discovery',    icon: Radar },
+      { id: 'admin-ops',        label: 'Pipeline Ops',     path: '/admin/ops',          icon: Activity },
+      { id: 'admin-import',     label: 'Job Import',       path: '/admin/import',       icon: Upload },
     ],
   },
 ]

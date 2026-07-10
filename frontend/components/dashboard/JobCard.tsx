@@ -1,6 +1,6 @@
 import { type JobSummary } from '@/lib/api'
 import { formatSalary, formatDistanceToNow } from '@/lib/utils'
-import { Building2, MapPin, DollarSign, Clock, Send, XCircle } from 'lucide-react'
+import { Building2, MapPin, DollarSign, Clock, Send, XCircle, Loader2, RotateCcw } from 'lucide-react'
 import { StatusBadge } from '@/components/shared/StatusBadge'
 
 export interface JobCardProps {
@@ -9,14 +9,19 @@ export interface JobCardProps {
   onDismiss: (jobId: string) => void
   onClick: (job: JobSummary) => void
   applicationStatus?: string
+  /** True while the apply pipeline is being queued for this job */
+  applyPending?: boolean
+  /** Card is rendered inside the "show dismissed" reveal — offer Undo instead */
+  isDismissed?: boolean
+  onRestore?: (jobId: string) => void
 }
 
-export function JobCard({ job, onApply, onDismiss, onClick, applicationStatus }: JobCardProps) {
+export function JobCard({ job, onApply, onDismiss, onClick, applicationStatus, applyPending, isDismissed, onRestore }: JobCardProps) {
   const salaryString = formatSalary(job.salary_min, job.salary_max, job.pay_period)
 
   return (
-    <div 
-      className="card p-5 hover:border-accent/50 transition-all cursor-pointer group flex flex-col bg-bg-card border border-bg-border rounded-xl"
+    <div
+      className={`card p-5 hover:border-accent/50 transition-all cursor-pointer group flex flex-col bg-bg-card border border-bg-border rounded-xl ${isDismissed ? 'opacity-60 hover:opacity-100' : ''}`}
       onClick={() => onClick(job)}
     >
       {/* Header */}
@@ -59,24 +64,40 @@ export function JobCard({ job, onApply, onDismiss, onClick, applicationStatus }:
           {job.posted_at ? formatDistanceToNow(job.posted_at) + ' ago' : 'Recently discovered'}
         </div>
         <div className="flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-          <button 
-            onClick={() => onDismiss(job.id)}
-            className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
-            title="Dismiss Job"
-            aria-label="Dismiss job"
-          >
-            <XCircle className="w-4 h-4" />
-          </button>
-          {applicationStatus ? (
-            <StatusBadge status={applicationStatus} />
-          ) : (
-            <button 
-              onClick={() => onApply(job.id)}
-              className="btn-primary !py-1 !px-3 !text-xs"
+          {isDismissed ? (
+            <button
+              onClick={() => onRestore?.(job.id)}
+              className="btn-secondary !py-1 !px-3 !text-xs"
+              title="Restore this job to the feed"
+              aria-label="Undo dismiss"
             >
-              <Send className="w-3 h-3" />
-              Apply
+              <RotateCcw className="w-3 h-3" />
+              Undo
             </button>
+          ) : (
+            <>
+              <button
+                onClick={() => onDismiss(job.id)}
+                className="p-1.5 text-text-muted hover:text-danger hover:bg-danger/10 rounded-lg transition-colors"
+                title="Dismiss Job"
+                aria-label="Dismiss job"
+              >
+                <XCircle className="w-4 h-4" />
+              </button>
+              {applicationStatus ? (
+                <StatusBadge status={applicationStatus} />
+              ) : (
+                <button
+                  onClick={() => onApply(job.id)}
+                  disabled={applyPending}
+                  className="btn-primary !py-1 !px-3 !text-xs disabled:opacity-60 disabled:cursor-not-allowed"
+                  aria-busy={applyPending}
+                >
+                  {applyPending ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                  {applyPending ? 'Queuing…' : 'Apply'}
+                </button>
+              )}
+            </>
           )}
         </div>
       </div>

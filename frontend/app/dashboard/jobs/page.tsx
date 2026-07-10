@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, JobSummary } from '@/lib/api'
 import { useJobs } from '@/hooks/useJobs'
 import { JobCard } from '@/components/dashboard/JobCard'
@@ -9,38 +9,86 @@ import { Skeleton } from '@/components/shared/Skeleton'
 import { Modal } from '@/components/ui/Modal'
 import { useToast } from '@/components/ui/Toast'
 import { StatusBadge } from '@/components/shared/StatusBadge'
-import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Eye, Search, ExternalLink, Building2, MapPin, FileText } from 'lucide-react'
+import { Briefcase, AlertCircle, RefreshCw, ChevronLeft, ChevronRight, Eye, EyeOff, Search, ExternalLink, Building2, MapPin, FileText } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { formatDistanceToNow, formatSalary } from '@/lib/utils'
+import { formatSalary } from '@/lib/utils'
 
 const PAGE_SIZE = 12
 
+// Jobs carry a category (ml / data / salesforce / …) used for scoped matching.
+// JobSummary doesn't declare it yet, so extend the row type locally.
+type JobRow = JobSummary & { job_category?: string | null }
+
+function categoryChipClass(active: boolean) {
+  return `px-3 py-1 rounded-full border text-xs font-medium capitalize transition-colors ${
+    active
+      ? 'bg-accent text-white border-accent'
+      : 'bg-bg-card text-text-secondary border-bg-border hover:bg-bg-hover hover:text-text-primary'
+  }`
+}
+
 export default function JobsFeedPage() {
   const toast = useToast()
+  const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
   const [selectedCandidateId, setSelectedCandidateId] = useState<string>('')
   const [search, setSearch] = useState('')
+  const [selectedCategory, setSelectedCategory] = useState('')
   const [selectedJob, setSelectedJob] = useState<JobSummary | null>(null)
+
+  // Dismissed jobs are persisted per candidate in localStorage.
+  const dismissKey = `dismissed-jobs:${selectedCandidateId || 'all'}`
+  const [dismissedIds, setDismissedIds] = useState<string[]>([])
+  const [showDismissed, setShowDismissed] = useState(false)
 
   // Connect WebSocket for real-time invalidations
   useWebSocket()
 
-  // Reset to page 0 when candidate or search changes
+  // Reset to page 0 when candidate, search or category changes
   useEffect(() => {
     setPage(0)
-  }, [selectedCandidateId, search])
+  }, [selectedCandidateId, search, selectedCategory])
+
+  // Load the dismissed set whenever the storage key (candidate) changes.
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(dismissKey)
+      const parsed = raw ? (JSON.parse(raw) as unknown) : []
+      setDismissedIds(Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === 'string') : [])
+    } catch {
+      setDismissedIds([])
+    }
+    setShowDismissed(false)
+  }, [dismissKey])
+
+  const persistDismissed = (ids: string[]) => {
+    setDismissedIds(ids)
+    try {
+      window.localStorage.setItem(dismissKey, JSON.stringify(ids))
+    } catch {
+      // localStorage unavailable (private mode / quota) — keep in-memory state only
+    }
+  }
 
   // Fetch candidates managed by the logged-in BD User
   const { data: candidates = [], isLoading: candidatesLoading } = useQuery({
     queryKey: ['candidates'],
     queryFn: () => api.getCandidates(),
   })
+  const selectedCandidate = candidates.find((c) => c.id === selectedCandidateId)
+
+  // Job categories for the filter chip-row
+  const { data: categories = [] } = useQuery({
+    queryKey: ['job-categories'],
+    queryFn: () => api.getJobCategories(),
+    staleTime: 5 * 60 * 1000,
+  })
 
   // Fetch Jobs
-  const { 
-    data: jobs, 
-    isLoading: jobsLoading, 
-    isError: jobsError, 
+  const {
+    data: jobs,
+    isLoading: jobsLoading,
+    isError: jobsError,
     refetch: refetchJobs,
     isFetching
   } = useJobs({ skip: page * PAGE_SIZE, limit: PAGE_SIZE, candidateId: selectedCandidateId || undefined })
@@ -63,23 +111,53 @@ export default function JobsFeedPage() {
     applications?.map(app => [app.job_id, app.status]) ?? []
   )
 
-  // Filter jobs locally by search query and hide already applied ones
-  const visibleJobs = (jobs ?? [])
+  // Filter jobs locally: search → category → hide already-applied → dismissed split
+  const rows = (jobs ?? []) as JobRow[]
+  const filteredRows = rows
     .filter(job => !search || job.title.toLowerCase().includes(search.toLowerCase()) || job.company.toLowerCase().includes(search.toLowerCase()))
-    .filter(job => !selectedCandidateId || !appliedJobIds.has(job.id))
+    .filter(job => !selectedCategory || (job.job_category ?? '').toLowerCase() === selectedCategory)
 
-  const hiddenCount = (jobs?.length ?? 0) - visibleJobs.length
+  const notApplied = filteredRows.filter(job => !selectedCandidateId || !appliedJobIds.has(job.id))
+  const appliedHiddenCount = filteredRows.length - notApplied.length
+
+  const dismissedSet = new Set(dismissedIds)
+  const activeJobs = notApplied.filter(job => !dismissedSet.has(job.id))
+  const dismissedJobs = notApplied.filter(job => dismissedSet.has(job.id))
+  const visibleJobs = showDismissed ? notApplied : activeJobs
+
+  // Real per-job apply: runs the match→tailor→browser pipeline scoped to this job.
+  const applyMutation = useMutation({
+    mutationFn: (vars: { jobId: string; jobTitle: string }) =>
+      api.applyToJob(selectedCandidateId, vars.jobId),
+    onSuccess: (_res, vars) => {
+      toast.success(`Queued ${vars.jobTitle} for ${selectedCandidate?.name ?? 'candidate'}`)
+      queryClient.invalidateQueries({ queryKey: ['applications'] })
+    },
+    onError: (err: unknown) => {
+      toast.error(err instanceof Error ? err.message : 'Failed to queue the application.')
+    },
+  })
+  const pendingJobId = applyMutation.isPending ? applyMutation.variables?.jobId : undefined
 
   const handleApply = (jobId: string) => {
     if (!selectedCandidateId) {
-      toast.warning('Please select a candidate first to apply to jobs.')
+      toast.warning('Select a candidate first')
       return
     }
-    toast.success('Application queued for candidate!')
+    if (applyMutation.isPending) return
+    const job = rows.find(j => j.id === jobId)
+    applyMutation.mutate({ jobId, jobTitle: job?.title ?? 'job' })
   }
 
   const handleDismiss = (jobId: string) => {
-    toast.info('Job dismissed from feed.')
+    if (dismissedSet.has(jobId)) return
+    persistDismissed([...dismissedIds, jobId])
+    toast.info('Job dismissed. Use "Show dismissed" below to undo.')
+  }
+
+  const handleRestore = (jobId: string) => {
+    persistDismissed(dismissedIds.filter(id => id !== jobId))
+    toast.success('Job restored to the feed.')
   }
 
   const handleCardClick = (job: JobSummary) => {
@@ -95,7 +173,7 @@ export default function JobsFeedPage() {
         <AlertCircle className="w-12 h-12 text-danger mb-3" />
         <h2 className="text-base font-semibold text-text-primary">Failed to load jobs</h2>
         <p className="text-text-muted text-xs mt-1 mb-6">There was an error communicating with the API.</p>
-        <button 
+        <button
           onClick={() => refetchJobs()}
           className="btn-secondary !text-xs inline-flex items-center gap-1.5"
         >
@@ -116,10 +194,10 @@ export default function JobsFeedPage() {
             {selectedCandidateId ? (
               <span className="flex items-center gap-1.5">
                 <Eye className="w-3.5 h-3.5 text-text-muted" />
-                {visibleJobs.length} jobs visible
-                {hiddenCount > 0 && (
+                {activeJobs.length} jobs visible
+                {appliedHiddenCount > 0 && (
                   <span className="text-text-muted">
-                    · {hiddenCount} applied jobs hidden
+                    · {appliedHiddenCount} applied jobs hidden
                   </span>
                 )}
               </span>
@@ -148,9 +226,9 @@ export default function JobsFeedPage() {
           {/* Search Input */}
           <div className="relative">
             <Search className="w-4 h-4 text-text-muted absolute left-3 top-1/2 -translate-y-1/2" />
-            <input 
-              type="text" 
-              placeholder="Search title or company..." 
+            <input
+              type="text"
+              placeholder="Search title or company..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="input pl-9 w-56"
@@ -161,7 +239,7 @@ export default function JobsFeedPage() {
           <div className="flex items-center gap-2">
             <span className="text-xs text-text-muted font-medium">Page {page + 1}</span>
             <div className="flex items-center gap-1">
-              <button 
+              <button
                 onClick={() => setPage(p => Math.max(0, p - 1))}
                 disabled={!hasPrev || isFetching}
                 className="btn-secondary !p-1.5"
@@ -169,7 +247,7 @@ export default function JobsFeedPage() {
               >
                 <ChevronLeft className="w-4 h-4" />
               </button>
-              <button 
+              <button
                 onClick={() => setPage(p => p + 1)}
                 disabled={!hasNext || isFetching}
                 className="btn-secondary !p-1.5"
@@ -182,6 +260,30 @@ export default function JobsFeedPage() {
         </div>
       </div>
 
+      {/* Category filter chips */}
+      {categories.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            onClick={() => setSelectedCategory('')}
+            className={categoryChipClass(!selectedCategory)}
+          >
+            All
+          </button>
+          {categories.map((cat) => (
+            <button
+              key={cat.category}
+              onClick={() => setSelectedCategory(cur => cur === cat.category ? '' : cat.category)}
+              className={categoryChipClass(selectedCategory === cat.category)}
+            >
+              {cat.category}
+              <span className={`ml-1.5 tabular-nums ${selectedCategory === cat.category ? 'text-white/70' : 'text-text-muted'}`}>
+                {cat.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+
       {/* Grid */}
       {jobsLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
@@ -193,16 +295,16 @@ export default function JobsFeedPage() {
         <div className="flex flex-col items-center justify-center min-h-[300px] bg-bg-card rounded-2xl border border-bg-border p-12 text-center shadow-sm">
           <Briefcase className="w-12 h-12 text-text-muted mb-3 opacity-40" />
           <h2 className="text-base font-semibold text-text-primary">
-            {selectedCandidateId && hiddenCount > 0 ? 'All jobs applied on this page' : 'No jobs found'}
+            {selectedCandidateId && appliedHiddenCount > 0 ? 'All jobs applied on this page' : 'No jobs found'}
           </h2>
           <p className="text-text-muted text-xs mt-1 max-w-sm">
-            {selectedCandidateId && hiddenCount > 0
-              ? `This candidate has applied to all ${hiddenCount} jobs on this page. Try navigating to the next page.`
-              : search
+            {selectedCandidateId && appliedHiddenCount > 0
+              ? `This candidate has applied to all ${appliedHiddenCount} jobs on this page. Try navigating to the next page.`
+              : search || selectedCategory
               ? 'No jobs match your search filters.'
               : 'Check back later for new opportunities from the discovery pipeline.'}
           </p>
-          {selectedCandidateId && hiddenCount > 0 && hasNext && (
+          {selectedCandidateId && appliedHiddenCount > 0 && hasNext && (
             <button
               onClick={() => setPage(p => p + 1)}
               disabled={isFetching}
@@ -216,17 +318,37 @@ export default function JobsFeedPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {visibleJobs.map((job) => {
             const applicationStatus = selectedCandidateId ? appliedJobsMap.get(job.id) : undefined
+            const isDismissed = dismissedSet.has(job.id)
             return (
-              <JobCard 
-                key={job.id} 
-                job={job} 
+              <JobCard
+                key={job.id}
+                job={job}
                 onApply={handleApply}
                 onDismiss={handleDismiss}
                 onClick={handleCardClick}
                 applicationStatus={applicationStatus}
+                applyPending={pendingJobId === job.id}
+                isDismissed={isDismissed}
+                onRestore={handleRestore}
               />
             )
           })}
+        </div>
+      )}
+
+      {/* Show / hide dismissed toggle */}
+      {!jobsLoading && dismissedJobs.length > 0 && (
+        <div className="flex justify-center">
+          <button
+            onClick={() => setShowDismissed(s => !s)}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-text-muted hover:text-text-primary transition-colors px-3 py-1.5 rounded-full border border-bg-border bg-bg-card hover:bg-bg-hover"
+          >
+            {showDismissed ? (
+              <><EyeOff className="w-3.5 h-3.5" /> Hide dismissed ({dismissedJobs.length})</>
+            ) : (
+              <><Eye className="w-3.5 h-3.5" /> Show dismissed ({dismissedJobs.length})</>
+            )}
+          </button>
         </div>
       )}
 
@@ -239,17 +361,17 @@ export default function JobsFeedPage() {
         footer={
           <div className="flex gap-2">
             {selectedJob?.source_url && (
-              <a 
-                href={selectedJob.source_url} 
-                target="_blank" 
+              <a
+                href={selectedJob.source_url}
+                target="_blank"
                 rel="noopener noreferrer"
                 className="btn-primary !text-xs inline-flex items-center gap-1.5"
               >
                 View Original Posting <ExternalLink className="w-3.5 h-3.5" />
               </a>
             )}
-            <button 
-              onClick={() => setSelectedJob(null)} 
+            <button
+              onClick={() => setSelectedJob(null)}
               className="btn-secondary !text-xs"
             >
               Close

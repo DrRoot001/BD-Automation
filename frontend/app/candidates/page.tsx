@@ -35,10 +35,10 @@ export default function CandidatesPage() {
     enabled: isAdmin,
   })
 
-  // Mutation to re-assign candidate to a BD User
+  // Mutation to re-assign candidate to a BD User (dedicated admin endpoint)
   const assignMutation = useMutation({
     mutationFn: ({ candidateId, userId }: { candidateId: string; userId: string }) =>
-      api.updateCandidate(candidateId, { user_id: userId }),
+      api.assignCandidate(candidateId, userId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ['candidates'] })
       const assignedUser = bdUsers?.find(u => u.id === variables.userId)
@@ -153,10 +153,18 @@ export default function CandidatesPage() {
                     <p className="text-xs text-text-muted truncate mt-0.5 flex items-center gap-1">
                       <Mail className="w-3 h-3 shrink-0" /> {cand.email}
                     </p>
-                    <p className="text-xs text-text-muted mt-1 flex items-center gap-2">
+                    <p className="text-xs text-text-muted mt-1 flex items-center gap-2 flex-wrap">
                       <span>{cand.location || 'Remote'}</span>
                       <span>•</span>
                       <span>{cand.years_exp ? `${cand.years_exp} yrs exp` : 'Exp not set'}</span>
+                      {cand.job_category && (
+                        <>
+                          <span>•</span>
+                          <span className="badge bg-purple/10 border border-purple/20 text-purple">
+                            {cand.job_category}
+                          </span>
+                        </>
+                      )}
                     </p>
 
                     {/* Admin assignment dropdown for mobile */}
@@ -195,6 +203,7 @@ export default function CandidatesPage() {
                   <th className="px-6 py-4 font-medium">Candidate Name</th>
                   <th className="px-6 py-4 font-medium">Contact</th>
                   <th className="px-6 py-4 font-medium">Target Title / Location</th>
+                  <th className="px-6 py-4 font-medium">Category</th>
                   {isAdmin && <th className="px-6 py-4 font-medium">Assigned BD User</th>}
                   <th className="px-6 py-4 font-medium">Experience</th>
                   <th className="px-6 py-4 font-medium text-right">Actions</th>
@@ -219,6 +228,16 @@ export default function CandidatesPage() {
                         <div className="text-text-muted flex items-center gap-1 mt-0.5">
                           <MapPin className="w-3 h-3" /> {cand.location || 'Remote'}
                         </div>
+                      </td>
+
+                      <td className="px-6 py-4 text-xs">
+                        {cand.job_category ? (
+                          <span className="badge bg-purple/10 border border-purple/20 text-purple">
+                            {cand.job_category}
+                          </span>
+                        ) : (
+                          <span className="text-text-muted">—</span>
+                        )}
                       </td>
 
                       {/* Admin BD User Assignment Dropdown */}

@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Link from 'next/link'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '@/lib/api'
 import { KPICard } from '@/components/dashboard/KPICard'
@@ -8,7 +9,7 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { Modal } from '@/components/ui/Modal'
 import { useConfirm } from '@/components/ui/ConfirmDialog'
 import { useToast } from '@/components/ui/Toast'
-import { Search, Send, Target, Award, Briefcase, Clock, Sparkles, RefreshCw, Play, Trash2 } from 'lucide-react'
+import { Search, Send, Target, Award, Briefcase, Clock, RefreshCw, Play, Trash2, Activity, ArrowRight, CheckCircle2 } from 'lucide-react'
 import { formatDistanceToNow } from '@/lib/utils'
 import { formatJobUrl } from '@/components/utils'
 
@@ -61,6 +62,12 @@ export default function AdminPage() {
     refetchInterval: 30_000,
   })
 
+  const { data: opsStats, isLoading: opsLoading, isError: opsError } = useQuery({
+    queryKey: ['ops-stats'],
+    queryFn: () => api.getOpsStats(),
+    refetchInterval: 30_000,
+  })
+
   const handleRunMatching = async () => {
     if (!selectedCandidateId) return
     setIsMatchingRunning(true)
@@ -91,9 +98,22 @@ export default function AdminPage() {
 
     setIsFailingStuck(true)
     try {
-      const res = await fetch('/api/applications/admin/fail-stuck?hours=5', { method: 'POST' })
+      const apiBase = process.env.NEXT_PUBLIC_API_BASE ?? '/api'
+      const res = await fetch(`${apiBase}/applications/admin/fail-stuck?hours=5`, { method: 'POST' })
+      if (!res.ok) {
+        let detail: string | null = null
+        try {
+          const errData = await res.json()
+          if (errData?.detail) {
+            detail = typeof errData.detail === 'string' ? errData.detail : JSON.stringify(errData.detail)
+          }
+        } catch {
+          // Non-JSON error body — fall through to generic message
+        }
+        throw new Error(detail ?? `Request failed with status ${res.status}`)
+      }
       const data = await res.json()
-      toast.success(`Killed ${data.failed_count} stuck application(s) from the last 5 hours.`)
+      toast.success(`Killed ${data.failed_count ?? 0} stuck application(s) from the last 5 hours.`)
     } catch (err: unknown) {
       const errorObj = err as { message?: string }
       toast.error(`Error: ${errorObj.message || 'Failed to clean stuck applications'}`)
@@ -168,6 +188,48 @@ export default function AdminPage() {
           </div>
         </div>
       </div>
+
+      {/* Ops Summary Strip */}
+      <Link
+        href="/admin/ops"
+        className="flex flex-col sm:flex-row sm:items-center gap-3 sm:gap-6 bg-bg-card border border-bg-border rounded-xl px-4 py-3 hover:bg-bg-hover transition-colors group"
+      >
+        <span className="flex items-center gap-2 text-xs font-semibold text-text-primary shrink-0">
+          <Activity className="w-4 h-4 text-info" />
+          Pipeline Ops
+        </span>
+        {opsError ? (
+          <span className="text-xs text-danger">Ops stats unavailable</span>
+        ) : opsLoading ? (
+          <span className="flex gap-6">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <span key={i} className="skeleton h-4 w-24 rounded" />
+            ))}
+          </span>
+        ) : (
+          <span className="flex flex-wrap items-center gap-x-6 gap-y-1 text-xs text-text-muted">
+            <span className="flex items-center gap-1.5">
+              <RefreshCw className="w-3.5 h-3.5 text-warning" />
+              <span className="font-semibold text-text-primary tabular-nums">{opsStats?.applications_in_flight ?? 0}</span>
+              in flight
+            </span>
+            <span className="flex items-center gap-1.5">
+              <Send className="w-3.5 h-3.5 text-info" />
+              <span className="font-semibold text-text-primary tabular-nums">{opsStats?.applications_today ?? 0}</span>
+              created today
+            </span>
+            <span className="flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-success" />
+              <span className="font-semibold text-text-primary tabular-nums">{opsStats?.submitted_today ?? 0}</span>
+              submitted today
+            </span>
+          </span>
+        )}
+        <span className="sm:ml-auto flex items-center gap-1 text-xs font-medium text-accent shrink-0">
+          View operations
+          <ArrowRight className="w-3.5 h-3.5 group-hover:translate-x-0.5 transition-transform" />
+        </span>
+      </Link>
 
       {/* KPI Cards */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
