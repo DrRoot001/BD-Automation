@@ -6,7 +6,7 @@ import { api, type ApplicationSummary } from '@/lib/api'
 import { clsx } from 'clsx'
 import { formatDistanceToNow, resolveFileUrl, formatJobUrl } from '../utils'
 import { useRouter } from 'next/navigation'
-import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { ExternalLink, FileText, ChevronLeft, ChevronRight, Loader2, CheckCircle } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useQueryClient } from '@tanstack/react-query'
 import { StatusBadge } from '../shared/StatusBadge'
@@ -63,7 +63,15 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
   const router = useRouter()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
-  const [pipelineState, setPipelineState] = useState<{ step: string; message: string; ts: Date } | null>(null)
+  const [pipelineState, setPipelineState] = useState<{ step: string; message: string; ts: Date; done: boolean } | null>(null)
+  // Auto-expire the live-activity pill. Every progress event (re)starts this
+  // timer; when the event stream goes quiet — i.e. the pipeline FINISHED (or
+  // paused) — the pill clears itself instead of freezing on the last message.
+  const clearTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleClear = (ms: number) => {
+    if (clearTimer.current) clearTimeout(clearTimer.current)
+    clearTimer.current = setTimeout(() => setPipelineState(null), ms)
+  }
 
   // Coalesce WebSocket-driven refetches. During an active pipeline run these
   // events (pipeline.progress / application.created / application.status_changed)
@@ -80,6 +88,7 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
   }
   useEffect(() => () => {
     if (invalidateTimer.current) clearTimeout(invalidateTimer.current)
+    if (clearTimer.current) clearTimeout(clearTimer.current)
   }, [])
 
   useWebSocket((evt) => {
@@ -91,20 +100,30 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
       const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (evtCandidateId && candidateId && evtCandidateId !== candidateId) return
 
-      setPipelineState({ step, message, ts: new Date() })
+      // "Terminal" = this message is a resting state (the pipeline reached an
+      // end for this run/app), so the pill should read as done and clear soon.
+      const terminal = /\b(done|complete|completed|submitted|blocked|failed|rejected|no[_ ]?matches|already applied|finished)\b/i
+        .test(`${step} ${message}`)
+      setPipelineState({ step, message, ts: new Date(), done: terminal })
 
-      // If it's a terminal step for the background matcher, hide the status after a delay
-      if (step === 'matches_found' || step === 'no_matches' || step === 'done') {
-        if (step !== 'matches_found') {
-          setTimeout(() => setPipelineState(null), 5000)
-        }
-        scheduleRefetch()
-      }
+      // ALWAYS arm the auto-clear. During an active run, events keep arriving and
+      // reset the timer so the pill stays visible; once the pipeline FINISHES and
+      // the stream goes quiet, the last timer fires and the pill disappears —
+      // fixing the "stuck on 'submitted with evidence'" banner. Terminal messages
+      // clear quickly; interim ones linger longer before an idle timeout.
+      scheduleClear(terminal ? 4000 : 20000)
+      if (terminal) scheduleRefetch()
     } else if (evt.event === 'application.created' || evt.event === 'application.status_changed') {
       // Only refetch if the event is for our candidate
       const evtCandidateId = evt.data?.candidate_id || evt.data?.candidateId
       if (!evtCandidateId || !candidateId || evtCandidateId === candidateId) {
         scheduleRefetch()
+        // A change into a terminal status is also "work winding down" — let the
+        // activity pill expire promptly rather than lingering.
+        const st = String(evt.data?.to_status || evt.data?.status || '').toUpperCase()
+        if (['SUBMITTED', 'CONFIRMED', 'FAILED', 'BLOCKED', 'REJECTED'].includes(st)) {
+          scheduleClear(4000)
+        }
       }
     }
   })
@@ -137,8 +156,15 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
         </div>
         <div className="flex items-center gap-3">
           {pipelineState && (
-            <div className="flex items-center gap-2 text-xs font-medium text-accent animate-pulse bg-accent/10 px-3 py-1 rounded-full border border-accent/20">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <div className={clsx(
+              'flex items-center gap-2 text-xs font-medium px-3 py-1 rounded-full border',
+              pipelineState.done
+                ? 'text-success bg-success/10 border-success/20'
+                : 'text-accent bg-accent/10 border-accent/20 animate-pulse'
+            )}>
+              {pipelineState.done
+                ? <CheckCircle className="w-3.5 h-3.5" />
+                : <Loader2 className="w-3.5 h-3.5 animate-spin" />}
               <span>{pipelineState.message}</span>
             </div>
           )}
