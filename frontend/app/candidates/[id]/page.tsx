@@ -500,7 +500,7 @@ export default function CandidateDetailPage() {
 
             {/* Available Jobs Count */}
             <div className="text-xs text-text-muted mt-1 bg-bg-secondary border border-bg-border/60 rounded-lg p-2.5 flex items-center justify-between">
-              <span>Matching Jobs status:</span>
+              <span>Available Jobs:</span>
               {countLoading ? (
                 <span className="flex items-center gap-1.5 font-medium text-text-secondary">
                   <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
