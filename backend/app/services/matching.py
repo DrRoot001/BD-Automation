@@ -693,7 +693,29 @@ async def run_matching_for_candidate(
                     f"platform={package['platform']!r} url={package['job_url'][:80]!r}"
                 )
                 from app.tasks.browser_automation import execute_application
-                execute_application.delay(package)
+                # App-level retry on top of task_publish_retry: a DNS flap to the
+                # broker longer than the publish-retry window would otherwise
+                # strand this app in QUEUED until the watchdog (≥15 min later).
+                _dispatch_err = None
+                for _attempt in range(3):
+                    try:
+                        execute_application.delay(package)
+                        _dispatch_err = None
+                        break
+                    except Exception as _pub_err:
+                        _dispatch_err = _pub_err
+                        logger.warning(
+                            f"[Matching] browser-task dispatch failed for app={app_id} "
+                            f"(attempt {_attempt + 1}/3): {_pub_err} — retrying in 10s"
+                        )
+                        await asyncio.sleep(10)
+                if _dispatch_err is not None:
+                    # Leave the row QUEUED — the stuck-application watchdog
+                    # re-dispatches it — but surface the reason loudly.
+                    logger.error(
+                        f"[Matching] browser-task dispatch EXHAUSTED retries for app={app_id}; "
+                        f"row stays QUEUED for watchdog recovery: {_dispatch_err}"
+                    )
 
                 await publish_event("pipeline.progress", {
                     "application_id": str(app_id),

@@ -154,6 +154,18 @@ celery_app.conf.result_backend_transport_options = {
 celery_app.conf.broker_connection_retry = True
 celery_app.conf.broker_connection_retry_on_startup = True
 celery_app.conf.broker_connection_max_retries = None   # retry forever
+# Publishing (.delay/send_task) resilience: laptop DNS to Upstash flaps for
+# seconds at a time (gaierror Errno 8), which was silently eating browser-task
+# dispatches mid-pipeline ("Dispatching browser automation" → connect error →
+# app stuck QUEUED until the watchdog). Celery's default publish retry only
+# spans ~0.6s; stretch it to cover a realistic DNS blip (~30s).
+celery_app.conf.task_publish_retry = True
+celery_app.conf.task_publish_retry_policy = {
+    "max_retries": 6,
+    "interval_start": 1.0,
+    "interval_step": 2.0,
+    "interval_max": 10.0,
+}
 celery_app.conf.redis_socket_keepalive = True
 celery_app.conf.redis_retry_on_timeout = True
 celery_app.conf.redis_backend_health_check_interval = 25
