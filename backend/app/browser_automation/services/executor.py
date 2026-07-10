@@ -477,6 +477,32 @@ class ApplicationExecutor:
             )
 
         try:
+            # ── IDEMPOTENCY GUARD ──────────────────────────────────────────
+            # A re-dispatched task (Upstash redelivery, a watchdog re-queue, or a
+            # manual re-run) must NEVER re-open the browser and file a DUPLICATE
+            # application when this app has already reached a submitted/terminal
+            # state. Read the CURRENT status and short-circuit as a no-op. A None
+            # read (transient/unknown) proceeds normally, so a flaky read never
+            # blocks a legitimate apply.
+            from .state_machine import fetch_application_status
+            _SUBMITTED_STATES = {"SUBMITTED", "CONFIRMED", "INTERVIEW_R1",
+                                 "INTERVIEW_R2", "OFFER"}
+            _TERMINAL_NEG_STATES = {"REJECTED", "GHOSTED", "WITHDRAWN"}
+            _current_status = await fetch_application_status(package.application_id)
+            if _current_status in _SUBMITTED_STATES or _current_status in _TERMINAL_NEG_STATES:
+                logger.warning(
+                    f"[M4] Idempotency guard: app {package.application_id} is already "
+                    f"{_current_status} — skipping re-execution to avoid a duplicate submit."
+                )
+                _cleanup_temp(_temp_resume, _temp_cover)
+                return ApplicationResult(
+                    application_id=package.application_id,
+                    status="SUBMITTED" if _current_status in _SUBMITTED_STATES else "BLOCKED",
+                    execution_time_seconds=_elapsed(),
+                    retry_count=retry_count,
+                    error_message=f"Idempotency guard: application already {_current_status}",
+                )
+
             # Check platform review status
             from .platform_review import (
                 get_spam_backoff_remaining,
@@ -797,8 +823,8 @@ class ApplicationExecutor:
 
                         if captcha_type:
                             logger.info(f"[Agent] {captcha_type} detected on BLOCKED page. Invoking CaptchaService...")
-                            from ..captcha import CaptchaService
-                            provider = os.getenv("CAPTCHA_PROVIDER", "capsolver").lower()
+                            from ..captcha import CaptchaService, resolve_captcha_provider
+                            provider = resolve_captcha_provider()
                             captcha_svc = CaptchaService(provider=provider)
                             solution = await captcha_svc.solve(page, captcha_type)
                             if solution.success:
@@ -958,6 +984,12 @@ class ApplicationExecutor:
                         candidate_id=package.candidate_id,
                         stop_before_submit=dry_run,
                         max_steps=_loop_max_steps,
+                        # Portal login credentials (login_email/password/gmail)
+                        # from the candidate's DB profile, so the AI can log into
+                        # portals the BD user previously signed into. The password
+                        # is injected only at password-field fill time and never
+                        # reaches the LLM prompt/history.
+                        candidate_credentials=_cand_creds,
                     )
                     frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                     loop_result: LoopResult = await agent_loop.run(
@@ -1289,8 +1321,12 @@ class ApplicationExecutor:
                     raise Exception("Form fill incomplete — one or more required fields could not be filled")
 
                 # ── STEP 8: Captcha ──
+                from ..captcha import resolve_captcha_provider
                 dry_run = os.getenv("DRY_RUN_NO_SUBMIT", "false").lower() == "true"
-                provider = os.getenv("CAPTCHA_PROVIDER", "2captcha").lower()
+                # Anti-Captcha is the funded universal primary; default to it so a
+                # missing CAPTCHA_PROVIDER never falls back to the placeholder
+                # 2captcha key and produces a spurious "no solver key" BLOCKED.
+                provider = resolve_captcha_provider()
                 raw_key = os.getenv(
                     "CAPSOLVER_API_KEY" if provider == "capsolver" else
                     "TWO_CAPTCHA_API_KEY" if provider == "2captcha" else

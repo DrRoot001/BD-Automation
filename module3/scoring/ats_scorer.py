@@ -3,9 +3,54 @@ from __future__ import annotations
 
 import os
 import json
+import re
 import asyncio
 from typing import List, Optional
 from pydantic import BaseModel, Field
+
+
+def _lenient_json_loads(raw: str):
+    """Parse JSON that an LLM may have wrapped in fences or TRUNCATED mid-object.
+
+    gemini-3.5-flash occasionally cuts a JSON response off before its closing
+    brace, which crashes a strict json.loads. This strips code fences, trims to
+    the outermost object/array, and balances any unclosed strings/brackets so a
+    slightly-truncated-but-usable response still parses. Raises on genuinely
+    unrecoverable input."""
+    s = (raw or "").strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\n?", "", s)
+        s = re.sub(r"\n?```$", "", s).strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    # Trim leading prose before the first JSON opener.
+    idx = min([i for i in (s.find("{"), s.find("[")) if i != -1], default=-1)
+    if idx > 0:
+        s = s[idx:]
+    s = re.sub(r",\s*$", "", s)  # drop a dangling trailing comma
+    # Walk the text (ignoring string contents) to find unclosed brackets.
+    closers, in_str, esc = [], False, False
+    pairs = {"{": "}", "[": "]"}
+    for ch in s:
+        if esc:
+            esc = False
+            continue
+        if in_str:
+            if ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch in pairs:
+            closers.append(pairs[ch])
+        elif ch in ("}", "]") and closers and closers[-1] == ch:
+            closers.pop()
+    repaired = s + ('"' if in_str else "") + "".join(reversed(closers))
+    return json.loads(repaired)
 
 from module2.normalization.schemas import NormalizedJob
 from module3.parser.resume_parser import ResumeData
@@ -153,17 +198,23 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
                 raise ValueError(f"Parsed JSON is {type(result).__name__}, expected dictionary")
             break
         except Exception as first_err:
-            try:
-                repaired = json.loads(_repair_json(raw_text))
-                if not isinstance(repaired, dict):
-                    raise ValueError("repaired JSON is not a dictionary")
-                result = repaired
+            # Two repairers, complementary: _lenient_json_loads walks the text
+            # string-aware and balances truncated brackets/fences; _repair_json
+            # additionally fixes missing commas between fields.
+            result = None
+            for repair in (_lenient_json_loads, lambda t: json.loads(_repair_json(t))):
+                try:
+                    repaired = repair(raw_text)
+                    if isinstance(repaired, dict):
+                        result = repaired
+                        break
+                except Exception:
+                    continue
+            if result is not None:
                 print(f"ATS response repaired after parse error: {first_err}")
                 break
-            except Exception:
-                result = None
-                print(f"Failed to parse LLM ATS evaluation response (attempt {attempt + 1}):", first_err)
-                print("Raw response:", response.text)
+            print(f"Failed to parse LLM ATS evaluation response (attempt {attempt + 1}):", first_err)
+            print("Raw response:", response.text)
 
     if result is None:
         # A broken beauty-metric response must not kill the whole application —

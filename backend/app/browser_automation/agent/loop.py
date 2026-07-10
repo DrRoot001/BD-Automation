@@ -447,8 +447,9 @@ DECISION POLICY — read in order:
         do you live in?" / any location-or-residence question whose options are
         a list of COUNTRY NAMES → **ALWAYS "United States"**. Pick the option
         whose text is "United States" (or "United States of America" / "USA" —
-        whichever exact spelling the option list uses). The candidate lives in
-        San Francisco, USA.
+        whichever exact spelling the option list uses). The candidate is
+        US-based; their exact city and state are on the identity card above
+        (Location) — use THAT, never a different city.
         **CRITICAL:** "Are you currently based in any of these countries?" is
         NOT a yes/no question — its options are country names, and you must
         pick "United States", NOT "No". Answering "No" to a country-list
@@ -458,6 +459,22 @@ DECISION POLICY — read in order:
         Never pick another country, never pick "Prefer not to say". This rule
         does NOT apply to "Country of citizenship" or "Country code" (phone)
         fields — those follow the candidate's actual data.
+      * "Location" / "City" / "Current city of residence" / "Where are you
+        located?" / any address-or-city field → use the candidate's Location
+        from the identity card above (e.g. "Austin, TX, USA"). NEVER substitute
+        a different city and NEVER invent one — if the card says Austin, the
+        answer is Austin, always.
+          - City-only field → enter just the CITY (e.g. "Austin").
+          - Free-text location field → enter the card's "City, ST" or
+            "City, ST, USA" as shown.
+          - AUTOCOMPLETE / typeahead (a text box that pops up a suggestion
+            list) → type the CITY, wait for the suggestions, then SELECT the
+            suggestion that matches the candidate's city. ANY option that
+            starts with that city is correct regardless of format
+            ("Austin, TX" / "Austin, TX, USA" / "Austin, Texas, United States").
+            Pick the first city-matching suggestion; never pick a suggestion for
+            a different city. If no suggestion appears, leave the typed
+            "City, ST" text and move on.
     These are the candidate's declared answers — NOT defaults. Do NOT pick
     "Prefer not to say" for these six unless the option list literally does
     not contain a closer match.
@@ -1711,12 +1728,73 @@ async def _human_scroll(page: Page, delta: float):
         await asyncio.sleep(random.uniform(0.05, 0.15))
 
 
+# Operator policy: MANUAL email+password login ONLY — never social/SSO sign-in.
+# Third-party OAuth (Google/Apple/etc.) can't be automated with stored
+# credentials and drops the flow onto an external domain we won't submit on.
+_SSO_TEXT_MARKERS = (
+    "continue with google", "sign in with google", "sign up with google",
+    "log in with google", "login with google", "continue with apple",
+    "sign in with apple", "login with apple", "continue with facebook",
+    "sign in with facebook", "continue with linkedin", "sign in with linkedin",
+    "continue with microsoft", "sign in with microsoft", "continue with github",
+    "sign in with github", "use google account", "with google", "with apple",
+    "with facebook", "with microsoft", "google 계정", "single sign-on",
+)
+_SSO_HREF_MARKERS = (
+    "accounts.google.com", "appleid.apple.com", "facebook.com/login",
+    "facebook.com/dialog", "facebook.com/v", "linkedin.com/oauth",
+    "login.microsoftonline.com", "github.com/login/oauth",
+    "/auth/google", "/oauth/google", "/oauth2/google", "signin/oauth",
+    "/connect/google", "/sso/",
+)
+
+
+def _is_sso_text(s: Optional[str]) -> bool:
+    t = (s or "").lower()
+    return any(m in t for m in _SSO_TEXT_MARKERS)
+
+
+def _is_sso_href(s: Optional[str]) -> bool:
+    h = (s or "").lower()
+    return any(m in h for m in _SSO_HREF_MARKERS)
+
+
+async def _maybe_login_password(
+    ctx, selector: Optional[str], field_label: Optional[str],
+    credentials: Optional[Dict[str, str]],
+) -> Optional[str]:
+    """Return the candidate's stored login password IF *selector* points at a
+    password field — else None. This is how the AI logs into portals the BD user
+    previously signed into (creds saved in the frontend / DB) WITHOUT the secret
+    ever entering the LLM prompt or the action history: the model just targets
+    the password box, and the runner substitutes the real value here."""
+    pw = (credentials or {}).get("password") or ""
+    if not pw or not selector:
+        return None
+    is_pw = False
+    try:
+        el = ctx.locator(selector).first
+        if await el.count() > 0:
+            itype = (await el.get_attribute("type") or "").lower()
+            iname = (await el.get_attribute("name") or "").lower()
+            iid = (await el.get_attribute("id") or "").lower()
+            is_pw = itype == "password" or "password" in iname or "password" in iid
+    except Exception:
+        pass
+    if not is_pw:
+        lbl = (field_label or "").lower()
+        sel_l = (selector or "").lower()
+        is_pw = "password" in lbl or "password" in sel_l
+    return pw if is_pw else None
+
+
 async def _execute_action(
     action: AgentAction,
     page: Page,
     frame: Optional[Frame],
     resume_path: Optional[str],
     cover_letter_path: Optional[str],
+    credentials: Optional[Dict[str, str]] = None,
 ) -> bool:
     """Execute one action. Returns True if Playwright succeeded."""
     ctx = frame or page
@@ -1850,17 +1928,17 @@ async def _execute_action(
         return False
 
     if kind == "solve_captcha":
-        from ..captcha.service import CaptchaService
+        from ..captcha.service import CaptchaService, resolve_captcha_provider
         if not action.captcha_type:
             logger.warning("[AgentLoop] solve_captcha: missing captcha_type")
             return False
-        
+
         logger.info(f"[AgentLoop] LLM requested solve_captcha for type={action.captcha_type!r}")
-        # Read the operator-configured provider — turnstile is dispatched by
-        # CaptchaService.solve() to solve_turnstile(), which hard-requires
-        # provider=="capsolver"; the class default ("2captcha") would make the
-        # turnstile path always fail. Match the other call sites.
-        provider = os.getenv("CAPTCHA_PROVIDER", "capsolver").lower()
+        # Single source of truth: the funded Anti-Captcha key is the universal
+        # primary and supports every type CaptchaService.solve() dispatches
+        # (reCAPTCHA v2/v3, hCaptcha, Turnstile, image). resolve_captcha_provider()
+        # defaults to "anticaptcha" when CAPTCHA_PROVIDER is unset.
+        provider = resolve_captcha_provider()
         captcha_svc = CaptchaService(provider=provider)
         # captcha_type passes through verbatim — CaptchaService.solve() accepts
         # "recaptcha_v2" | "hcaptcha" | "image" | "turnstile" (Cloudflare
@@ -1890,6 +1968,19 @@ async def _execute_action(
     if kind == "click":
         sel = action.selector
         text = action.click_text
+        # ── HARD POLICY GUARD: never click a social/SSO sign-in control ──────
+        # Manual email+password login only. Refuse up-front if the selector or
+        # click-text names an SSO button, and (below) re-check the resolved
+        # element's text/href. Returning False with a reason steers the model to
+        # the email/password form on its next turn instead of leaving the site.
+        if _is_sso_text(f"{sel or ''} {text or ''}"):
+            logger.warning(
+                f"[AgentLoop] click REFUSED — SSO/social login is disabled by policy "
+                f"(target={(text or sel or '')[:80]!r}). Use the email + password form."
+            )
+            action.reason = ("SSO/social login (Google/Apple/etc.) is disabled — "
+                             "log in with the email + password form instead.")
+            return False
         tried: List[str] = []
         if sel:
             tried.append(sel)
@@ -1900,6 +1991,24 @@ async def _execute_action(
             try:
                 loc = ctx.locator(s).first
                 if await loc.count() > 0 and await loc.is_visible():
+                    # Re-check the RESOLVED element — the selector may be generic
+                    # but resolve to a Google/Apple/etc. button or OAuth link.
+                    try:
+                        _el_text = await loc.inner_text()
+                    except Exception:
+                        _el_text = ""
+                    try:
+                        _el_href = await loc.get_attribute("href")
+                    except Exception:
+                        _el_href = ""
+                    if _is_sso_text(_el_text) or _is_sso_href(_el_href):
+                        logger.warning(
+                            f"[AgentLoop] click REFUSED — resolved target is an SSO control "
+                            f"(text={(_el_text or '')[:60]!r}). Manual login only."
+                        )
+                        action.reason = ("SSO/social login is disabled — use the "
+                                         "email + password form instead.")
+                        return False
                     await loc.scroll_into_view_if_needed()
                     # Idempotency guard: a plain click TOGGLES a checkbox/radio,
                     # so if the AI re-issues a click on an already-checked box it
@@ -1989,6 +2098,17 @@ async def _execute_action(
         if not sel:
             logger.warning("[AgentLoop] fill_field: no selector")
             return False
+
+        # ── Secure credential injection (login forms) ──────────────────────
+        # If this is a password field, fill the candidate's stored password from
+        # the secure credentials dict. The secret is used ONLY for the DOM fill —
+        # never stored on action.value (which is logged in history), so it can't
+        # leak into logs or the LLM's context.
+        _login_pw = await _maybe_login_password(ctx, sel, action.field_label, credentials)
+        if _login_pw is not None:
+            value = _login_pw
+            action.value = "••••••••"  # masked marker for history/logs
+            logger.info(f"[AgentLoop] fill_field: injecting stored login password into {sel!r}")
 
         # ── LinkedIn-URL hard override (operator policy) ────────────────────
         # The system prompt tells the AI to answer "N/A" on LinkedIn-URL
@@ -2722,8 +2842,17 @@ class AgentLoop:
         screening_answers: Optional[Dict[str, str]] = None,
         candidate_id: Optional[str] = None,
         stop_before_submit: bool = False,
+        candidate_credentials: Optional[Dict[str, str]] = None,
     ):
         self.profile = candidate_profile
+        # Portal login credentials (login_email / password / gmail) loaded from
+        # the candidate's DB profile. Used to log the AI into portals the BD user
+        # previously signed into (email/password saved in the frontend). The
+        # PASSWORD is deliberately kept OUT of the LLM prompt — it is only
+        # substituted at fill-time when the AI targets a password field (see
+        # _resolve_credential_value). login_email is not secret and is also
+        # surfaced on the profile so the model can fill the username field.
+        self._credentials: Dict[str, str] = dict(candidate_credentials or {})
         self.job_ctx = job_context
         self.resume_path = resume_path
         self.cover_letter_path = cover_letter_path
@@ -3009,6 +3138,32 @@ class AgentLoop:
                 lines.append(f"  A: {str(a)[:200]}")
             screening_block = "\n" + "\n".join(lines) + "\n"
 
+        # Login block — when the candidate has stored portal credentials, tell
+        # the AI it CAN sign in (the BD user already registered on this portal
+        # and saved the password). It fills the username from the identity card
+        # and puts any placeholder in the password box — the runner substitutes
+        # the real secret at fill time, so the password never reaches the model.
+        login_block = ""
+        if (self._credentials or {}).get("password"):
+            _login_email = (
+                self._credentials.get("login_email")
+                or self._credentials.get("gmail")
+                or (self.profile or {}).get("email")
+                or ""
+            )
+            login_block = (
+                "\n\nLOGIN / SIGN-IN HANDLING:\n"
+                "This candidate HAS a saved account on this portal. If a login / "
+                "sign-in wall blocks the application:\n"
+                f"  1. Fill the email / username field with: {_login_email}\n"
+                "  2. Fill the password field (input type=password) with any "
+                "placeholder such as 'AUTO' — the system automatically replaces "
+                "it with the real password; you will never see the real value.\n"
+                "  3. Click Sign in / Log in and continue the application.\n"
+                "  ALWAYS use the email+password form — never 'Continue with "
+                "Google'/SSO — and NEVER create a new account.\n"
+            )
+
         # Generic agent identity — same wording for every candidate. The
         # specific candidate they're representing is shown in the WHO YOU
         # REPRESENT section below, not embedded in the agent's role.
@@ -3088,7 +3243,18 @@ class AgentLoop:
         schema_block = _ACTION_SCHEMA_BLOCK
         if not self.cover_letter_path:
             schema_block += "\n\nCRITICAL OVERRIDE: You DO NOT have a cover letter. If a cover letter field exists, DO NOT upload anything to it. Skip it entirely.\n"
-        return base + resume_block + hints_block + screening_block + schema_block
+        # Always-on global policy — applies to EVERY portal, known or unknown.
+        schema_block += (
+            "\n\nGLOBAL LOGIN POLICY (applies to any site): Use MANUAL email + "
+            "password login ONLY. NEVER click 'Continue with Google', 'Sign in "
+            "with Google/Apple/Facebook/Microsoft/LinkedIn', or any social/SSO "
+            "button, and never navigate to an external OAuth page (accounts.google.com "
+            "etc.). If a sign-in wall appears, find the email and password fields "
+            "on the site's own form and use those. If only SSO is offered and no "
+            "email/password form exists, do NOT sign in — continue if possible or "
+            "stop; taking an SSO path is always the wrong move.\n"
+        )
+        return base + resume_block + hints_block + login_block + screening_block + schema_block
 
     # ──────────────────────────────────────────────────────────────────────
     # Lever 2: memory pre-fill — recall + apply known answers before the LLM
@@ -4732,8 +4898,8 @@ class AgentLoop:
         # (e.g. an hCaptcha UUID grabbed by a false-positive detection), so an
         # hCaptcha-only form no longer burns a bogus "invalid websiteKey" call.
         try:
-            from ..captcha import CaptchaService
-            _prov = os.getenv("CAPTCHA_PROVIDER", "anticaptcha").lower()
+            from ..captcha import CaptchaService, resolve_captcha_provider
+            _prov = resolve_captcha_provider()
             if _prov in ("anticaptcha", "capsolver"):
                 _sol = await CaptchaService(provider=_prov).solve(page, "turnstile", max_attempts=1)
                 if getattr(_sol, "success", False):
@@ -6720,6 +6886,45 @@ class AgentLoop:
 
                 if action.kind == "done":
                     actions.append(action)
+                    # Never trust the model's 'done' verbatim — a hallucinated
+                    # confirmation (or a misread spam/error banner) would file a
+                    # phantom application. Require the SAME safeguards the
+                    # submit-click path uses: no rejection banner, and the visual
+                    # classifier must not say the page is still a form / an error.
+                    _done_reject = None
+                    try:
+                        _dcontent = (await page.content()).lower()
+                        for _pattern in _POST_SUBMIT_REJECTION_PATTERNS:
+                            if _pattern in _dcontent:
+                                _done_reject = _pattern
+                                break
+                    except Exception:
+                        pass
+                    if _done_reject:
+                        _reason = ("ALREADY_APPLIED"
+                                   if _done_reject in _ALREADY_APPLIED_PATTERNS
+                                   else "SPAM_FLAGGED")
+                        logger.error(
+                            f"[AgentLoop] 'done' claimed but rejection banner "
+                            f"{_done_reject!r} is present — NOT recording SUBMITTED ({_reason})"
+                        )
+                        return LoopResult(
+                            success=False, status="ABORTED",
+                            error=f"{_reason}: model reported done but the page shows a "
+                                  f"rejection banner ({_done_reject!r}). Not retrying.",
+                            steps_taken=step, actions=actions,
+                        )
+                    try:
+                        _done_visual = await self._classify_submit_visual(page)
+                    except Exception:
+                        _done_visual = None
+                    if _done_visual in ("error", "still_on_form"):
+                        logger.warning(
+                            f"[AgentLoop] 'done' claimed but visual classifier says "
+                            f"'{_done_visual}' — rejecting premature done and re-observing."
+                        )
+                        await asyncio.sleep(1.5)
+                        continue
                     logger.info(f"[AgentLoop] DONE after {step} steps: {action.confirmation!r}")
                     return LoopResult(
                         success=True,
@@ -6855,7 +7060,8 @@ class AgentLoop:
                         logger.debug(f"[AgentLoop] Lever net listener install failed: {_exc}")
 
                 ok = await _execute_action(
-                    action, page, frame, self.resume_path, self.cover_letter_path
+                    action, page, frame, self.resume_path, self.cover_letter_path,
+                    credentials=self._credentials,
                 )
                 action.ok = ok
 
@@ -6979,7 +7185,8 @@ class AgentLoop:
                         # the FALLBACK. Skipped when the invisible poll already
                         # produced a token, or when no funded token provider is set.
                         if _hc_value is not None and not _hc_value:
-                            _prov = os.getenv("CAPTCHA_PROVIDER", "anticaptcha").lower().strip()
+                            from ..captcha.service import resolve_captcha_provider
+                            _prov = resolve_captcha_provider()
                             if _prov in ("anticaptcha", "2captcha", "nopecha"):
                                 try:
                                     _site_key = await page.evaluate(
@@ -7187,7 +7394,8 @@ class AgentLoop:
                             # Lever's custom #hcaptchaResponseInput (not the standard
                             # h-captcha-response textarea), then the click loop below
                             # fires the hidden submit button.
-                            _prov = os.getenv("CAPTCHA_PROVIDER", "").lower().strip()
+                            from ..captcha.service import resolve_captcha_provider
+                            _prov = resolve_captcha_provider()
                             if _prov in ("anticaptcha", "2captcha", "nopecha"):
                                 try:
                                     _site_key = await page.evaluate(
@@ -7629,7 +7837,16 @@ class AgentLoop:
                                 except Exception:
                                     continue
                             if clicked:
-                                # Move on — next turn will see the post-submit page
+                                # Mark the submission as fired so (a) the executor
+                                # does NOT run its scripted re-submit fallback
+                                # (which would double-apply), and (b) the
+                                # post-submit verification phase (OTP / confirmation
+                                # scan) runs on the next turns. This mirrors the
+                                # AI-click path at the top of the submit handler.
+                                submit_fired = True
+                                self._submit_fired = True
+                                if _submit_epoch is None:
+                                    _submit_epoch = int(time.time()) - 60
                                 actions.append(action)
                                 continue
                         except Exception as exc:
@@ -7693,6 +7910,14 @@ class AgentLoop:
                                     except Exception:
                                         continue
                                 if clicked:
+                                    # Mark the submission as fired (same reason as
+                                    # the auto-fire net above): block the executor's
+                                    # scripted re-submit and enable post-submit
+                                    # verification instead of a silent double-apply.
+                                    submit_fired = True
+                                    self._submit_fired = True
+                                    if _submit_epoch is None:
+                                        _submit_epoch = int(time.time()) - 60
                                     actions.append(action)
                                     # Give the form a moment to navigate or
                                     # surface validation errors, then let the

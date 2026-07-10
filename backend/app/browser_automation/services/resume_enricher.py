@@ -144,14 +144,25 @@ def _clean_city(city: str) -> str:
 
 
 def _extract_us_location(text: str) -> Optional[Tuple[str, str, str]]:
-    """Find a US location in the text. Returns (city, state_name, state_abbr).
+    """Find the candidate's US location. Returns (city, state_name, state_abbr).
 
-    Strategy — first match wins:
-      1. ``City, ST`` two-letter pattern (most common header format).
-      2. ``City, State Name`` long-form pattern.
-    Matches are case-insensitive but we preserve the original casing of the
-    city as it appeared in the resume.
+    The candidate's OWN location lives in the contact header at the very top of
+    the resume. A location that appears in a past-job description (e.g. "Engineer
+    at Acme, San Francisco, CA") must NEVER override it — that was a real cause of
+    the wrong city (San Francisco) being filled. So we scan the HEADER first and
+    only fall back to the wider body if the header has no location at all.
     """
+    if not text:
+        return None
+    # The contact block (name / location / email / phone) is the first ~300
+    # chars. Scan THAT first — it's the candidate's own location. Only if it has
+    # no location at all do we fall back to the wider body (last resort).
+    return _scan_location(text[:300]) or _scan_location(text)
+
+
+def _scan_location(text: str) -> Optional[Tuple[str, str, str]]:
+    """Run all location patterns over *text*; first match wins. Case-insensitive,
+    preserving the city's original casing."""
     if not text:
         return None
 
@@ -202,6 +213,30 @@ def _extract_us_location(text: str) -> Optional[Tuple[str, str, str]]:
         if mapped and len(city_raw) >= 2:
             state_name, abbr = mapped
             return (city_raw, state_name, abbr)
+
+    # Pattern 4 (last resort): a bare known-city name in the CONTACT HEADER.
+    # Tailored-resume headers sometimes separate location tokens with pipes or
+    # bullets ("Austin • TX", "Austin | USA") instead of commas, which patterns
+    # 1–3 all miss — that was the intermittent "location stayed 'US'" failure.
+    # Scoped to the first 600 chars (the name/contact block) so we never pick up
+    # a city from a past-job description. Earliest match wins.
+    header = text[:600]
+    header_l = header.lower()
+    best_pos: Optional[int] = None
+    best_city: Optional[str] = None
+    for city_key in _US_CITY_TO_STATE:
+        pos = header_l.find(city_key)
+        if pos == -1:
+            continue
+        before_ok = pos == 0 or not header_l[pos - 1].isalpha()
+        after_i = pos + len(city_key)
+        after_ok = after_i >= len(header_l) or not header_l[after_i].isalpha()
+        if before_ok and after_ok and (best_pos is None or pos < best_pos):
+            best_pos, best_city = pos, city_key
+    if best_city is not None and best_pos is not None:
+        state_name, abbr = _US_CITY_TO_STATE[best_city]
+        orig_city = header[best_pos:best_pos + len(best_city)]  # preserve casing
+        return (orig_city, state_name, abbr)
 
     return None
 

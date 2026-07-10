@@ -81,10 +81,13 @@ async def _refresh_resume_contacts_if_needed(
 
 
 def _get_threshold() -> float:
+    # Default MUST match the documented value (CLAUDE.md / .env.example = 45);
+    # a hardcoded 75 silently gated out most jobs when APPLY_SCORE_THRESHOLD
+    # was unset.
     try:
-        return float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        return float(os.getenv("APPLY_SCORE_THRESHOLD", "45"))
     except ValueError:
-        return 75.0
+        return 45.0
 
 
 def _build_resume_data_from_tailored(

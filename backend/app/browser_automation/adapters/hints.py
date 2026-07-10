@@ -865,10 +865,47 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         "success_patterns": [
             "application submitted",
             "thank you for applying",
+            "thank you for your application",
             "application received",
+            "we have received your application",
+            "we've received your application",
+            "successfully applied",
         ],
         "quirks": [
-            "Unknown platform — rely on DOM observation and screenshot to guide actions.",
+            "UNKNOWN PORTAL — there is no scripted playbook. Decide the flow at "
+            "runtime PURELY from the screenshot + DOM you are shown each turn. Do "
+            "not assume any specific layout.",
+            "STEP 1 — REACH THE FORM. If you see a job description with an "
+            "Apply/Apply Now/Easy Apply button and no form yet, click it once and "
+            "wait for the form (it may open inline, in a modal, or on a new page). "
+            "If a form is already visible, start filling immediately — do not hunt "
+            "for an Apply button.",
+            "STEP 2 — LOGIN WALL (if any). If a sign-in/login form blocks the "
+            "application, log in with the candidate's EMAIL + PASSWORD (see the "
+            "LOGIN / SIGN-IN HANDLING section). Manual login ONLY — never click "
+            "'Continue with Google' or any social/SSO button, and never leave the "
+            "site to an OAuth page.",
+            "STEP 3 — FILL EVERY REQUIRED FIELD intelligently from the identity "
+            "card, resume, and pre-resolved answers: name, email, phone, location, "
+            "work authorization, screening questions, EEO/demographics. Upload the "
+            "resume to any resume/CV file input (and the cover letter to a cover "
+            "letter input if one exists). Use ONE fill_field per field; for "
+            "dropdowns/comboboxes emit fill_field with the option text (never click "
+            "through options).",
+            "STEP 4 — MULTI-STEP. If the form spans multiple steps/pages, complete "
+            "the visible step, then use next_step (Next/Continue/Save & Continue) "
+            "to advance, and repeat until the final Submit. Never treat a 'Next' "
+            "button as the final submit.",
+            "STEP 5 — SUBMIT once every required field is filled: click the final "
+            "Submit/Send application button. If an email verification code screen "
+            "appears after submit, it is fetched and filled for you — just wait.",
+            "Only emit 'done' when you can SEE a real confirmation (e.g. "
+            "'application submitted' / 'thank you for applying' / a confirmation "
+            "page). Do NOT claim done on a job-description page, an error banner, "
+            "or a still-empty form.",
+            "If the page is a hard bot-wall / CAPTCHA you cannot clear, or offers "
+            "ONLY social-SSO login with no email/password option, stop rather than "
+            "guessing — do not loop.",
         ],
     },
 }

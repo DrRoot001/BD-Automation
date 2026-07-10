@@ -203,8 +203,11 @@ def recall(
         return None
     key = _normalize_label(label)
     is_identity = _is_identity_field(key)
-    strict = (os.getenv("STRICT_MEMORY_ISOLATION", "").lower()
-              in ("1", "true", "yes", "on"))
+    # Default ON: a per-candidate cache is always safe, but cross-candidate
+    # global recall of free-text could leak one candidate's answer into
+    # another's application. Opt OUT explicitly with STRICT_MEMORY_ISOLATION=false.
+    strict = (os.getenv("STRICT_MEMORY_ISOLATION", "true").lower()
+              not in ("0", "false", "no", "off"))
 
     with _lock:
         # Per-candidate first
@@ -257,8 +260,20 @@ def remember(
         return
     key = _normalize_label(label)
     is_identity = _is_identity_field(key)
+    # Only CONSTRAINED answers (a fixed option set) are safe to reuse verbatim.
+    _constrained = field_type in ("select", "radio", "checkbox", "boolean")
+    # Free-text, NON-identity answers are job-specific (e.g. "why do you want to
+    # work here", cover-letter prose, salary, referral, start date). Reusing them
+    # on a different posting is the cross-application poisoning the audit flagged,
+    # so we never persist them anywhere — the LLM answers those fresh each time.
+    if not is_identity and not _constrained:
+        logger.debug(f"[Memory] Not memorizing job-specific free-text field '{label}'")
+        return
     paths = [_memory_path(candidate_id)] if candidate_id else []
-    if not is_identity:
+    # The shared cross-candidate global file gets ONLY candidate-agnostic
+    # constrained answers (Yes/No, EEO decline, work-auth booleans) — never
+    # free-text and never identity.
+    if not is_identity and _constrained:
         paths.append(_memory_path(None))
     if not paths:
         paths = [_memory_path(None)]  # last-resort fallback

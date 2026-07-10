@@ -537,27 +537,35 @@ class DiceAdapter(BasePlatformAdapter):
         return False
 
     async def _maybe_solve_captcha(self, page: Page) -> bool:
-        """Detect a login captcha and try to solve it. Returns True if attempted."""
+        """Detect a login captcha and try to solve it. Returns True only when a
+        solve actually SUCCEEDED (so the caller doesn't submit a still-gated
+        form). Detects reCAPTCHA, hCaptcha, and Cloudflare Turnstile."""
         try:
             has_recaptcha = await page.locator("iframe[src*='recaptcha']").count() > 0
             has_hcaptcha = await page.locator(
                 "iframe[src*='hcaptcha'], .h-captcha[data-sitekey]"
             ).count() > 0
+            has_turnstile = await page.locator(
+                "iframe[src*='challenges.cloudflare.com'], .cf-turnstile[data-sitekey]"
+            ).count() > 0
         except Exception:
             return False
-        if not (has_recaptcha or has_hcaptcha):
+        if not (has_recaptcha or has_hcaptcha or has_turnstile):
             return False
 
-        captcha_type = "hcaptcha" if has_hcaptcha else "recaptcha_v2"
+        captcha_type = ("turnstile" if has_turnstile
+                        else "hcaptcha" if has_hcaptcha else "recaptcha_v2")
         logger.info(f"[Dice] Login captcha detected ({captcha_type}); attempting solve")
         try:
-            from ..captcha import CaptchaService
-            provider = os.getenv("CAPTCHA_PROVIDER", "ai").lower()
+            from ..captcha import CaptchaService, resolve_captcha_provider
+            provider = resolve_captcha_provider()
             solution = await CaptchaService(provider=provider).solve(page, captcha_type)
-            logger.info(f"[Dice] Captcha solve success={getattr(solution, 'success', False)}")
+            ok = bool(getattr(solution, "success", False))
+            logger.info(f"[Dice] Captcha solve success={ok}")
+            return ok
         except Exception as exc:
             logger.warning(f"[Dice] Captcha solve failed (non-fatal): {exc}")
-        return True
+            return False
 
     # ──────────────────────────────────────────────────────────────────────
     # Easy Apply detection

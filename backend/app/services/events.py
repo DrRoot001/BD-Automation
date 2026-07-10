@@ -33,10 +33,21 @@ async def publish_event(event_name: str, payload: dict):
         )
     except Exception as exc:
         # Specifically: asyncio.TimeoutError, redis.ConnectionError,
-        # socket.gaierror, anything Upstash throws under load. We log once
-        # and move on — the operator sees the missed event in metrics, not
-        # as a dead apply.
-        logger.warning(
-            f"[events] publish '{event_name}' suppressed ({type(exc).__name__}: {exc}) "
-            "— event dropped, real work continues."
-        )
+        # socket.gaierror, anything Upstash throws under load. We log and move
+        # on — the operator sees the missed event in metrics, not as a dead apply.
+        #
+        # "Event loop is closed" is EXPECTED and BENIGN in the Celery threads-pool
+        # worker: the shared async Redis client is bound to the loop that created
+        # it, but each task runs asyncio.run() in its own short-lived loop, so a
+        # publish after that loop closes raises this. Frontend progress chips are
+        # cosmetic (the DB status is authoritative and the UI also polls it), so
+        # log the benign case at DEBUG to keep run logs clean; surface anything
+        # else at WARNING.
+        _msg = str(exc)
+        if "Event loop is closed" in _msg or isinstance(exc, RuntimeError) and "loop" in _msg.lower():
+            logger.debug(f"[events] publish '{event_name}' skipped (worker loop closed) — cosmetic only.")
+        else:
+            logger.warning(
+                f"[events] publish '{event_name}' suppressed ({type(exc).__name__}: {exc}) "
+                "— event dropped, real work continues."
+            )

@@ -610,13 +610,17 @@ class GreenhouseAdapter(BasePlatformAdapter):
                 continue
             try:
                 content = (await ctx.content()).lower()
+                # Specific confirmation phrases ONLY. A bare "thank you" appears
+                # in footers, cookie banners and newsletter widgets and produced
+                # phantom SUBMITTED records — never match it on its own.
                 for pattern in (
                     "application has been submitted",
                     "thank you for applying",
-                    "thank you",
+                    "thank you for your application",
                     "successfully applied",
                     "application received",
                     "we have received your application",
+                    "we've received your application",
                 ):
                     if pattern in content:
                         logger.info(f"[GH] Submission verified via pattern: '{pattern}'")

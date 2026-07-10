@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -313,6 +314,39 @@ async def _apply_value_to_field(
             return False
 
         if ftype == "checkbox":
+            # Multi-select group ("select all that apply"): the LLM returns a
+            # delimited list. Match each token to an option and check the
+            # corresponding box — the old code only handled a single boolean
+            # checkbox and silently left these groups blank.
+            if getattr(field, "multi_select", False) and field.options:
+                raw = str(value)
+                for d in (";", "/", "|"):
+                    raw = raw.replace(d, ",")
+                tokens = [t.strip() for t in raw.split(",") if t.strip()]
+                if not tokens:
+                    return False
+                any_checked = False
+                for tok in tokens:
+                    disp = _best_select_match(field.options, tok)
+                    if not disp:
+                        continue
+                    raw_val = disp
+                    if field.raw_values:
+                        try:
+                            raw_val = field.raw_values[field.options.index(disp)]
+                        except (ValueError, IndexError):
+                            pass
+                    try:
+                        box = page.locator(f"{field.selector}[value='{raw_val}']").first
+                        if await box.count() == 0:
+                            box = page.locator(field.selector).filter(has_text=disp).first
+                        await box.scroll_into_view_if_needed()
+                        await box.check(force=True, timeout=8000)
+                        any_checked = True
+                    except Exception:
+                        continue
+                return any_checked
+            # Single boolean checkbox
             if str(value).lower() in ("yes", "true", "1", "on", "i agree", "agreed"):
                 await locator.check(force=True, timeout=8000)
                 return True
@@ -403,29 +437,62 @@ async def fill_form_with_llm(
         # Everything else goes to the LLM
         needs_llm.append((idx, field))
 
-    # ── Step 2: Ask Gemini in one batched call ────────────────────────────────
+    # ── Step 2: Ask Gemini — one batched call, then re-ask for any REQUIRED
+    # field the model skipped, up to LLM_FILL_MAX_ATTEMPTS (default 4). The goal
+    # is to solve the whole form in ONE pass; the extra rounds are a safety net
+    # so a single skipped required field doesn't drop the entire form to the
+    # weaker regex fallback. Optional fields are asked only in the first round.
+    try:
+        _fill_max_attempts = int(os.getenv("LLM_FILL_MAX_ATTEMPTS", "4"))
+    except (TypeError, ValueError):
+        _fill_max_attempts = 4
+    _fill_max_attempts = max(1, _fill_max_attempts)
+
     if needs_llm:
-        try:
-            llm_answers = await _ask_llm_for_values(
-                needs_llm, profile, screening_answers, job_context
-            )
-            for idx, field in needs_llm:
+        pending = list(needs_llm)
+        attempt = 0
+        while pending and attempt < _fill_max_attempts:
+            attempt += 1
+            try:
+                llm_answers = await _ask_llm_for_values(
+                    pending, profile, screening_answers, job_context
+                )
+            except LLMUnavailable as exc:
+                logger.warning(f"[LLMFill] LLM unavailable (attempt {attempt}) — {exc}")
+                if attempt == 1:
+                    # Nothing resolved by the LLM yet → let the caller fall back
+                    # to the regex filler (unchanged behavior).
+                    return False
+                break
+            except Exception as exc:
+                logger.error(f"[LLMFill] Unexpected LLM error (attempt {attempt}): {exc}")
+                if attempt == 1:
+                    return False
+                break
+
+            still_missing: List[Tuple[int, FormField]] = []
+            for idx, field in pending:
                 ans = llm_answers.get(idx)
                 if not ans or not ans.get("value"):
+                    # Re-ask ONLY for still-unanswered REQUIRED fields.
+                    if field.required:
+                        still_missing.append((idx, field))
                     continue
                 # Optional fields: skip low-confidence guesses.
-                # Required fields: accept ANY non-empty guess — better to put
-                # a defensible inference than to leave the form broken.
+                # Required fields: accept ANY non-empty guess — better a
+                # defensible inference than a broken form.
                 if not field.required and ans["confidence"] < 0.4:
                     continue
                 resolved[idx] = (ans["value"], f"llm:{ans['confidence']:.2f}")
-        except LLMUnavailable as exc:
-            logger.warning(f"[LLMFill] LLM unavailable — {exc}")
-            # Return False so caller falls back to the regex filler
-            return False
-        except Exception as exc:
-            logger.error(f"[LLMFill] Unexpected LLM error: {exc}")
-            return False
+
+            if not still_missing:
+                break
+            if attempt < _fill_max_attempts:
+                logger.info(
+                    f"[LLMFill] {len(still_missing)} required field(s) unanswered "
+                    f"after attempt {attempt}/{_fill_max_attempts} — re-asking the LLM"
+                )
+            pending = still_missing
 
     # ── Step 3: Apply values field by field ───────────────────────────────────
     for idx, field in enumerate(form.fields):
