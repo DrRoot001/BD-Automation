@@ -281,18 +281,28 @@ async def orchestrate_application_package(
         print(f"[ORCHESTRATOR] Calculated next tailored resume version: {next_version}")
 
         # Step 1: Resume Tailoring
+        # LLM-outage resilience: if every provider is down (spend caps / no
+        # credits), apply with the BASE resume rather than failing the whole
+        # application — a real submission with the base resume beats no
+        # submission at all.
         print("[ORCHESTRATOR] Running Step 1: Resume Tailoring...")
-        tailored_resume = await tailor_resume(
-            resume_data, job, candidate,
-            version=next_version,
-            prefetched_ats_score=match_result.ats_score,
-            prefetched_missing_keywords=match_result.missing_skills,
-        )
-        print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
+        try:
+            tailored_resume = await tailor_resume(
+                resume_data, job, candidate,
+                version=next_version,
+                prefetched_ats_score=match_result.ats_score,
+                prefetched_missing_keywords=match_result.missing_skills,
+            )
+            print(f"[ORCHESTRATOR] Resume tailored. ATS Score: {tailored_resume.ats_score_before} -> {tailored_resume.ats_score_after}")
+        except Exception as tailor_err:
+            tailored_resume = None
+            print(f"[ORCHESTRATOR] [DEGRADED] Tailoring unavailable ({tailor_err}). "
+                  f"Falling back to BASE resume so the application can still proceed.")
 
-        # Check Gate Threshold on TAILORED score
+        # Check Gate Threshold on TAILORED score (degraded mode has no tailored
+        # score — the pre-tailoring combined score already passed selection).
         threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
-        if tailored_resume.ats_score_after < threshold_val and not skip_gate:
+        if tailored_resume is not None and tailored_resume.ats_score_after < threshold_val and not skip_gate:
             print(f"[ORCHESTRATOR] ats_score_after ({tailored_resume.ats_score_after}) is below gate threshold of {threshold_val}. Transitioning status to ANALYZED and STOPPING.")
             
             # Transition to ANALYZED
@@ -315,87 +325,106 @@ async def orchestrate_application_package(
                 "screening_answers": {}
             }
 
-        # Upload Tailored Resume to Supabase
-        candidate_name = candidate.get("name") or candidate_id
-        clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
-        remote_resume_url = await upload_file_to_supabase(
-            tailored_resume.pdf_url,
-            "updated_resume",
-            f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_resume.pdf"
-        )
-        resume_pdf_url = remote_resume_url
-        tailored_resume.pdf_url = remote_resume_url
+        if tailored_resume is not None:
+            # Upload Tailored Resume to Supabase
+            candidate_name = candidate.get("name") or candidate_id
+            clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
+            remote_resume_url = await upload_file_to_supabase(
+                tailored_resume.pdf_url,
+                "updated_resume",
+                f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_resume.pdf"
+            )
+            resume_pdf_url = remote_resume_url
+            tailored_resume.pdf_url = remote_resume_url
 
-        # Upload Tailored Resume version to central DB
-        print("[ORCHESTRATOR] Uploading tailored resume version to database...")
-        tailored_payload = {
-            "candidate_id": candidate_id,
-            "version": tailored_resume.version,
-            "file_url": tailored_resume.pdf_url,
-            "parsed_json": {
-                "summary": tailored_resume.modified_summary,
-                "skills": tailored_resume.modified_skills,
-                "skills_categorized": [sg.model_dump() for sg in tailored_resume.modified_skills_categorized] if tailored_resume.modified_skills_categorized else [],
-                "keywords": tailored_resume.modified_keywords,
-                "experience": [exp.model_dump() for exp in tailored_resume.experience],
-                "education": [edu.model_dump() for edu in tailored_resume.education],
-                "certifications": resume_data.sections.certifications
-            },
-            "is_base": False,
-            "tailored_for_job_id": job_id
-        }
-        resp = await client.post("/api/resumes", json=tailored_payload)
-        if resp.status_code != 201:
-            raise ValueError(f"Failed to save tailored resume: {resp.text}")
-        tailored_db_resume = resp.json()
-        resume_id_for_app = tailored_db_resume["id"]
+            # Upload Tailored Resume version to central DB
+            print("[ORCHESTRATOR] Uploading tailored resume version to database...")
+            tailored_payload = {
+                "candidate_id": candidate_id,
+                "version": tailored_resume.version,
+                "file_url": tailored_resume.pdf_url,
+                "parsed_json": {
+                    "summary": tailored_resume.modified_summary,
+                    "skills": tailored_resume.modified_skills,
+                    "skills_categorized": [sg.model_dump() for sg in tailored_resume.modified_skills_categorized] if tailored_resume.modified_skills_categorized else [],
+                    "keywords": tailored_resume.modified_keywords,
+                    "experience": [exp.model_dump() for exp in tailored_resume.experience],
+                    "education": [edu.model_dump() for edu in tailored_resume.education],
+                    "certifications": resume_data.sections.certifications
+                },
+                "is_base": False,
+                "tailored_for_job_id": job_id
+            }
+            resp = await client.post("/api/resumes", json=tailored_payload)
+            if resp.status_code != 201:
+                raise ValueError(f"Failed to save tailored resume: {resp.text}")
+            tailored_db_resume = resp.json()
+            resume_id_for_app = tailored_db_resume["id"]
 
-        # Construct the tailored_resume_data object to pass to subsequent steps
-        tailored_resume_data = ResumeData(
-            candidate_id=candidate_id,
-            resume_id=resume_id_for_app,
-            file_url=remote_resume_url,
-            sections=ResumeSection(
-                summary=tailored_resume.modified_summary,
-                skills=tailored_resume.modified_skills,
-                skills_categorized=tailored_resume.modified_skills_categorized,
-                keywords=tailored_resume.modified_keywords,
-                experience=tailored_resume.experience,
-                education=tailored_resume.education,
-                certifications=resume_data.sections.certifications,
-                email=resume_data.sections.email,
-                phone=resume_data.sections.phone,
-                linkedin_url=resume_data.sections.linkedin_url,
-                current_company=resume_data.sections.current_company,
-                current_title=resume_data.sections.current_title,
-                salary_expectation=resume_data.sections.salary_expectation,
-                website=resume_data.sections.website
-            ),
-            raw_text="[Tailored Resume]"
-        )
+            # Construct the tailored_resume_data object to pass to subsequent steps
+            tailored_resume_data = ResumeData(
+                candidate_id=candidate_id,
+                resume_id=resume_id_for_app,
+                file_url=remote_resume_url,
+                sections=ResumeSection(
+                    summary=tailored_resume.modified_summary,
+                    skills=tailored_resume.modified_skills,
+                    skills_categorized=tailored_resume.modified_skills_categorized,
+                    keywords=tailored_resume.modified_keywords,
+                    experience=tailored_resume.experience,
+                    education=tailored_resume.education,
+                    certifications=resume_data.sections.certifications,
+                    email=resume_data.sections.email,
+                    phone=resume_data.sections.phone,
+                    linkedin_url=resume_data.sections.linkedin_url,
+                    current_company=resume_data.sections.current_company,
+                    current_title=resume_data.sections.current_title,
+                    salary_expectation=resume_data.sections.salary_expectation,
+                    website=resume_data.sections.website
+                ),
+                raw_text="[Tailored Resume]"
+            )
+        else:
+            # Degraded mode: apply with the base resume as-is.
+            resume_pdf_url = base_resume_file_url or (resume_data.file_url if resume_data else "")
+            resume_id_for_app = base_resume_id
+            tailored_resume_data = resume_data
+            if not resume_pdf_url:
+                raise ValueError("Degraded mode needs a base resume file_url, but none exists.")
 
-        # Step 2: Cover Letter (utilizing tailored resume details)
-        print("[ORCHESTRATOR] Running Step 2: Cover Letter Generation...")
-        cover_letter = await generate_cover_letter(tailored_resume_data, job, candidate)
-        cover_letter_url = cover_letter.pdf_url
-        print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
-        
-        # Upload Cover letter to Supabase
-        candidate_name = candidate.get("name") or candidate_id
-        clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
-        remote_cl_url = await upload_file_to_supabase(
-            cover_letter_url, 
-            "cover_letter",
-            f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_cover_letter.pdf"
-        )
-        cover_letter_url = remote_cl_url
+        # Step 2: Cover Letter (utilizing tailored resume details).
+        # Non-fatal: an ATS apply without a cover letter is still a real apply.
+        cover_letter_url = None
+        try:
+            print("[ORCHESTRATOR] Running Step 2: Cover Letter Generation...")
+            cover_letter = await generate_cover_letter(tailored_resume_data, job, candidate)
+            cover_letter_url = cover_letter.pdf_url
+            print(f"[ORCHESTRATOR] Cover Letter compiled to: {cover_letter_url}")
 
-        # Step 3: Screening Questions (utilizing tailored resume details)
+            # Upload Cover letter to Supabase
+            candidate_name = candidate.get("name") or candidate_id
+            clean_name = safe_filename(candidate_name, default=candidate_id, extension='')
+            remote_cl_url = await upload_file_to_supabase(
+                cover_letter_url,
+                "cover_letter",
+                f"{candidate_id}/{job_id}/v{next_version}/{clean_name}_cover_letter.pdf"
+            )
+            cover_letter_url = remote_cl_url
+        except Exception as cl_err:
+            cover_letter_url = None
+            print(f"[ORCHESTRATOR] [DEGRADED] Cover letter generation unavailable ({cl_err}). Proceeding without one.")
+
+        # Step 3: Screening Questions (utilizing tailored resume details).
+        # Non-fatal: the browser agent has its own field-memory fallbacks.
         screening_answers = {}
         if screening_questions:
-            print("[ORCHESTRATOR] Running Step 3: Answering Screening Questions...")
-            screening_answers = await answer_screening_questions(screening_questions, tailored_resume_data, job, candidate)
-            print("[ORCHESTRATOR] Screening answers drafted successfully.")
+            try:
+                print("[ORCHESTRATOR] Running Step 3: Answering Screening Questions...")
+                screening_answers = await answer_screening_questions(screening_questions, tailored_resume_data, job, candidate)
+                print("[ORCHESTRATOR] Screening answers drafted successfully.")
+            except Exception as qa_err:
+                screening_answers = {}
+                print(f"[ORCHESTRATOR] [DEGRADED] Screening answers unavailable ({qa_err}). Browser agent will fall back to field memory.")
 
         # Transition application to QUEUED status
         print("[ORCHESTRATOR] Queuing application for browser automation...")
@@ -407,8 +436,9 @@ async def orchestrate_application_package(
             "ats_score": match_result.ats_score,
             "combined_score": match_result.combined_score,
             "metadata": {
-                "ats_score_before": tailored_resume.ats_score_before,
-                "ats_score_after": tailored_resume.ats_score_after,
+                "ats_score_before": tailored_resume.ats_score_before if tailored_resume else match_result.ats_score,
+                "ats_score_after": tailored_resume.ats_score_after if tailored_resume else match_result.ats_score,
+                "degraded_no_tailoring": tailored_resume is None,
                 "screening_answers": screening_answers,
                 "explanation": match_result.reasoning
             }

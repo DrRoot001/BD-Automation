@@ -60,10 +60,10 @@ _MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
-# Free tier on gemini-2.5-flash gives generous quota; no separate top-up needed.
+# Free tier on gemini-3.5-flash gives generous quota; no separate top-up needed.
 _GEMINI_BASE = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
-_GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
-_GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash")
+_GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+_GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash")
 
 
 def _resolve_api_keys() -> list[str]:

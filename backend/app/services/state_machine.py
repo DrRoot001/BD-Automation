@@ -13,7 +13,11 @@ VALID_TRANSITIONS: dict[str, list[str]] = {
     "INTERVIEW_R1":        ["INTERVIEW_R2", "REJECTED", "WITHDRAWN", "OFFER"],
     "INTERVIEW_R2":        ["OFFER", "REJECTED", "WITHDRAWN"],
     # Terminal or pseudo-terminal states
-    "FAILED":              ["QUEUED", "WITHDRAWN"],   # Failed apps can be retried or withdrawn
+    # SUBMITTED is allowed from FAILED: a late Celery retry can complete the
+    # real submission AFTER retry-exhaustion already marked the row FAILED.
+    # The ATS has the application at that point — refusing the write corrupts
+    # our record and re-exposes the job to matching (double-apply risk).
+    "FAILED":              ["QUEUED", "SUBMITTED", "WITHDRAWN"],
     "BLOCKED":             ["QUEUED", "WITHDRAWN"],   # Blocked apps can be retried
     "REJECTED":            [],
     "OFFER":               [],

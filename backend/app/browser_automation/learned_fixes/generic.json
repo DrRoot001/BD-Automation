@@ -1,12 +1,14 @@
 {
   "_meta": {
     "ats": "generic",
-    "last_updated": 1783609041
+    "last_updated": 1783646433
   },
   "apply_button": [
+    "a:has-text('Apply')",
     "a:has-text('Apply for this job')"
   ],
   "submit": [
-    "button[type='submit']"
+    "button[type='submit']",
+    "button:has-text('Apply')"
   ]
 }

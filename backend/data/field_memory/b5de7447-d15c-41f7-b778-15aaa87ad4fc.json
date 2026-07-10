@@ -7,6 +7,14 @@
     "source": "screening",
     "value": "Not provided."
   },
+  "address line 1": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Address Line 1",
+    "last_seen": 1783638552,
+    "source": "rules",
+    "value": "Newark, NJ"
+  },
   "are you a us citizen": {
     "count": 1,
     "field_type": "text",
@@ -47,6 +55,14 @@
     "source": "screening",
     "value": "Question prompt missing."
   },
+  "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field2]": {
+    "count": 1,
+    "field_type": "select",
+    "label": "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field2]",
+    "last_seen": 1783664711,
+    "source": "llm:0.90",
+    "value": "Yes"
+  },
   "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field2]": {
     "count": 1,
     "field_type": "text",
@@ -54,6 +70,14 @@
     "last_seen": 1783610120,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "cell phone": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Cell Phone",
+    "last_seen": 1783646384,
+    "source": "profile_direct",
+    "value": "+15512166306"
   },
   "certifications": {
     "count": 3,
@@ -71,6 +95,14 @@
     "source": "profile_direct",
     "value": "Newark, NJ"
   },
+  "clearance": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Clearance*",
+    "last_seen": 1783638416,
+    "source": "agent_loop",
+    "value": "Top Secret"
+  },
   "confirm password": {
     "count": 1,
     "field_type": "text",
@@ -86,6 +118,14 @@
     "last_seen": 1783610211,
     "source": "agent_loop",
     "value": "United States"
+  },
+  "country phone code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Country Phone Code*",
+    "last_seen": 1783638556,
+    "source": "rules",
+    "value": "+15512166306"
   },
   "current company / employer": {
     "count": 1,
@@ -111,6 +151,14 @@
     "source": "agent_loop",
     "value": "2024-07-20"
   },
+  "degree": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Degree",
+    "last_seen": 1783643456,
+    "source": "rules",
+    "value": "Bachelor's Degree"
+  },
   "desired salary": {
     "count": 3,
     "field_type": "text",
@@ -118,6 +166,46 @@
     "last_seen": 1783610244,
     "source": "agent_loop",
     "value": "Negotiable"
+  },
+  "disability status": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Disability Status",
+    "last_seen": 1783638563,
+    "source": "rules",
+    "value": "I don't wish to answer"
+  },
+  "do you have 5 or more years of experience working in servicenow consulting/advisory services capacity as a business process consultant": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you have 5 or more years of experience working in ServiceNow consulting/advisory services capacity as a Business Process Consultant?*",
+    "last_seen": 1783643469,
+    "source": "rules",
+    "value": "Newark, NJ"
+  },
+  "do you have at least 5 years of experience as a training specialist with the servicenow platform": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Do you have at least 5 years of experience as a Training Specialist with the ServiceNow platform?*",
+    "last_seen": 1783643435,
+    "source": "rules",
+    "value": "12"
+  },
+  "do you have at least 8 years of experience in servicenow": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you have at least 8 years of experience in ServiceNow*",
+    "last_seen": 1783643464,
+    "source": "rules",
+    "value": "12"
+  },
+  "do you have experience with section 508 compliance please describe": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Do you have experience with Section 508 compliance? Please describe*",
+    "last_seen": 1783643435,
+    "source": "rules",
+    "value": "12"
   },
   "do you have servicenow experience": {
     "count": 1,
@@ -127,12 +215,28 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "e-mail obbligatorio": {
+    "count": 1,
+    "field_type": "email",
+    "label": "E-mail* Obbligatorio",
+    "last_seen": 1783646363,
+    "source": "rules",
+    "value": "james12william893@gmail.com"
+  },
   "email": {
     "count": 1,
     "field_type": "text",
     "label": "Email*",
     "last_seen": 1783609899,
     "source": "profile_direct",
+    "value": "james12william893@gmail.com"
+  },
+  "email address": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email Address*",
+    "last_seen": 1783641942,
+    "source": "rules",
     "value": "james12william893@gmail.com"
   },
   "email✱": {
@@ -159,6 +263,22 @@
     "source": "agent_loop",
     "value": "$140,000 - $160,000"
   },
+  "family name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Family Name*",
+    "last_seen": 1783638361,
+    "source": "agent_loop",
+    "value": "William"
+  },
+  "family name - western script": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Family Name - Western Script",
+    "last_seen": 1783638546,
+    "source": "rules",
+    "value": "William"
+  },
   "first name": {
     "count": 1,
     "field_type": "text",
@@ -175,6 +295,14 @@
     "source": "rules",
     "value": "james William"
   },
+  "gender": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Gender",
+    "last_seen": 1783638561,
+    "source": "rules",
+    "value": "Decline To Self Identify"
+  },
   "github url": {
     "count": 1,
     "field_type": "text",
@@ -182,6 +310,14 @@
     "last_seen": 1783608930,
     "source": "screening",
     "value": "N/A"
+  },
+  "given name(s) - western script": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Given Name(s) - Western Script*",
+    "last_seen": 1783638295,
+    "source": "agent_loop",
+    "value": "james"
   },
   "i acknowledge": {
     "count": 1,
@@ -199,6 +335,14 @@
     "source": "agent_loop",
     "value": "ServiceNow"
   },
+  "job title or keyword": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Job title or keyword",
+    "last_seen": 1783626505,
+    "source": "profile_direct",
+    "value": "Senior Software Engineer"
+  },
   "last name": {
     "count": 1,
     "field_type": "text",
@@ -214,6 +358,22 @@
     "last_seen": 1783608929,
     "source": "screening",
     "value": "N/A"
+  },
+  "local family name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Local Family Name",
+    "last_seen": 1783638550,
+    "source": "rules",
+    "value": "William"
+  },
+  "local given name(s)": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Local Given Name(s)",
+    "last_seen": 1783638548,
+    "source": "rules",
+    "value": "james"
   },
   "name": {
     "count": 1,
@@ -247,6 +407,22 @@
     "source": "agent_loop",
     "value": "+15512166306"
   },
+  "phone extension": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone Extension",
+    "last_seen": 1783638558,
+    "source": "rules",
+    "value": "+15512166306"
+  },
+  "phone number": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone Number*",
+    "last_seen": 1783638405,
+    "source": "agent_loop",
+    "value": "+15512166306"
+  },
   "portfolio url": {
     "count": 1,
     "field_type": "text",
@@ -255,6 +431,22 @@
     "source": "screening",
     "value": "N/A"
   },
+  "preferred first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred First Name",
+    "last_seen": 1783638548,
+    "source": "rules",
+    "value": "james"
+  },
+  "receive similar jobs by email": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Receive similar jobs by email",
+    "last_seen": 1783639678,
+    "source": "rules",
+    "value": "james12william893@gmail.com"
+  },
   "select location": {
     "count": 1,
     "field_type": "text",
@@ -262,6 +454,30 @@
     "last_seen": 1783440922,
     "source": "agent_loop",
     "value": "United States"
+  },
+  "start date month": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Start date month",
+    "last_seen": 1783643461,
+    "source": "rules",
+    "value": "Immediately"
+  },
+  "start date year": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Start date year",
+    "last_seen": 1783643451,
+    "source": "rules",
+    "value": "Immediately"
+  },
+  "street address": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Street Address",
+    "last_seen": 1783638555,
+    "source": "rules",
+    "value": "Newark, NJ"
   },
   "tap to select job title": {
     "count": 1,
@@ -303,6 +519,14 @@
     "source": "agent_loop",
     "value": "My background includes extensive experience in business process consulting and leveraging ServiceNow for digital transformation."
   },
+  "verify new password": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Verify New Password*",
+    "last_seen": 1783638253,
+    "source": "agent_loop",
+    "value": "Password123!"
+  },
   "veteran status": {
     "count": 1,
     "field_type": "select",
@@ -343,6 +567,14 @@
     "source": "agent_loop",
     "value": "Newark, NJ"
   },
+  "will you require visa sponsorship": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Will you require visa sponsorship?*",
+    "last_seen": 1783643472,
+    "source": "rules",
+    "value": "No"
+  },
   "work authorization status (us citizen, green card holder, etc.)": {
     "count": 1,
     "field_type": "text",
@@ -350,6 +582,14 @@
     "last_seen": 1783610130,
     "source": "agent_loop",
     "value": "US Citizen"
+  },
+  "yes, i have read and consent to the terms and conditions": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "Yes, I have read and consent to the terms and conditions",
+    "last_seen": 1783643208,
+    "source": "rules",
+    "value": "Yes"
   },
   "your name": {
     "count": 2,
@@ -366,5 +606,13 @@
     "last_seen": 1783609898,
     "source": "screening",
     "value": "Not provided."
+  },
+  "zip code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Zip Code",
+    "last_seen": 1783638557,
+    "source": "rules",
+    "value": "Newark, NJ"
   }
 }

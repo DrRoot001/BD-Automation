@@ -383,6 +383,14 @@
     "source": "screening",
     "value": "Question prompt missing."
   },
+  "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field2]": {
+    "count": 1,
+    "field_type": "select",
+    "label": "cards[77cf32e1 514a 4492 a9c0 cbf64cd06e80][field2]",
+    "last_seen": 1783664711,
+    "source": "llm:0.90",
+    "value": "Yes"
+  },
   "cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field2]": {
     "count": 1,
     "field_type": "text",
@@ -447,6 +455,14 @@
     "source": "agent_loop",
     "value": "ITSM, ITOM, ServiceNow"
   },
+  "clearance": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Clearance*",
+    "last_seen": 1783638416,
+    "source": "agent_loop",
+    "value": "Top Secret"
+  },
   "confirm password": {
     "count": 1,
     "field_type": "text",
@@ -464,12 +480,12 @@
     "value": "2024-07-20"
   },
   "degree": {
-    "count": 2,
-    "field_type": "text",
-    "label": "Degree*",
-    "last_seen": 1782890279,
-    "source": "agent_loop",
-    "value": "Other"
+    "count": 3,
+    "field_type": "select",
+    "label": "Degree",
+    "last_seen": 1783643456,
+    "source": "rules",
+    "value": "Bachelor's Degree"
   },
   "desired salary": {
     "count": 3,
@@ -480,12 +496,12 @@
     "value": "Negotiable"
   },
   "disability status": {
-    "count": 1,
-    "field_type": "text",
+    "count": 2,
+    "field_type": "select",
     "label": "Disability Status",
-    "last_seen": 1781982799,
-    "source": "llm:0.90",
-    "value": "Prefer not to answer"
+    "last_seen": 1783638563,
+    "source": "rules",
+    "value": "I don't wish to answer"
   },
   "discipline": {
     "count": 1,
@@ -534,6 +550,14 @@
     "last_seen": 1782467911,
     "source": "agent_loop",
     "value": "No"
+  },
+  "do you have 5 or more years of experience working in servicenow consulting/advisory services capacity as a business process consultant": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you have 5 or more years of experience working in ServiceNow consulting/advisory services capacity as a Business Process Consultant?*",
+    "last_seen": 1783643469,
+    "source": "rules",
+    "value": "Newark, NJ"
   },
   "do you have a disability or chronic condition": {
     "count": 17,
@@ -599,6 +623,22 @@
     "source": "llm:0.80",
     "value": "Available to start immediately"
   },
+  "do you have at least 5 years of experience as a training specialist with the servicenow platform": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Do you have at least 5 years of experience as a Training Specialist with the ServiceNow platform?*",
+    "last_seen": 1783643435,
+    "source": "rules",
+    "value": "12"
+  },
+  "do you have at least 8 years of experience in servicenow": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Do you have at least 8 years of experience in ServiceNow*",
+    "last_seen": 1783643464,
+    "source": "rules",
+    "value": "12"
+  },
   "do you have experience implementing access control models (like oauth)": {
     "count": 1,
     "field_type": "text",
@@ -606,6 +646,14 @@
     "last_seen": 1783046644,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "do you have experience with section 508 compliance please describe": {
+    "count": 1,
+    "field_type": "textarea",
+    "label": "Do you have experience with Section 508 compliance? Please describe*",
+    "last_seen": 1783643435,
+    "source": "rules",
+    "value": "12"
   },
   "do you have hands-on experience building production user interfaces using modern": {
     "count": 2,
@@ -919,6 +967,14 @@
     "source": "agent_loop",
     "value": "No relationship to current employees"
   },
+  "job title or keyword": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Job title or keyword",
+    "last_seen": 1783626505,
+    "source": "profile_direct",
+    "value": "Senior Software Engineer"
+  },
   "org": {
     "count": 1,
     "field_type": "text",
@@ -1119,6 +1175,22 @@
     "source": "agent_loop",
     "value": "3"
   },
+  "start date month": {
+    "count": 1,
+    "field_type": "select",
+    "label": "Start date month",
+    "last_seen": 1783643461,
+    "source": "rules",
+    "value": "Immediately"
+  },
+  "start date year": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Start date year",
+    "last_seen": 1783643451,
+    "source": "rules",
+    "value": "Immediately"
+  },
   "summary (optional)": {
     "count": 1,
     "field_type": "textarea",
@@ -1200,12 +1272,12 @@
     "value": "My background includes extensive experience in business process consulting and leveraging ServiceNow for digital transformation."
   },
   "verify new password": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "Verify New Password*",
-    "last_seen": 1783419525,
+    "last_seen": 1783638253,
     "source": "agent_loop",
-    "value": "AmmarHanif@123"
+    "value": "Password123!"
   },
   "veteran status": {
     "count": 4,
@@ -1415,6 +1487,14 @@
     "source": "llm:0.95",
     "value": "Yes"
   },
+  "yes, i have read and consent to the terms and conditions": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "Yes, I have read and consent to the terms and conditions",
+    "last_seen": 1783643208,
+    "source": "rules",
+    "value": "Yes"
+  },
   "zip": {
     "count": 1,
     "field_type": "text",
@@ -1422,5 +1502,13 @@
     "last_seen": 1783609898,
     "source": "screening",
     "value": "Not provided."
+  },
+  "zip code": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Zip Code",
+    "last_seen": 1783638557,
+    "source": "rules",
+    "value": "Newark, NJ"
   }
 }

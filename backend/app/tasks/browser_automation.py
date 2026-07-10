@@ -31,6 +31,9 @@ def _make_redis_client():
 
 import contextvars
 
+# Browser-execution queue, overridable per process (see app/celery_app.py).
+_EXECUTION_QUEUE = os.getenv("QUEUE_APPLICATION_EXECUTION", "queue:application_execution")
+
 _redis_client_var = contextvars.ContextVar("_redis_client", default=None)
 
 def _get_redis_client():
@@ -356,7 +359,7 @@ async def hydrate_and_execute(package_dict: dict, retry_count: int) -> Applicati
 @celery_app.task(
     bind=True,
     name="task:execute_application",
-    queue="queue:application_execution",
+    queue=_EXECUTION_QUEUE,
     max_retries=3,
     # Was 300s — that meant ONE transient publish/network hiccup parked the
     # apply for 5 minutes, and the operator saw "browser never opens." Drop
@@ -593,7 +596,7 @@ def execute_application(self, package_dict: dict):
 
 @celery_app.task(
     name="task:retry_failed_application",
-    queue="queue:application_execution",
+    queue=_EXECUTION_QUEUE,
 )
 def retry_failed_application(package_dict: dict):
     """
@@ -623,7 +626,7 @@ def retry_failed_application(package_dict: dict):
 
 @celery_app.task(
     name="task:verify_submission",
-    queue="queue:application_execution",
+    queue=_EXECUTION_QUEUE,
 )
 def verify_submission(application_id: str):
     """

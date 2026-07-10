@@ -420,7 +420,7 @@ class BuiltInAdapter(BasePlatformAdapter):
         direct_key = _detect_ats_from_url(job_url)
         hostname = (urlparse(job_url).hostname or "").lower()
         if direct_key and "builtin" not in hostname:
-            self._inner = get_adapter(direct_key)
+            self._inner = self._spawn_delegate(direct_key)
             self._resolved_url = job_url
             logger.info(
                 f"[BuiltIn] URL is already a resolved {direct_key!r} ATS — "
@@ -450,12 +450,12 @@ class BuiltInAdapter(BasePlatformAdapter):
                 f"[BuiltIn] click-through resolution failed for {job_url!r}; "
                 "falling through to generic vision agent."
             )
-            self._inner = get_adapter("generic")
+            self._inner = self._spawn_delegate("generic")
             self._mirror_inner_attrs()
             return
 
         ats_key = _detect_ats_from_url(resolved) or "generic"
-        self._inner = get_adapter(ats_key)
+        self._inner = self._spawn_delegate(ats_key)
         self._resolved_url = resolved
         logger.info(
             f"[BuiltIn] Delegating to {ats_key!r} adapter for {resolved!r}"

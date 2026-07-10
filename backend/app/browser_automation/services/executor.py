@@ -1077,6 +1077,28 @@ class ApplicationExecutor:
 
                 form = await detect_form(ctx, container_selector=adapter.container_selector)
 
+                # ── Search/listing-page guard ──────────────────────────────────
+                # Expired postings bounce to the ATS's careers SEARCH page. The
+                # vision page-classifier used to catch these (LISTING state), but
+                # it needs an LLM; without one the pipeline "fills" the search box
+                # and dies at submit. Heuristic: a 0–2 field form whose labels are
+                # search-ish means there is no application form here — the job is
+                # gone. JOB_EXPIRED is terminal, so it won't be re-selected.
+                _search_label_kw = ("job title", "keyword", "search", "location", "find jobs")
+                _fields_lower = [(f.label or "").lower() for f in form.fields]
+                _form_type_str = str(getattr(form, "form_type", "")).upper()
+                # Login/email gates (type=EMAIL etc.) are NOT expired jobs — only
+                # guard the UNKNOWN-type search-box pages.
+                if "UNKNOWN" in _form_type_str and len(form.fields) <= 2 and (
+                    not form.fields
+                    or all(any(kw in lbl for kw in _search_label_kw) for lbl in _fields_lower)
+                ):
+                    raise Exception(
+                        "Job posting no longer exists or has been removed "
+                        "(navigation landed on a search/listing page — "
+                        f"{len(form.fields)} field(s): {_fields_lower!r})"
+                    )
+
                 # ── STEP 6.5: Call M3 only for screening answers (URLs already resolved) ──
                 #
                 # We already have the tailored resume and cover letter from the M3 event.

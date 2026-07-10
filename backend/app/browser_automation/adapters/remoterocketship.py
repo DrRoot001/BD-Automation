@@ -172,7 +172,7 @@ class RemoteRocketshipAdapter(BasePlatformAdapter):
         direct_key = _detect_ats_from_url(job_url)
         hostname = (urlparse(job_url).hostname or "").lower()
         if direct_key and "remoterocketship" not in hostname and "remote100k" not in hostname:
-            self._inner = get_adapter(direct_key)
+            self._inner = self._spawn_delegate(direct_key)
             self._resolved_url = job_url
             logger.info(f"[RR] URL is already a resolved {direct_key!r} ATS — delegating directly")
             await self._inner.navigate_to_application(page, job_url)
@@ -186,15 +186,23 @@ class RemoteRocketshipAdapter(BasePlatformAdapter):
 
         if resolved:
             ats_key = _detect_ats_from_url(resolved) or "generic"
-            self._inner = get_adapter(ats_key)
+            self._inner = self._spawn_delegate(ats_key)
             self._resolved_url = resolved
             logger.info(f"[RR] Delegating to {ats_key!r} adapter for {resolved!r}")
             await self._inner.navigate_to_application(page, resolved)
         else:
-            # 2. Fallback — page is already on RR. Let the AgentLoop's vision
-            # agent click Apply and follow whatever happens.
-            logger.info(f"[RR] No ATS link found on {job_url!r}; falling through to vision agent")
-            self._inner = get_adapter("generic")
+            # 2. Fallback — no recognizable ATS link. Hand the CURRENT page to
+            # the generic adapter and run its navigate step: that clicks the
+            # page's Apply button when no form is visible yet, which unknown
+            # ATSes (e.g. Jobvite) need before any form exists to fill. Without
+            # it the pipeline "fills" the job-description page and dies at
+            # submit ("no submit button found").
+            logger.info(f"[RR] No ATS link found on {job_url!r}; delegating current page to generic adapter")
+            self._inner = self._spawn_delegate("generic")
+            try:
+                await self._inner.navigate_to_application(page, page.url)
+            except Exception as exc:
+                logger.warning(f"[RR] generic fallback navigation failed: {exc}")
 
         # Mirror the inner adapter's iframe state onto self so the executor's
         # getattr() reads (executor.py:249, 335) see the right values.

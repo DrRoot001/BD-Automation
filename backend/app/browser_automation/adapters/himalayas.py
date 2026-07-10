@@ -82,7 +82,7 @@ class HimalayasAdapter(BasePlatformAdapter):
         direct_key = _detect_ats_from_url(job_url)
         hostname = (urlparse(job_url).hostname or "").lower()
         if direct_key and "himalayas" not in hostname:
-            self._inner = get_adapter(direct_key)
+            self._inner = self._spawn_delegate(direct_key)
             self._resolved_url = job_url
             logger.info(f"[Himalayas] URL is already a resolved {direct_key!r} ATS — delegating directly")
             await self._inner.navigate_to_application(page, job_url)
@@ -135,7 +135,7 @@ class HimalayasAdapter(BasePlatformAdapter):
 
         if resolved:
             ats_key = _detect_ats_from_url(resolved) or "generic"
-            self._inner = get_adapter(ats_key)
+            self._inner = self._spawn_delegate(ats_key)
             self._resolved_url = resolved
             logger.info(f"[Himalayas] Delegating to {ats_key!r} adapter for {resolved!r}")
             await self._inner.navigate_to_application(page, resolved)
@@ -148,7 +148,7 @@ class HimalayasAdapter(BasePlatformAdapter):
             f"[Himalayas] No Quick Apply button or ATS link found on {job_url!r} "
             f"(scanned {len(hrefs or [])} anchors); falling through to generic"
         )
-        self._inner = get_adapter("generic")
+        self._inner = self._spawn_delegate("generic")
         self._mirror_inner_attrs()
 
     def _mirror_inner_attrs(self) -> None:

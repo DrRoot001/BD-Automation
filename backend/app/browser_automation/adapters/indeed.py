@@ -374,7 +374,7 @@ class IndeedAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.warning(f"[Indeed] goto {job_url!r} failed: {exc}")
             self._branch = BRANCH_BLOCKED
-            self._inner = get_adapter("generic")
+            self._inner = self._spawn_delegate("generic")
             return
 
         # Cookie banner dismissal — Indeed shows OneTrust on EU/UK locales.
@@ -405,13 +405,13 @@ class IndeedAdapter(BasePlatformAdapter):
                 logger.warning(f"[Indeed] Easy Apply click did not reach SmartApply: {exc}")
                 # Fall through — the AgentLoop will see whatever loaded and
                 # decide. Use generic adapter so its helpers are available.
-                self._inner = get_adapter("generic")
+                self._inner = self._spawn_delegate("generic")
                 return
             # Use the generic adapter as the inner — SmartApply has no
             # boards.greenhouse.io-style iframe and no per-tenant quirks
             # beyond the smartapply hints (which the loop reads via
             # platform='smartapply').
-            self._inner = get_adapter("generic")
+            self._inner = self._spawn_delegate("generic")
             self._resolved_url = page.url
             logger.info(f"[Indeed] Easy Apply form ready at {self._resolved_url!r}")
 
@@ -420,15 +420,15 @@ class IndeedAdapter(BasePlatformAdapter):
             if status in (BRANCH_LOGIN_REQUIRED, BRANCH_BLOCKED):
                 # Terminal — caller will see self._branch and abort cleanly.
                 self._branch = status
-                self._inner = get_adapter("generic")
+                self._inner = self._spawn_delegate("generic")
                 return
             if not resolved:
                 logger.warning("[Indeed] External apply did not produce a destination URL")
-                self._inner = get_adapter("generic")
+                self._inner = self._spawn_delegate("generic")
                 return
             # Hand off to the matching ATS adapter based on the destination
             # host. This is the same `get_adapter(url)` trick used elsewhere.
-            self._inner = get_adapter(resolved)
+            self._inner = self._spawn_delegate(resolved)
             self._resolved_url = resolved
             logger.info(
                 f"[Indeed] External apply → delegating to "
@@ -448,7 +448,7 @@ class IndeedAdapter(BasePlatformAdapter):
             # BLOCKED or UNAVAILABLE — caller (AgentLoop) will see the
             # branch attribute and abort with the right structured reason.
             logger.info(f"[Indeed] Terminal branch={branch!r} — no inner adapter")
-            self._inner = get_adapter("generic")
+            self._inner = self._spawn_delegate("generic")
 
         # Mirror inner-adapter frame state up to self.
         self._iframe_mode = getattr(self._inner, "_iframe_mode", False)

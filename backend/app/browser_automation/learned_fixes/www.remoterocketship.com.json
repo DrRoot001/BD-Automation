@@ -1,21 +1,26 @@
 {
   "_meta": {
     "ats": "www.remoterocketship.com",
-    "last_updated": 1783609498
+    "last_updated": 1783665029
   },
   "how_did_you_hear_about_this_job": [
     "input[name='job_application[source_id]']",
     "input[value=\"Online\"]"
   ],
   "resume_input": [
+    "#resume-input",
     "input[type='file'][name='resume']"
   ],
   "submit": [
+    "button:has-text(\"Save and Continue\")",
     "button:has-text(\"I'm Ready\")",
     "button:has-text(\"Next\")",
     "a:has-text(\"Apply now\")"
   ],
   "apply_button": [
     "a.jv-button-primary:has-text(\"Apply\")"
+  ],
+  "disability_status": [
+    "#disability-status-select"
   ]
 }

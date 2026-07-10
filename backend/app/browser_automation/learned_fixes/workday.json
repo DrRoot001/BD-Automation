@@ -1,7 +1,7 @@
 {
   "_meta": {
     "ats": "workday",
-    "last_updated": 1783609700
+    "last_updated": 1783665080
   },
   "apply_button": [
     "[data-automation-id='adventureButton']"
@@ -11,5 +11,8 @@
   ],
   "next_step": [
     "[data-automation-id='pageFooterNextButton']"
+  ],
+  "signin_link": [
+    "button:has-text('Sign In')"
   ]
 }

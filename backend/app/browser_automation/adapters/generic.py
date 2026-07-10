@@ -31,10 +31,29 @@ _APPLY_SELECTORS = [
 _SUBMIT_SELECTORS = [
     "button[type='submit']",
     "input[type='submit']",
-    "button:has-text('Submit')",
-    "button:has-text('Apply')",
+    "button:has-text('Submit application')",
+    "button:has-text('Submit Application')",
     "button:has-text('Send Application')",
+    "button:has-text('Send application')",
+    "button:has-text('Submit')",
+    "button:has-text('Apply now')",
+    "button:has-text('Apply Now')",
+    "button:has-text('Apply')",
+    "input[type='button'][value*='ubmit']",
     "[role='button']:has-text('Submit')",
+    "[data-qa*='submit' i]",
+    "[data-testid*='submit' i]",
+    "button[class*='submit' i]",
+]
+
+# Multi-step forms (Jobvite, SmartRecruiters, …) hide Submit behind one or
+# more Next/Continue pages. Bounded progression through them beats bailing.
+_NEXT_STEP_SELECTORS = [
+    "button:has-text('Next')",
+    "button:has-text('Continue')",
+    "button:has-text('Review')",
+    "[role='button']:has-text('Next')",
+    "input[type='button'][value='Next']",
 ]
 
 _SUCCESS_PATTERNS = (
@@ -105,27 +124,52 @@ class GenericFormAdapter(BasePlatformAdapter):
 
         return fill_success
 
+    def _search_contexts(self, page: Page):
+        """Main page first, then child frames — embedded ATS forms (Greenhouse
+        boards, Jobvite widgets) live in iframes the page-level locator misses."""
+        contexts = [page]
+        try:
+            contexts += [f for f in page.frames if f is not page.main_frame]
+        except Exception:
+            pass
+        return contexts
+
+    async def _click_first_actionable(self, ctx, selectors) -> Optional[str]:
+        """Click the first VISIBLE and ENABLED match; `.first` alone often hits
+        a hidden template node and burns the whole click timeout."""
+        for sel in selectors:
+            try:
+                loc = ctx.locator(sel)
+                for i in range(min(await loc.count(), 5)):
+                    btn = loc.nth(i)
+                    try:
+                        if not await btn.is_visible() or not await btn.is_enabled():
+                            continue
+                        await btn.scroll_into_view_if_needed()
+                        await btn.click(timeout=6_000)
+                        return sel
+                    except Exception:
+                        continue
+            except Exception as exc:
+                logger.debug(f"[Generic] selector {sel!r} failed: {exc}")
+        return None
+
     async def submit(self, page: Page) -> bool:
         learned = get_learned_fixes("generic").get("submit")
         selectors = learned + [s for s in _SUBMIT_SELECTORS if s not in learned]
 
         async def try_selectors() -> bool:
-            for sel in selectors:
-                try:
-                    btn = page.locator(sel).first
-                    if await btn.count() > 0:
-                        await btn.scroll_into_view_if_needed()
-                        await btn.click(timeout=6_000)
-                        try:
-                            await page.wait_for_load_state("networkidle", timeout=12_000)
-                        except Exception:
-                            pass
-                        await self.human_delay(0.8, 1.6)
-                        get_learned_fixes("generic").add("submit", sel)
-                        logger.info(f"[Generic] submit via {sel!r}")
-                        return True
-                except Exception as exc:
-                    logger.debug(f"[Generic] submit selector {sel!r} failed: {exc}")
+            for ctx in self._search_contexts(page):
+                sel = await self._click_first_actionable(ctx, selectors)
+                if sel:
+                    try:
+                        await page.wait_for_load_state("networkidle", timeout=12_000)
+                    except Exception:
+                        pass
+                    await self.human_delay(0.8, 1.6)
+                    get_learned_fixes("generic").add("submit", sel)
+                    logger.info(f"[Generic] submit via {sel!r}")
+                    return True
             return False
 
         # Attempt 1: Try all selectors as is
@@ -140,7 +184,29 @@ class GenericFormAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.debug(f"[Generic] failed to scroll to bottom before retry: {exc}")
 
-        return await try_selectors()
+        if await try_selectors():
+            return True
+
+        # Attempt 3: multi-step form — advance via Next/Continue (bounded) and
+        # retry the submit sweep on each new step.
+        for _ in range(4):
+            advanced = None
+            for ctx in self._search_contexts(page):
+                advanced = await self._click_first_actionable(ctx, _NEXT_STEP_SELECTORS)
+                if advanced:
+                    break
+            if not advanced:
+                break
+            logger.info(f"[Generic] advanced multi-step form via {advanced!r}; retrying submit")
+            try:
+                await page.wait_for_load_state("domcontentloaded", timeout=10_000)
+            except Exception:
+                pass
+            await self.human_delay(1.0, 1.8)
+            if await try_selectors():
+                return True
+
+        return False
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
         try:

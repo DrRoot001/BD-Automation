@@ -17,8 +17,10 @@ import { FIELDS, DEFAULT_LIMIT } from './fields.js';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: resolve(__dirname, '../../backend/.env') });
 
-const DEFAULT_MODEL = process.env.AI_MODEL || 'google:gemini-2.5-flash';
-const FALLBACK_MODEL = null;
+const DEFAULT_MODEL = process.env.AI_MODEL || 'google:gemini-3.5-flash';
+// Moving alias that always points at the current flash model, so a retired
+// pinned model (404 "no longer available") doesn't zero out every scrape.
+const FALLBACK_MODEL = 'google:gemini-flash-latest';
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -114,12 +116,14 @@ async function main() {
       }
     }
 
-    if (success) {
+    if (success && items.length > 0) {
       break;
-    } else {
-      if (model.startsWith('google:') && !isRetryableGeminiError(lastError)) {
-        break;
-      }
+    }
+    if (success) {
+      // fetchfox swallows extraction errors (e.g. a retired model's 404s)
+      // and yields an empty stream with a clean exit, so an empty result may
+      // be a hidden failure — give the next model a chance before giving up.
+      console.error(`[scrape] model ${model} returned 0 items, trying next model if available`);
     }
   }
 

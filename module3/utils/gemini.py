@@ -441,13 +441,19 @@ async def generate_content_with_retry(
     temperature: float = 0.3,
     max_retries: int = 10,
     initial_delay: float = 5.0,
-    model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+    model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash"),
     response_mime_type: str = None,
     system_instruction: str = None
 ) -> Any:
     """
     Wrap model generation with retry, trying available providers in fallback sequence.
     """
+    # Ops kill switch: when every provider is exhausted (spend caps / no credits),
+    # grinding through 4 dead providers costs minutes PER CALL. Setting
+    # M3_LLM_DISABLED=1 fails instantly so callers hit their degraded fallbacks
+    # (heuristic ATS score, base-resume apply) without the retry tax.
+    if os.getenv("M3_LLM_DISABLED", "0") == "1":
+        raise RuntimeError("M3_LLM_DISABLED=1 — all LLM providers skipped (degraded mode)")
     global _working_provider_key
     providers = []
     seen_keys = set()

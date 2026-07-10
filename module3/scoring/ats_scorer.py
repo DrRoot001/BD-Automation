@@ -19,6 +19,52 @@ class ATSScore(BaseModel):
     formatting_score: float = Field(description="Score between 0 and 100 checking the layout/formatting friendliness")
     missing_keywords: List[str] = Field(default_factory=list, description="Keywords present in the JD but absent from the resume")
 
+def _repair_json(text: str) -> str:
+    """Best-effort repair of near-valid LLM JSON: missing commas between fields,
+    trailing commas, and unclosed braces/brackets (truncated output)."""
+    import re
+    t = text.strip()
+    # value/closing-brace followed by a quoted key on the next line, comma missing
+    t = re.sub(r'([}\]"0-9truefalsnl])(\s*\n\s*")', r'\1,\2', t)
+    # trailing commas before a closing brace/bracket
+    t = re.sub(r',(\s*[}\]])', r'\1', t)
+    # truncated output: close any dangling string, then balance brackets
+    if t.count('"') % 2 == 1:
+        t += '"'
+    t += ']' * max(0, t.count('[') - t.count(']'))
+    t += '}' * max(0, t.count('{') - t.count('}'))
+    return t
+
+
+def _heuristic_ats_score(resume: "ResumeData", job: NormalizedJob) -> ATSScore:
+    """LLM-free fallback: token overlap between the JD keywords and the resume."""
+    resume_blob = " ".join([
+        resume.sections.summary or "",
+        " ".join(resume.sections.skills or []),
+        " ".join(b for exp in resume.sections.experience for b in (exp.bullets or [])),
+    ]).lower()
+    jd_keywords = [k for k in (job.skills or []) if k] or [
+        w for w in set((job.description or "").lower().split()) if len(w) > 4
+    ][:30]
+    if not jd_keywords:
+        matched, missing = [], []
+        keyword_match = 50.0
+    else:
+        matched = [k for k in jd_keywords if k.lower() in resume_blob]
+        missing = [k for k in jd_keywords if k.lower() not in resume_blob]
+        keyword_match = 100.0 * len(matched) / len(jd_keywords)
+    overall = min(100.0, 30.0 + 0.7 * keyword_match)
+    return ATSScore(
+        overall=overall,
+        keyword_match=keyword_match,
+        skills_overlap=keyword_match,
+        experience_relevance=60.0,
+        education_match=50.0,
+        formatting_score=100.0,
+        missing_keywords=missing[:15],
+    )
+
+
 _SYSTEM_PROMPT = """
 You are an expert ATS (Applicant Tracking System) evaluator. Your job is to score a candidate's resume
 against a provided job description. You must output ONLY a valid JSON object with no markdown, no preamble.
@@ -80,27 +126,44 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
     )
 
     from module3.utils.gemini import generate_content_with_retry
-    
-    response = await generate_content_with_retry(
-        contents=combined_prompt,
-        system_instruction=_SYSTEM_PROMPT,
-        temperature=0.0,
-        response_mime_type="application/json"
-    )
 
-    try:
+    result = None
+    for attempt in range(2):
+        try:
+            response = await generate_content_with_retry(
+                contents=combined_prompt,
+                system_instruction=_SYSTEM_PROMPT,
+                temperature=0.0,
+                response_mime_type="application/json"
+            )
+        except Exception as llm_err:
+            # Every provider is down (rate caps / no credits). Don't let a
+            # scoring beauty-metric kill the application — go heuristic.
+            print(f"ATS LLM call failed entirely ({str(llm_err)[:120]}) — using heuristic score.")
+            break
         raw_text = response.text.strip()
         if raw_text.startswith("```"):
             lines = raw_text.splitlines()
             start = 1
             end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
             raw_text = "\n".join(lines[start:end]).strip()
-        
-        result = json.loads(raw_text)
-    except Exception as e:
-        print("Failed to parse LLM ATS evaluation response:", e)
-        print("Raw response:", response.text)
-        raise ValueError(f"Failed to calculate ATS score: {e}")
+        try:
+            result = json.loads(raw_text)
+            break
+        except Exception as first_err:
+            try:
+                result = json.loads(_repair_json(raw_text))
+                print(f"ATS response repaired after parse error: {first_err}")
+                break
+            except Exception:
+                print(f"Failed to parse LLM ATS evaluation response (attempt {attempt + 1}):", first_err)
+                print("Raw response:", response.text)
+
+    if result is None:
+        # A broken beauty-metric response must not kill the whole application —
+        # fall back to a keyword-overlap heuristic and keep the pipeline moving.
+        print("ATS LLM scoring unusable after retry — using heuristic keyword-overlap score.")
+        return _heuristic_ats_score(resume, job)
 
     breakdown = result.get("scoring_breakdown", {})
     

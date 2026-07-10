@@ -13,6 +13,8 @@ import json
 import os
 import subprocess
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional
@@ -29,8 +31,8 @@ except ImportError:  # pragma: no cover - fallback for backend/app layouts
     except ImportError:
         from links import get_links_with_categories_for_today
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(ROOT_DIR / ".env")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT_DIR / "backend" / ".env")
 
 SCRAPER_DIR = Path(__file__).resolve().parent / "scraper"
 SCRAPER_ENTRYPOINT = SCRAPER_DIR / "scrape.js"
@@ -55,6 +57,12 @@ SCRAPE_PAGE_SIZE = int(os.environ.get("SCRAPE_PAGE_SIZE", "20"))
 # Optional cooldown between page fetches. Default 0 (no delay). Set to e.g. "5"
 # if a job board's WAF starts rate-limiting the scraper again.
 SCRAPE_PAGE_COOLDOWN_SECONDS = float(os.environ.get("SCRAPE_PAGE_COOLDOWN_SECONDS", "0"))
+# One worker thread per job category (Salesforce, ServiceNow, ...) so categories
+# scrape in parallel while links within a category stay sequential. 0 = one
+# worker per category present in today's schedule. Each worker spawns its own
+# Node/Playwright subprocess, so raising this beyond the category count mostly
+# adds memory pressure, not speed.
+SCRAPE_CATEGORY_CONCURRENCY = int(os.environ.get("SCRAPE_CATEGORY_CONCURRENCY", "0"))
 
 
 def run_node_scraper(link: str) -> list[dict[str, Any]]:
@@ -294,56 +302,93 @@ def post_jobs(jobs: list[dict[str, Any]]) -> int:
         return 0
 
 
-def run_all() -> dict[str, int]:
-    """Scrape every link in today's schedule, filter/map results, and post them. Returns summary stats."""
-    links = get_links_with_categories_for_today()
+def scrape_link(category: str, link: str) -> dict[str, int]:
+    """Scrape one link (all pages), filter/map results, post them. Returns per-link stats."""
+    tag = f"[run_scrape][{category}]"
+    print(f"{tag} scraping {link}")
+
+    # Pagination: call the Node scraper for multiple pages and aggregate results.
+    aggregated_raw = []
+    seen_urls = set()
+    for page in range(1, SCRAPE_PAGES + 1):
+        paged_link = generate_paginated_url(link, page, SCRAPE_PAGE_SIZE)
+        print(f"{tag} scraping page {page} -> {paged_link}")
+        page_items = run_node_scraper(paged_link)
+        if not page_items:
+            print(f"{tag} no items from page {page}, stopping pagination for this link")
+            break
+
+        new_count = 0
+        for item in page_items:
+            # Use source_url or canonical_url as dedupe key when available.
+            key = (item.get('source_url') or item.get('canonical_url') or '').strip()
+            if key:
+                if key in seen_urls:
+                    continue
+                seen_urls.add(key)
+            aggregated_raw.append(item)
+            new_count += 1
+
+        print(f"{tag} page {page}: {len(page_items)} scraped, {new_count} new")
+
+        if SCRAPE_PAGE_COOLDOWN_SECONDS > 0 and page < SCRAPE_PAGES:
+            print(f"{tag} Sleeping for {SCRAPE_PAGE_COOLDOWN_SECONDS:.2f}s (SCRAPE_PAGE_COOLDOWN_SECONDS)...")
+            time.sleep(SCRAPE_PAGE_COOLDOWN_SECONDS)
+
+    mapped = []
+    for item in aggregated_raw:
+        job = map_item_to_job_create(item, link, category)
+        if job:
+            mapped.append(job)
+
+    serialized_jobs = [_serialize_job(job) for job in mapped]
+    created_count = post_jobs(serialized_jobs)
+    print(f"{tag} {link}: {len(aggregated_raw)} scraped, {len(mapped)} kept, {created_count} posted")
+    return {"scraped": len(aggregated_raw), "kept": len(mapped), "posted": created_count}
+
+
+def _scrape_category(category: str, links: list[str]) -> dict[str, int]:
+    """Worker: scrape one category's links sequentially. Returns aggregated stats."""
     stats = {"scraped": 0, "kept": 0, "posted": 0}
+    for link in links:
+        try:
+            link_stats = scrape_link(category, link)
+        except Exception as exc:  # keep one bad link from killing the whole category
+            print(f"[run_scrape][{category}] unexpected error for {link}: {exc}")
+            continue
+        for key in stats:
+            stats[key] += link_stats[key]
+    print(f"[run_scrape][{category}] category done: {stats}")
+    return stats
 
-    print(f"[run_scrape] using {len(links)} links for today")
+
+def run_all() -> dict[str, int]:
+    """Scrape every link in today's schedule, one worker thread per category.
+
+    Links within a category run sequentially; categories run in parallel
+    (each link spawns its own Node/Playwright subprocess, so threads spend
+    their time waiting on I/O, not fighting the GIL).
+    """
+    links = get_links_with_categories_for_today()
+    by_category: dict[str, list[str]] = defaultdict(list)
     for category, link in links:
-        print(f"[run_scrape] scraping {link} (category={category})")
+        by_category[category].append(link)
 
-        # Pagination: call the Node scraper for multiple pages and aggregate results.
-        aggregated_raw = []
-        seen_urls = set()
-        for page in range(1, SCRAPE_PAGES + 1):
-            paged_link = generate_paginated_url(link, page, SCRAPE_PAGE_SIZE)
-            print(f"[run_scrape] scraping page {page} -> {paged_link}")
-            page_items = run_node_scraper(paged_link)
-            if not page_items:
-                print(f"[run_scrape] no items from page {page}, stopping pagination for this link")
-                break
+    workers = SCRAPE_CATEGORY_CONCURRENCY or len(by_category)
+    workers = max(1, min(workers, len(by_category)))
+    print(f"[run_scrape] using {len(links)} links for today "
+          f"({len(by_category)} categories, {workers} parallel workers)")
 
-            new_count = 0
-            for item in page_items:
-                # Use source_url or canonical_url as dedupe key when available.
-                key = (item.get('source_url') or item.get('canonical_url') or '').strip()
-                if key:
-                    if key in seen_urls:
-                        continue
-                    seen_urls.add(key)
-                aggregated_raw.append(item)
-                new_count += 1
-
-            print(f"[run_scrape] page {page}: {len(page_items)} scraped, {new_count} new")
-
-            if SCRAPE_PAGE_COOLDOWN_SECONDS > 0 and page < SCRAPE_PAGES:
-                print(f"[run_scrape] Sleeping for {SCRAPE_PAGE_COOLDOWN_SECONDS:.2f}s (SCRAPE_PAGE_COOLDOWN_SECONDS)...")
-                time.sleep(SCRAPE_PAGE_COOLDOWN_SECONDS)
-
-        stats["scraped"] += len(aggregated_raw)
-
-        mapped = []
-        for item in aggregated_raw:
-            job = map_item_to_job_create(item, link, category)
-            if job:
-                mapped.append(job)
-        stats["kept"] += len(mapped)
-
-        serialized_jobs = [_serialize_job(job) for job in mapped]
-        created_count = post_jobs(serialized_jobs)
-        stats["posted"] += created_count
-        print(f"[run_scrape] {link}: {len(aggregated_raw)} scraped, {len(mapped)} kept, {created_count} posted")
+    stats = {"scraped": 0, "kept": 0, "posted": 0}
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="scrape") as pool:
+        futures = {
+            pool.submit(_scrape_category, category, cat_links): category
+            for category, cat_links in by_category.items()
+        }
+        for future in as_completed(futures):
+            category_stats = future.result()
+            for key in stats:
+                stats[key] += category_stats[key]
 
     return stats
 

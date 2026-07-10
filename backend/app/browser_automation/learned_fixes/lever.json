@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "ats": "lever",
+    "last_updated": 1783664760
+  },
+  "submit": [
+    "button[data-qa='btn-submit']"
+  ]
+}

@@ -19,6 +19,22 @@ class BasePlatformAdapter(ABC):
         """
         self._candidate_credentials = dict(credentials or {})
 
+    def _spawn_delegate(self, key_or_url):
+        """get_adapter() + credential propagation. Aggregator adapters that
+        resolve to an inner ATS adapter MUST create it via this helper — a bare
+        get_adapter() drops the candidate's login credentials, so login-gated
+        delegates (Workday, iCIMS, Dice) raise LOGIN_REQUIRED even when the
+        candidate has portal credentials on file."""
+        from .registry import get_adapter
+        inner = get_adapter(key_or_url)
+        creds = getattr(self, "_candidate_credentials", None)
+        if creds:
+            try:
+                inner.set_candidate_credentials(creds)
+            except Exception:
+                pass
+        return inner
+
     def _login_credential(self, field: str, *env_fallback_keys: str) -> str:
         """Resolve a login credential, preferring the injected per-candidate
         value and falling back to environment variables (first non-empty).

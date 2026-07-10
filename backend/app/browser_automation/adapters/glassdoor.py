@@ -160,7 +160,7 @@ class GlassdoorAdapter(BasePlatformAdapter):
         direct_key = _detect_ats_from_url(job_url)
         hostname = (urlparse(job_url).hostname or "").lower()
         if direct_key and "glassdoor" not in hostname:
-            self._inner = get_adapter(direct_key)
+            self._inner = self._spawn_delegate(direct_key)
             self._resolved_url = job_url
             logger.info(f"[Glassdoor] URL is already a resolved {direct_key!r} ATS — delegating directly")
             await self._inner.navigate_to_application(page, job_url)
@@ -193,7 +193,7 @@ class GlassdoorAdapter(BasePlatformAdapter):
         resolved = await self._resolve_external_url(page)
         if resolved:
             ats_key = _detect_ats_from_url(resolved) or "generic"
-            self._inner = get_adapter(ats_key)
+            self._inner = self._spawn_delegate(ats_key)
             self._resolved_url = resolved
             logger.info(f"[Glassdoor] Delegating to {ats_key!r} adapter for {resolved!r}")
             try:
@@ -207,7 +207,7 @@ class GlassdoorAdapter(BasePlatformAdapter):
         # 3c. Nothing matched — fall through to generic so the AgentLoop's
         # vision agent can salvage whatever is on-screen.
         logger.warning(f"[Glassdoor] No Easy Apply modal or external ATS link found on {job_url!r}")
-        self._inner = get_adapter("generic")
+        self._inner = self._spawn_delegate("generic")
         self._mirror_inner_attrs()
 
     async def detect_application_type(self, page: Page) -> str:

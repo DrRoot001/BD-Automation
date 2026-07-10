@@ -79,6 +79,13 @@ celery_app.conf.task_queues = [
     Queue("queue:email_scan", routing_key="queue:email_scan"),
 ]
 
+# Browser-execution queue, overridable per process. Lets a machine pin its own
+# workers to a private execution queue (e.g. while stale-code workers on the
+# shared broker still consume the default one) without affecting other laptops.
+_EXECUTION_QUEUE = os.getenv("QUEUE_APPLICATION_EXECUTION", "queue:application_execution")
+if _EXECUTION_QUEUE != "queue:application_execution":
+    celery_app.conf.task_queues.append(Queue(_EXECUTION_QUEUE, routing_key=_EXECUTION_QUEUE))
+
 # ── Task routing ──────────────────────────────────────────────────────────────
 celery_app.conf.task_routes = {
     "task:discover_jobs_*":             {"queue": "queue:job_discovery"},
@@ -92,8 +99,8 @@ celery_app.conf.task_routes = {
     "task:tailor_resume":               {"queue": "queue:resume_generation"},
     "task:generate_cover_letter":       {"queue": "queue:resume_generation"},
     "task:prepare_application_package": {"queue": "queue:resume_generation"},
-    "task:execute_application":         {"queue": "queue:application_execution"},
-    "task:retry_failed_application":    {"queue": "queue:application_execution"},
+    "task:execute_application":         {"queue": _EXECUTION_QUEUE},
+    "task:retry_failed_application":    {"queue": _EXECUTION_QUEUE},
     "task:dynamic_apply":               {"queue": "queue:job_processing"},
     "task:scan_candidate_inbox":        {"queue": "queue:email_scan"},
     "task:scan_single_inbox":           {"queue": "queue:email_scan"},
