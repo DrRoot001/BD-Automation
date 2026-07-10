@@ -264,20 +264,29 @@ class RateLimiter:
         return self._redis
 
     async def check_and_increment(self, platform: str, candidate_id: str) -> bool:
-        r = await self._get_redis()
-        key = f"rate_limit:{candidate_id}:{platform}"
-        # platform may arrive as a bare slug ("lever") or a host ("jobs.lever.co");
-        # substring-match against the known slugs so the per-platform limit still
-        # applies in the host case instead of silently falling back to default.
-        _limit_key = _canonical_platform_key(platform, self._limits.keys())
-        limit = self._limits.get(_limit_key, self._default_limit)
-        count = await r.incr(key)
-        if count == 1:
-            await r.expire(key, 3600)
-        if count > limit:
-            logger.warning(f"Rate limit exceeded for {candidate_id}@{platform} (count={count}, limit={limit})")
-            return False
-        return True
+        # Rate-limiting is a soft guard — a Redis outage must NEVER burn a Celery
+        # retry or block a legitimate apply. Fail open: log a warning and allow.
+        try:
+            r = await self._get_redis()
+            key = f"rate_limit:{candidate_id}:{platform}"
+            # platform may arrive as a bare slug ("lever") or a host ("jobs.lever.co");
+            # substring-match against the known slugs so the per-platform limit still
+            # applies in the host case instead of silently falling back to default.
+            _limit_key = _canonical_platform_key(platform, self._limits.keys())
+            limit = self._limits.get(_limit_key, self._default_limit)
+            count = await r.incr(key)
+            if count == 1:
+                await r.expire(key, 3600)
+            if count > limit:
+                logger.warning(f"Rate limit exceeded for {candidate_id}@{platform} (count={count}, limit={limit})")
+                return False
+            return True
+        except Exception as exc:
+            logger.warning(
+                f"[RateLimiter] Redis unavailable ({type(exc).__name__}: {exc}) — "
+                f"failing open for {candidate_id}@{platform} to avoid burning a retry."
+            )
+            return True
 
 
 # ─────────────────────────────────────────────────────────────────────────────
