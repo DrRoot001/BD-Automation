@@ -275,7 +275,6 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
 
     return {"queued": queued, "skipped": skipped, "candidate_id": candidate_id}
 
-
 @celery_app.task(
     bind=True,
     name="task:dynamic_apply",

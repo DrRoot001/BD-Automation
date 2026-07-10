@@ -325,7 +325,13 @@ def _supabase_auth_headers() -> dict:
     }
 
 
-async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") -> Optional[str]:
+async def _resolve_file_to_local_path(
+    url_or_path: str,
+    suffix: str = ".pdf",
+    candidate_name: Optional[str] = None,
+    file_prefix: Optional[str] = None,
+    application_id: Optional[str] = None,
+) -> Optional[str]:
     """Return a local filesystem path for the given URL or path.
 
     - If it's already a valid local path → return as-is.
@@ -356,31 +362,41 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
             resp = await client.get(url_or_path, headers=headers)
             resp.raise_for_status()
 
-        filename = None
-        parsed = urlparse(url_or_path)
-        if parsed.path:
-            filename = os.path.basename(parsed.path)
-        if not filename:
-            filename = os.path.basename(unquote(parsed.path))
-        if not filename:
-            filename = f"downloaded{suffix}"
+        # Build clean filename
+        if candidate_name and file_prefix:
+            import re
+            clean_name = re.sub(r'[^a-zA-Z0-9]', '_', candidate_name).strip('_')
+            clean_name = re.sub(r'_+', '_', clean_name)
+            filename = f"{clean_name}_{file_prefix}{suffix}"
+        else:
+            filename = None
+            parsed = urlparse(url_or_path)
+            if parsed.path:
+                filename = os.path.basename(parsed.path)
+            if not filename:
+                filename = os.path.basename(unquote(parsed.path))
+            if not filename:
+                filename = f"downloaded{suffix}"
 
-        # Strip version suffixes like _v38, -v38, _version38, etc. at the end of the base name
-        # e.g., resume_v38.pdf -> resume.pdf, cover_letter_v2.pdf -> cover_letter.pdf
-        import re
-        base, ext = os.path.splitext(filename)
-        cleaned_base = re.sub(r'[_-]v(?:ersion)?_?\d+$', '', base, flags=re.IGNORECASE)
-        cleaned_base = re.sub(r'v\d+$', '', cleaned_base, flags=re.IGNORECASE)
-        cleaned_base = cleaned_base.rstrip('_-')
-        filename = cleaned_base + ext
+            # Strip version suffixes like _v38, -v38, _version38, etc. at the end of the base name
+            # e.g., resume_v38.pdf -> resume.pdf, cover_letter_v2.pdf -> cover_letter.pdf
+            import re
+            base, ext = os.path.splitext(filename)
+            cleaned_base = re.sub(r'[_-]v(?:ersion)?_?\d+$', '', base, flags=re.IGNORECASE)
+            cleaned_base = re.sub(r'v\d+$', '', cleaned_base, flags=re.IGNORECASE)
+            cleaned_base = cleaned_base.rstrip('_-')
+            filename = cleaned_base + ext
 
         if not filename.lower().endswith(suffix.lower()):
             filename += suffix
+
         # Avoid collisions when different URLs share the same basename (common for signed URLs).
-        import hashlib
-        digest = hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
-        root, ext = os.path.splitext(filename)
-        filename = f"{root}-{digest}{ext}"
+        # If we have application_id, we put it in its own folder instead of hashing the file name.
+        if not application_id:
+            import hashlib
+            digest = hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
+            root, ext = os.path.splitext(filename)
+            filename = f"{root}-{digest}{ext}"
 
         # Use a project-local, stable cache dir instead of the OS temp
         # dir. Windows aggressively cleans %TEMP% (Storage Sense, tempfile
@@ -396,7 +412,12 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
         # tempdir-cleanup path and survives across retries + runs.
         _here = os.path.dirname(os.path.abspath(__file__))
         _backend_root = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
-        cache_dir = os.path.join(_backend_root, "data", "upload_cache")
+        
+        if application_id:
+            cache_dir = os.path.join(_backend_root, "data", "upload_cache", application_id)
+        else:
+            cache_dir = os.path.join(_backend_root, "data", "upload_cache")
+            
         os.makedirs(cache_dir, exist_ok=True)
         temp_path = os.path.join(cache_dir, filename)
         with open(temp_path, "wb") as f:
@@ -555,7 +576,13 @@ class ApplicationExecutor:
             if not package.resume_url:
                 raise ValueError("ApplicationPackage.resume_url is empty — cannot proceed")
 
-            _temp_resume = await _resolve_file_to_local_path(package.resume_url, ".pdf")
+            _temp_resume = await _resolve_file_to_local_path(
+                package.resume_url,
+                suffix=".pdf",
+                candidate_name=package.candidate_profile.get("name"),
+                file_prefix="resume",
+                application_id=package.application_id
+            )
             if not _temp_resume:
                 raise FileNotFoundError(f"Resume file could not be resolved: {package.resume_url}")
 
@@ -573,7 +600,13 @@ class ApplicationExecutor:
 
             _temp_cover: Optional[str] = None
             if package.cover_letter_url:
-                _temp_cover = await _resolve_file_to_local_path(package.cover_letter_url, ".pdf")
+                _temp_cover = await _resolve_file_to_local_path(
+                    package.cover_letter_url,
+                    suffix=".pdf",
+                    candidate_name=package.candidate_profile.get("name"),
+                    file_prefix="cover_letter",
+                    application_id=package.application_id
+                )
                 if not _temp_cover:
                     logger.warning(f"Cover letter could not be resolved ({package.cover_letter_url}); "
                                    "continuing without it")

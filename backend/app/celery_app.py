@@ -95,6 +95,8 @@ EXECUTION_QUEUE = os.getenv("QUEUE_APPLICATION_EXECUTION", f"queue:application_e
 if all(q.name != EXECUTION_QUEUE for q in celery_app.conf.task_queues):
     celery_app.conf.task_queues.append(Queue(EXECUTION_QUEUE, routing_key=EXECUTION_QUEUE))
 
+JOB_PROCESSING_QUEUE = f"queue:job_processing{suffix}"
+
 # ── Task routing ──────────────────────────────────────────────────────────────
 celery_app.conf.task_routes = {
     "task:discover_jobs_*":             {"queue": f"queue:job_discovery{suffix}"},
