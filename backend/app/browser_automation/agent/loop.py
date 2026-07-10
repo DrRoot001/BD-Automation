@@ -6617,6 +6617,14 @@ class AgentLoop:
                                             ? el.checkVisibility({checkVisibilityCSS: true, checkOpacity: true})
                                             : el.offsetParent !== null;
                                         if (!reallyVisible) return;
+                                        // [role="alert"] is also how SPAs (Workday especially)
+                                        // announce ROUTE CHANGES to screen readers — e.g. "Senior
+                                        // Product Owner, Billing page is loaded" — which is not a
+                                        // validation error and was blocking every legitimate submit
+                                        // on those portals. Filter known non-error announcement
+                                        // phrasing before treating a role="alert" hit as a real error.
+                                        if (/\bpage (is|has been) loaded\b/i.test(txt)
+                                            || /^(loading|please wait)/i.test(txt)) return;
                                         if (seen.has(txt)) return;
                                         seen.add(txt);
                                         out.push(txt.slice(0, 160));
