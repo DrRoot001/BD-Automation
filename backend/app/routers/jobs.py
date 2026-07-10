@@ -354,8 +354,9 @@ async def get_jobs_for_matching(
     full-stack roles for a ServiceNow specialist). Override the threshold with
     max_distance; defaults to settings.job_matching_max_distance (0.35).
     """
-    from sqlalchemy import select, or_, and_
+    from sqlalchemy import select, or_, and_, func
     from sqlalchemy.orm import defer
+    from app.models.candidate import Candidate
     from app.models.resume import Resume
     from uuid import UUID
 
@@ -372,6 +373,7 @@ async def get_jobs_for_matching(
     )
 
     resume_embedding = None
+    candidate_category = None
     if candidate_id:
         try:
             cand_uuid = UUID(candidate_id)
@@ -384,11 +386,29 @@ async def get_jobs_for_matching(
             base_resume = (await db.execute(stmt_res)).scalars().first()
             if base_resume and base_resume.embedding is not None:
                 resume_embedding = base_resume.embedding
+            cand_cat = (await db.execute(
+                select(Candidate.job_category).where(Candidate.id == cand_uuid)
+            )).scalar()
+            if cand_cat and cand_cat.strip():
+                candidate_category = cand_cat.strip().lower()
         except Exception as e:
             logger.error(f"Error fetching resume embedding for candidate {candidate_id}: {e}")
 
     stmt = select(Job).options(defer(Job.embedding), defer(Job.description)).where(~exclusions)
-    
+
+    # Category scoping: exclude jobs tagged with a DIFFERENT category than the
+    # candidate's, but keep uncategorized jobs. Same-category jobs rank first
+    # (True > False under DESC; nullslast keeps uncategorized after matches).
+    category_ordering = []
+    if candidate_category:
+        stmt = stmt.where(or_(
+            Job.job_category.is_(None),
+            func.lower(Job.job_category) == candidate_category,
+        ))
+        category_ordering = [
+            (func.lower(Job.job_category) == candidate_category).desc().nullslast()
+        ]
+
     if source:
         stmt = stmt.where(Job.source.ilike(f"%{source}%"))
         
@@ -408,9 +428,9 @@ async def get_jobs_for_matching(
         from app.config import get_settings
         threshold = max_distance if max_distance is not None else get_settings().job_matching_max_distance
         stmt = stmt.where(Job.embedding.cosine_distance(resume_embedding) < threshold)
-        stmt = stmt.order_by(Job.embedding.cosine_distance(resume_embedding).asc())
+        stmt = stmt.order_by(*category_ordering, Job.embedding.cosine_distance(resume_embedding).asc())
     else:
-        stmt = stmt.order_by(Job.created_at.desc())
+        stmt = stmt.order_by(*category_ordering, Job.created_at.desc())
 
     result = await db.execute(
         stmt.offset(skip).limit(limit)
@@ -527,6 +547,23 @@ async def get_job_platforms(db: AsyncSession = Depends(get_db)):
     result = await db.execute(stmt)
     platforms = [row[0] for row in result.fetchall() if row[0]]
     return platforms
+
+
+@router.get("/categories")
+async def get_job_categories(db: AsyncSession = Depends(get_db)):
+    """Distinct job categories with counts, most-populated first."""
+    from sqlalchemy import func, select
+    stmt = (
+        select(
+            func.lower(Job.job_category).label("category"),
+            func.count().label("count"),
+        )
+        .where(Job.job_category.isnot(None))
+        .group_by(func.lower(Job.job_category))
+        .order_by(func.count().desc())
+    )
+    result = await db.execute(stmt)
+    return [{"category": row.category, "count": row.count} for row in result.fetchall()]
 
 
 @router.get("/count")

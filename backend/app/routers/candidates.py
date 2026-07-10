@@ -12,7 +12,7 @@ from app.models.application import Application
 from app.models.candidate import Candidate
 from app.models.resume import Resume
 from app.models.user import User, UserRole
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_user, require_admin
 from app.schemas.candidate import CandidateCreate, CandidateResponse, CandidateUpdate
 from app.schemas.resume import ResumeResponse
 from app.services.crypto import encrypt_token
@@ -118,6 +118,43 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
             raise HTTPException(status_code=400, detail="A candidate with this email address already exists.")
         raise HTTPException(status_code=400, detail=f"Database error: {err_msg}")
     return db_candidate
+
+class CandidateAssignRequest(BaseModel):
+    user_id: Optional[uuid.UUID] = None
+
+
+@router.patch("/{candidate_id}/assign", response_model=CandidateResponse)
+async def assign_candidate(
+    candidate_id: str,
+    payload: CandidateAssignRequest,
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(require_admin),
+):
+    """Admin-only: assign a candidate to a BD user (user_id=null returns it to the system pool)."""
+    try:
+        candidate_uuid = uuid.UUID(candidate_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid candidate UUID")
+
+    result = await db.execute(select(Candidate).where(Candidate.id == candidate_uuid))
+    db_candidate = result.scalar_one_or_none()
+    if not db_candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    if payload.user_id is not None:
+        user_result = await db.execute(select(User).where(User.id == payload.user_id))
+        if not user_result.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="User not found")
+
+    db_candidate.user_id = payload.user_id
+    try:
+        await db.commit()
+        await db.refresh(db_candidate)
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
+    return db_candidate
+
 
 @router.post("/{candidate_id}/resumes", response_model=ResumeResponse, status_code=201)
 async def upload_candidate_resume(
@@ -583,17 +620,25 @@ async def disconnect_google(candidate_id: str, db: AsyncSession = Depends(get_db
     return {"status": "success", "message": "Google OAuth disconnected successfully"}
 
 
+class RunMatchingRequest(BaseModel):
+    # Optional explicit job targets (Jobs-Feed per-job "Apply" button). When
+    # provided, matching skips discovery filters and executes on exactly these
+    # jobs; when absent the endpoint behaves exactly as before.
+    job_ids: Optional[List[uuid.UUID]] = None
+
+
 @router.post("/{candidate_id}/run-matching")
 @limiter.limit("5/minute")
 async def run_matching_endpoint(
     request: Request,
     candidate_id: str,
+    payload: Optional[RunMatchingRequest] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     from uuid import UUID
 
-    from app.services.matching import run_matching_for_candidate
+    from app.services.matching import get_active_application_count, run_matching_for_candidate
 
     try:
         cand_uuid = UUID(candidate_id)
@@ -604,8 +649,20 @@ async def run_matching_endpoint(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    # Explicit job targeting: raise the manual limit above the current inflight
+    # count so the manual-limit gate (remaining = manual_limit - inflight) never
+    # blocks an operator-requested apply.
+    target_job_ids: Optional[List[str]] = None
+    manual_limit: Optional[int] = None
+    if payload and payload.job_ids:
+        target_job_ids = [str(j) for j in payload.job_ids]
+        inflight = await get_active_application_count(cand_uuid, db, inflight_only=True)
+        manual_limit = inflight + len(target_job_ids)
+
     try:
-        result = await run_matching_for_candidate(cand_uuid, db)
+        result = await run_matching_for_candidate(
+            cand_uuid, db, target_job_ids=target_job_ids, manual_limit=manual_limit
+        )
         if "error" in result:
             if result["error"] == "no_base_resume":
                 raise HTTPException(status_code=422, detail="Candidate has no base resume in database.")

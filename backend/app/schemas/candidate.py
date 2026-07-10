@@ -12,6 +12,7 @@ class CandidateCreate(BaseModel):
     location: Optional[str] = "US"
     work_auth: Optional[str] = "us_authorized"
     tech_stack: List[str] = []
+    job_category: Optional[str] = None
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
     gmail: Optional[str] = None
@@ -25,6 +26,7 @@ class CandidateUpdate(BaseModel):
     location: Optional[str] = None
     work_auth: Optional[str] = None
     tech_stack: Optional[List[str]] = None
+    job_category: Optional[str] = None
     years_exp: Optional[int] = None
     linkedin_url: Optional[str] = None
     gmail: Optional[str] = None

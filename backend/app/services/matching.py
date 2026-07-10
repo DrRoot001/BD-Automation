@@ -297,7 +297,7 @@ async def run_matching_for_candidate(
             skipped_jobs.add(app.job_id)
 
     # 4. Fetch jobs added in lookback window (defaults to 24h, 72h on Mondays) that are not duplicates and pass pgvector distance < 0.35
-    from sqlalchemy import and_, or_
+    from sqlalchemy import and_, func, or_
     exclusions = or_(
         Job.source == 'manual',
         Job.source_url.is_(None),
@@ -377,6 +377,20 @@ async def run_matching_for_candidate(
         )
         if _unviable:
             jobs_stmt = jobs_stmt.where(~or_(*_unviable))
+
+        # Category scoping: when the candidate has a job_category, exclude jobs
+        # tagged with a DIFFERENT category (keep uncategorized ones) and process
+        # same-category jobs first so they win the daily-cap slots. Mirrors the
+        # filter in /api/jobs/for-matching.
+        cand_category = (getattr(candidate, "job_category", None) or "").strip().lower()
+        if cand_category:
+            jobs_stmt = jobs_stmt.where(or_(
+                Job.job_category.is_(None),
+                func.lower(Job.job_category) == cand_category,
+            ))
+            jobs_stmt = jobs_stmt.order_by(
+                (func.lower(Job.job_category) == cand_category).desc().nullslast()
+            )
     t0 = time.time()
     jobs = (await session.execute(jobs_stmt)).scalars().all()
     pgvector_passed_count = len(jobs)

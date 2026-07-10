@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User, UserRole
-from app.routers.auth import get_current_user
+from app.routers.auth import get_current_user, require_admin
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -120,6 +120,24 @@ class ActivityEvent(BaseModel):
     timestamp: datetime
     summary: str
     application_id: Optional[str] = None
+
+
+class QueueDepth(BaseModel):
+    name: str
+    depth: int
+
+
+class WorkerInfo(BaseModel):
+    name: str
+    active_tasks: int
+
+
+class OpsStats(BaseModel):
+    queues: List[QueueDepth]
+    workers: List[WorkerInfo]
+    applications_in_flight: int
+    applications_today: int
+    submitted_today: int
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -454,6 +472,75 @@ async def get_analytics(
         per_platform_stats=per_platform,
         daily_applications=daily,
         avg_time_to_response_hours=float(avg_hours) if avg_hours else None,
+    )
+
+
+_OPS_QUEUES = [
+    "celery",
+    "queue:job_discovery",
+    "queue:job_processing",
+    "queue:resume_generation",
+    "queue:application_execution",
+    "queue:application_execution_fixed",
+    "queue:manual_apply",
+    "queue:email_scan",
+]
+
+
+@router.get("/ops", response_model=OpsStats)
+async def get_ops_stats(
+    db: AsyncSession = Depends(get_db),
+    current_admin: User = Depends(require_admin),
+):
+    """Admin-only operational pipeline stats: Redis queue depths, live workers,
+    and in-flight/24h application counts. Broker probes are best-effort and
+    hard-capped at 4s each — a dead broker must never hang the dashboard."""
+    import asyncio
+
+    from app.celery_app import celery_app
+
+    def _queue_depths() -> List[QueueDepth]:
+        depths: List[QueueDepth] = []
+        with celery_app.connection_or_acquire() as conn:
+            client = conn.default_channel.client
+            for q in _OPS_QUEUES:
+                depths.append(QueueDepth(name=q, depth=int(client.llen(q))))
+        return depths
+
+    def _active_workers() -> List[WorkerInfo]:
+        active = celery_app.control.inspect(timeout=3).active() or {}
+        return [
+            WorkerInfo(name=name, active_tasks=len(tasks or []))
+            for name, tasks in active.items()
+        ]
+
+    try:
+        queues = await asyncio.wait_for(asyncio.to_thread(_queue_depths), timeout=4.0)
+    except Exception:
+        queues = []
+    try:
+        workers = await asyncio.wait_for(asyncio.to_thread(_active_workers), timeout=4.0)
+    except Exception:
+        workers = []
+
+    row = (await db.execute(text("""
+        SELECT
+          COUNT(*) FILTER (WHERE status IN ('QUEUED','APPLICATION_STARTED','FORM_COMPLETED'))
+            AS in_flight,
+          COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')
+            AS created_today,
+          COUNT(*) FILTER (WHERE status IN ('SUBMITTED','CONFIRMED')
+                             AND updated_at >= NOW() - INTERVAL '24 hours')
+            AS submitted_today
+        FROM applications
+    """))).fetchone()
+
+    return OpsStats(
+        queues=queues,
+        workers=workers,
+        applications_in_flight=row.in_flight or 0,
+        applications_today=row.created_today or 0,
+        submitted_today=row.submitted_today or 0,
     )
 
 

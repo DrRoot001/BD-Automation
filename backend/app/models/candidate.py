@@ -14,6 +14,10 @@ class Candidate(Base):
     location = Column(String(255), default="US")
     work_auth = Column(String(50), default="us_authorized")
     tech_stack = Column(ARRAY(Text), nullable=False, default=list)
+    # Primary stack category (ml / data / salesforce / servicenow / dynamics …).
+    # Mirrors jobs.job_category so matching can hard-scope the pgvector search
+    # to the candidate's stack. Stored lowercase.
+    job_category = Column(String(100), nullable=True)
     years_exp = Column(Integer)
     linkedin_url = Column(String(500))
     gmail = Column(String(255), nullable=True)
