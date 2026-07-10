@@ -64,32 +64,30 @@ def _heuristic_ats_score(resume: "ResumeData", job: NormalizedJob) -> ATSScore:
         missing_keywords=missing[:15],
     )
 
+class ScoringBreakdown(BaseModel):
+    keyword_score_out_of_50: int = Field(description="Score out of 50 for keywords/skills matching")
+    experience_score_out_of_30: int = Field(description="Score out of 30 for experience relevance")
+    education_score_out_of_20: int = Field(description="Score out of 20 for education matching")
+    formatting_penalty: int = Field(description="Formatting penalty, 0 or negative integer")
+
+class LLMATSResponse(BaseModel):
+    company_name: str = Field(description="Company name from the job description")
+    job_title: str = Field(description="Job title from the job description")
+    final_ats_score: int = Field(description="Overall ATS score between 0 and 100")
+    scoring_breakdown: ScoringBreakdown = Field(description="Detailed breakdown of the ATS score")
+    extracted_job_keywords: List[str] = Field(description="Key skills and keywords extracted from the job description")
+    missing_keywords: List[str] = Field(description="Keywords required by the job description but missing or weak in the resume")
+    brief_justification: str = Field(description="A short justification for the score")
 
 _SYSTEM_PROMPT = """
 You are an expert ATS (Applicant Tracking System) evaluator. Your job is to score a candidate's resume
-against a provided job description. You must output ONLY a valid JSON object with no markdown, no preamble.
+against a provided job description. You must output ONLY a valid JSON object matching the requested schema.
 
 Scoring rubric:
 - keyword_score_out_of_50: How many required keywords/skills from the JD are present in the resume (0-50)
 - experience_score_out_of_30: Relevance and depth of experience to the role (0-30)
 - education_score_out_of_20: Education match to requirements (0-20)
 - formatting_penalty: Deduct points for poor formatting, missing sections, etc. (0 or negative)
-
-Output schema:
-{
-  "company_name": "<string>",
-  "job_title": "<string>",
-  "final_ats_score": <integer 0-100>,
-  "scoring_breakdown": {
-    "keyword_score_out_of_50": <integer>,
-    "experience_score_out_of_30": <integer>,
-    "education_score_out_of_20": <integer>,
-    "formatting_penalty": <integer>
-  },
-  "extracted_job_keywords": ["<keyword>", ...],
-  "missing_keywords": ["<keyword>", ...],
-  "brief_justification": "<string>"
-}
 """
 
 async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScore:
@@ -134,7 +132,7 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
                 contents=combined_prompt,
                 system_instruction=_SYSTEM_PROMPT,
                 temperature=0.0,
-                response_mime_type="application/json"
+                response_schema=LLMATSResponse
             )
         except Exception as llm_err:
             # Every provider is down (rate caps / no credits). Don't let a
@@ -147,15 +145,23 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
             start = 1
             end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
             raw_text = "\n".join(lines[start:end]).strip()
+            if raw_text.startswith("json"):
+                raw_text = raw_text[4:].strip()
         try:
             result = json.loads(raw_text)
+            if not isinstance(result, dict):
+                raise ValueError(f"Parsed JSON is {type(result).__name__}, expected dictionary")
             break
         except Exception as first_err:
             try:
-                result = json.loads(_repair_json(raw_text))
+                repaired = json.loads(_repair_json(raw_text))
+                if not isinstance(repaired, dict):
+                    raise ValueError("repaired JSON is not a dictionary")
+                result = repaired
                 print(f"ATS response repaired after parse error: {first_err}")
                 break
             except Exception:
+                result = None
                 print(f"Failed to parse LLM ATS evaluation response (attempt {attempt + 1}):", first_err)
                 print("Raw response:", response.text)
 
@@ -165,7 +171,9 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
         print("ATS LLM scoring unusable after retry — using heuristic keyword-overlap score.")
         return _heuristic_ats_score(resume, job)
 
-    breakdown = result.get("scoring_breakdown", {})
+    breakdown = result.get("scoring_breakdown") or {}
+    if not isinstance(breakdown, dict):
+        breakdown = {}
     
     keyword_match = (breakdown.get("keyword_score_out_of_50", 0) / 50.0) * 100
     exp_rel = (breakdown.get("experience_score_out_of_30", 0) / 30.0) * 100
@@ -181,5 +189,5 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
         experience_relevance=float(exp_rel),
         education_match=float(edu_match),
         formatting_score=float(formatting),
-        missing_keywords=result.get("missing_keywords", [])
+        missing_keywords=result.get("missing_keywords") or []
     )

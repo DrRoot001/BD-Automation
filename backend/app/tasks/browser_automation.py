@@ -32,7 +32,9 @@ def _make_redis_client():
 import contextvars
 
 # Browser-execution queue, overridable per process (see app/celery_app.py).
-_EXECUTION_QUEUE = os.getenv("QUEUE_APPLICATION_EXECUTION", "queue:application_execution")
+# Single source of truth lives in app.celery_app (suffix-aware + env override);
+# the decorator queue MUST match task_routes or .delay() silently unroutes.
+from app.celery_app import EXECUTION_QUEUE as _EXECUTION_QUEUE
 
 _redis_client_var = contextvars.ContextVar("_redis_client", default=None)
 

@@ -102,9 +102,9 @@ async def test_prepare_package_happy_path(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=95.0,
-        ats_score=90.0,
-        combined_score=92.5,
+        fit_score=30.0,
+        ats_score=30.0,
+        combined_score=30.0,
         should_apply=True,
         matching_skills=["Python"],
         missing_skills=[],
@@ -187,14 +187,28 @@ async def test_prepare_package_low_fit_score(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=60.0,
-        ats_score=50.0,
-        combined_score=55.0,
+        fit_score=30.0,
+        ats_score=30.0,
+        combined_score=30.0,
         should_apply=False,
         matching_skills=[],
         missing_skills=["Python"],
         experience_match=40.0,
         reasoning="Poor match"
+    )
+    mock_tailor_resume.return_value = TailoredResume(
+        candidate_id="cand-123",
+        job_id="job-456",
+        original_resume_id="resume-base",
+        version=2,
+        ats_score_before=30.0,
+        ats_score_after=30.0,
+        modified_summary="Tailored Summary",
+        modified_skills=[],
+        modified_keywords=[],
+        experience=[],
+        education=[],
+        pdf_url="http://tailored-resume.pdf"
     )
 
     mock_client = MockAsyncClient()
@@ -211,10 +225,10 @@ async def test_prepare_package_low_fit_score(
     assert response.status_code == 200, f"Error detail: {response.text}"
     data = response.json()
     assert data["should_apply"] is False
-    assert "Combined score (55.0) is below gate threshold of 75" in data["reason"]
+    assert "Tailored ATS score (30.0) is below gate threshold of 45.0." in data["reason"]
 
     # Assert gating works
-    mock_tailor_resume.assert_not_called()
+    mock_tailor_resume.assert_called_once()
     mock_gen_cover.assert_not_called()
     mock_answer_screening.assert_not_called()
 
@@ -245,9 +259,9 @@ async def test_prepare_package_no_cover_letter(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=95.0,
-        ats_score=90.0,
-        combined_score=92.5,
+        fit_score=30.0,
+        ats_score=30.0,
+        combined_score=30.0,
         should_apply=True,
         matching_skills=["Python"],
         missing_skills=[],
@@ -314,9 +328,9 @@ async def test_prepare_package_resume_version_numbering(
     mock_score_fit.return_value = MatchResult(
         job_id="job-456",
         candidate_id="cand-123",
-        fit_score=95.0,
-        ats_score=90.0,
-        combined_score=92.5,
+        fit_score=30.0,
+        ats_score=30.0,
+        combined_score=30.0,
         should_apply=True,
         matching_skills=["Python"],
         missing_skills=[],

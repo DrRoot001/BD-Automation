@@ -51,9 +51,9 @@ _DEFAULT_VISION_MODEL = os.getenv("CLAUDE_VISION_MODEL", "claude-haiku-4-5-20251
 _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
 # Lever 4 (cost optimization): AgentLoop vision turns return a single-action
 # JSON object. Bare JSON is ~70 tokens, BUT reasoning-capable models (Gemini
-# 2.5 Flash, Opus 4.x) spend hidden "thinking" tokens that COUNT against
+# 3.5 Flash, Opus 4.x) spend hidden "thinking" tokens that COUNT against
 # max_output_tokens. The old cap of 200 was being burned entirely on
-# reasoning, leaving the JSON truncated mid-string (`{"kind":"fill_field"`).
+# reasoning, leaving the JSON truncated mid-string (`{"kind":"fill_field"}`).
 # 800 gives reasoning headroom without meaningful cost — only generated
 # tokens are billed, not the cap.
 _MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))

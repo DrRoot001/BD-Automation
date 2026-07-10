@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     # "Run Now" path so they select the same stack-aligned jobs.
     job_matching_max_distance: float = 0.35
 
+    # ── Developer/Queue Isolation ─────────────────────────────────────────────
+    queue_suffix: str = ""
+    dev_candidate_id: str = ""
+
     # ── Rate Limiting ─────────────────────────────────────────────────────────
     rate_limit_matching_per_minute: int = 5
     rate_limit_apply_per_minute: int = 10

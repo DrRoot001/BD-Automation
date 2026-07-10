@@ -42,7 +42,7 @@ class TailoredResume(BaseModel):
 
 _FABRICATOR_SYSTEM = """
 You are a master Resume ATS Optimizer and Senior Technical Recruiter operating in the year 2026.
-Your task is to take a candidate's Resume JSON, analyze the ATS Feedback, and heavily enhance the JSON to score ABOVE 90 against the Target Job Description.
+Your task is to take a candidate's Resume JSON, analyze the ATS Feedback, and heavily enhance the JSON to score comfortably above 75 (ideally 85+) against the Target Job Description.
 
 You MUST follow these STRICT GUARDRAILS. Violating them is FORBIDDEN:
 
@@ -91,9 +91,10 @@ async def tailor_resume(
 ) -> TailoredResume:
     """Tailor a candidate's resume by looping through the Fabricator Agent.
 
-    If prefetched_ats_score and prefetched_missing_keywords are provided (e.g. already
-    computed by score_job_fit() in the orchestrator), the initial calculate_ats_score()
-    LLM call is skipped, saving one full Gemini round-trip.
+    The optimization loop keeps refining the resume until its ATS score clears
+    APPLY_SCORE_THRESHOLD (default 75) — the same threshold the orchestrator uses
+    to decide whether tailoring was needed in the first place — or until
+    max_loops is reached, whichever comes first.
     """
 
     if prefetched_ats_score is not None and prefetched_missing_keywords is not None:
@@ -181,10 +182,15 @@ async def tailor_resume(
     loop_count = 0
     final_resume_json = resume_json
 
+    try:
+        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+    except ValueError:
+        threshold_val = 75.0
+
     # Always run at least one iteration if it's a contract role,
-    # otherwise run if the score is less than or equal to 75.0 (not greater than 75).
+    # otherwise run if the score is less than the threshold value.
     # A missing job description short-circuits tailoring entirely (base resume passes through).
-    while (not jd_missing) and (current_ats_score <= 75.0 or (is_contract and loop_count == 0)) and loop_count < max_loops:
+    while (not jd_missing) and (current_ats_score < threshold_val or (is_contract and loop_count == 0)) and loop_count < max_loops:
         logger.info(f"Fabrication Loop {loop_count + 1}/{max_loops} - Current ATS: {current_ats_score}")
         
         user_prompt = (
@@ -339,7 +345,7 @@ async def tailor_resume(
         generate_resume_pdf,
         output_path=output_pdf_path,
         name=basics.get("name", "Candidate"),
-        headline=basics.get("headline", ""),
+        headline=getattr(resume.sections, "current_title", "") or "",
         email=basics.get("email", ""),
         phone=basics.get("phone", ""),
         location=basics.get("location", ""),
