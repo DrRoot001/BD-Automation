@@ -181,6 +181,17 @@ OTHER_LINKS: dict[str, list[str]] = {
         "https://himalayas.app/jobs/worldwide/data-engineering?src=adv&type=full-time%2Cpart-time%2Ccontractor%2Ctemporary&view=filters&experience=mid-level%2Csenior%2Cmanager%2Cdirector%2Cexecutive&sort=recent",
         "https://www.remoterocketship.com/?page=1&sort=DateAdded&locations=United+States&jobTitle=Data+Engineer%2CDatabase+Administrator",
     ],
+    "Mobile": [
+        "https://www.dice.com/jobs?filters.postedDate=ONE&filters.workplaceTypes=Remote&countryCode=US&latitude=38.7945952&location=United+States&locationPrecision=Country&longitude=-106.5348379&q=mobile+developer&radiusUnit=mi",
+        "https://builtin.com/jobs/remote?search=Mobile+Developer&daysSinceUpdated=1&city=&state=&country=USA&allLocations=true",
+        "https://www.talent.com/jobs?k=Mobile+Developer&l=United+States&workplace=remote&radius=100&date=1",
+        "https://www.adzuna.com/search?f=1&loc=151946&remote_only=1&q=Mobile%20Developer",
+        "https://www.simplyhired.com/search?q=Mobile+Developer&l=Remote&t=1&s=d",
+        "https://hiring.cafe/?searchState=%7B%22locations%22%3A%5B%7B%22formatted_address%22%3A%22United+States%22%2C%22types%22%3A%5B%22country%22%5D%2C%22geometry%22%3A%7B%22location%22%3A%7B%22lat%22%3A40.7399%2C%22lon%22%3A-74.1691%7D%7D%2C%22id%22%3A%22user_country%22%2C%22address_components%22%3A%5B%7B%22long_name%22%3A%22United+States%22%2C%22short_name%22%3A%22US%22%2C%22types%22%3A%5B%22country%22%5D%7D%5D%2C%22options%22%3A%7B%22flexible_regions%22%3A%5B%5D%7D%2C%22workplace_types%22%3A%5B%22Remote%22%5D%7D%5D%2C%22searchQuery%22%3A%22Mobile+Developer%22%2C%22dateFetchedPastNDays%22%3A2%7D",
+        "https://remotive.com/remote-jobs?query=Mobile+Developer&category=Engineering%2CSoftware+Development&location=USA&employment-type=full-time%2Ccontract%2Cpart-time",
+        "https://himalayas.app/jobs/worldwide/mobile-engineering?src=adv&type=full-time%2Cpart-time%2Ccontractor%2Ctemporary&view=filters&experience=mid-level%2Csenior%2Cmanager%2Cdirector%2Cexecutive&sort=recent",
+        "https://www.remoterocketship.com/?page=1&sort=DateAdded&locations=United+States&jobTitle=Mobile+Engineer%2CiOS+Developer%2CAndroid+Developer%2CReact+Native+Developer",
+    ],
 }
 
 
@@ -203,7 +214,8 @@ def get_links_with_categories() -> list[tuple[str, str]]:
         "servicenow": 2,
         "dynamics": 3,
         "ml": 4,
-        "data": 5
+        "data": 5,
+        "mobile": 6
     }
 
     # 2. Define platform priority (lower value = higher priority)

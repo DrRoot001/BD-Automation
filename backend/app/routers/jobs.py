@@ -549,9 +549,17 @@ async def get_job_platforms(db: AsyncSession = Depends(get_db)):
     return platforms
 
 
+# The six stacks the business operates in. The endpoint returns the UNION of
+# this canonical list and whatever categories exist in scraped data, so a
+# category with no scraped jobs yet (e.g. mobile before its first scrape run)
+# still appears in candidate forms and job filters with a count of 0.
+CANONICAL_JOB_CATEGORIES = ["servicenow", "salesforce", "dynamics", "ml", "data", "mobile"]
+
+
 @router.get("/categories")
 async def get_job_categories(db: AsyncSession = Depends(get_db)):
-    """Distinct job categories with counts, most-populated first."""
+    """Job categories with live counts: canonical six first (most-populated
+    first), then any extra categories found in the data."""
     from sqlalchemy import func, select
     stmt = (
         select(
@@ -563,7 +571,17 @@ async def get_job_categories(db: AsyncSession = Depends(get_db)):
         .order_by(func.count().desc())
     )
     result = await db.execute(stmt)
-    return [{"category": row.category, "count": row.count} for row in result.fetchall()]
+    counts = {row.category: row.count for row in result.fetchall()}
+    canonical = sorted(
+        ({"category": c, "count": counts.get(c, 0)} for c in CANONICAL_JOB_CATEGORIES),
+        key=lambda x: -x["count"],
+    )
+    extras = [
+        {"category": c, "count": n}
+        for c, n in sorted(counts.items(), key=lambda kv: -kv[1])
+        if c not in CANONICAL_JOB_CATEGORIES
+    ]
+    return canonical + extras
 
 
 @router.get("/count")
