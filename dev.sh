@@ -89,6 +89,18 @@ export M1_API_BASE_URL="http://localhost:$BACKEND_PORT/api"
 export API_BASE_URL="http://localhost:$BACKEND_PORT"
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
 
+# ── Queue suffix — must match celery_app.py logic exactly ────────────────────
+# celery_app.py uses QUEUE_SUFFIX env var, else falls back to the OS username.
+# We replicate that here so the -Q flags point to the right suffixed queues.
+_RAW_SUFFIX="${QUEUE_SUFFIX:-$(id -un | tr '[:upper:]' '[:lower:]')}"
+_SUFFIX="${_RAW_SUFFIX:+_${_RAW_SUFFIX}}"
+
+# Allow QUEUE_APPLICATION_EXECUTION to override (same logic as celery_app.py)
+_EXEC_QUEUE="${QUEUE_APPLICATION_EXECUTION:-queue:application_execution${_SUFFIX}}"
+
+info "Queue suffix  : '${_RAW_SUFFIX}' → queues ending in '${_SUFFIX}'"
+info "Exec queue    : ${_EXEC_QUEUE}"
+
 info "Project root : $ROOT"
 info "Python       : $($PYTHON --version 2>&1)"
 info "Node         : $(node --version)"
@@ -215,7 +227,7 @@ log "Starting Celery main worker (app execution, concurrency=4) ..."
     --loglevel=info \
     --concurrency=4 \
     -n "main-worker@%h" \
-    -Q celery,queue:job_discovery,queue:job_processing,queue:resume_generation,queue:application_execution
+    -Q "celery${_SUFFIX},queue:job_discovery${_SUFFIX},queue:job_processing${_SUFFIX},queue:resume_generation${_SUFFIX},${_EXEC_QUEUE}"
 ) > "$LOG_DIR/celery-worker.log" 2>&1 &
 PIDS+=($!)
 stream_log "WORKER" "$C_WORKER" "$LOG_DIR/celery-worker.log"
@@ -228,7 +240,7 @@ log "Starting Celery email worker (email/interview scans, concurrency=3) ..."
     --loglevel=info \
     --concurrency=3 \
     -n "email-worker@%h" \
-    -Q queue:email_scan
+    -Q "queue:email_scan${_SUFFIX}"
 ) > "$LOG_DIR/celery-email-worker.log" 2>&1 &
 PIDS+=($!)
 stream_log "EMAIL " "$C_BEAT" "$LOG_DIR/celery-email-worker.log"
