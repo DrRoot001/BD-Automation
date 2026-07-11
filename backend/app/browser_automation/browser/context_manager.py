@@ -280,23 +280,47 @@ class BrowserContextManager:
 
         # Proxy support — set PROXY_URL in .env for residential/rotating proxies.
         # Format: http://user:pass@host:port  or  socks5://user:pass@host:port
-        # Required for production use against sites with CloudFront/Akamai WAF that
-        # block IPs after repeated automated requests (monks.com, LinkedIn, etc.)
+        # Required for sites with CloudFront/Akamai/Cloudflare WAF that block
+        # datacenter IPs (himalayas, talent, linkedin, ...).
+        #
+        # SCOPING (important for throughput): a residential proxy adds ~3-4x
+        # latency PER REQUEST. Routing EVERY apply through it made the fast,
+        # non-walled hosts (Dice/Greenhouse/Lever/Ashby/SmartRecruiters) so slow
+        # that the 2 browser slots saturated and QUEUED jobs were reaped by the
+        # 15-min watchdog (observed live 2026-07-12). So the proxy is applied
+        # ONLY to hosts that actually need it:
+        #   PROXY_HOSTS      — comma-separated host substrings to proxy. If unset
+        #                      (and PROXY_URL is set) a built-in bot-walled set is
+        #                      used. Empty string ("") also means the default set.
+        #   PROXY_ALL_HOSTS  — "true" restores the old proxy-everything behavior.
         proxy_url = os.getenv("PROXY_URL", "").strip()
         proxy_config = None
         if proxy_url:
-            # Playwright IGNORES inline user:pass@ creds in the server field —
-            # they must be split into username/password keys. _parse_proxy_url
-            # does that and returns None if the URL is unusable.
-            proxy_config = _parse_proxy_url(proxy_url)
-            if proxy_config:
-                # Hold ONE residential IP for this whole apply run; the next
-                # apply (next get_context call) rotates to a fresh IP.
-                proxy_config = _apply_sticky_session(proxy_config)
-                # Log host:port only — never the credentials.
-                logger.info(f"[Browser] Using proxy: {proxy_config['server']}")
+            _plat = (platform or "").lower()
+            _all = os.getenv("PROXY_ALL_HOSTS", "false").strip().lower() in ("1", "true", "yes", "on")
+            _hosts_env = os.getenv("PROXY_HOSTS", "").strip()
+            _default_hosts = "himalayas,talent,linkedin,glassdoor,ziprecruiter,indeed,monks,workday"
+            _proxy_hosts = [h.strip().lower() for h in (_hosts_env or _default_hosts).split(",") if h.strip()]
+            _needs_proxy = _all or any(h in _plat for h in _proxy_hosts)
+            if not _needs_proxy:
+                logger.info(
+                    f"[Browser] Proxy configured but SKIPPED for '{platform}' "
+                    f"(not a bot-walled host; keeps fast hosts fast). "
+                    f"Set PROXY_ALL_HOSTS=true or add to PROXY_HOSTS to force."
+                )
             else:
-                logger.warning("[Browser] PROXY_URL set but could not be parsed; proceeding without a proxy")
+                # Playwright IGNORES inline user:pass@ creds in the server field —
+                # they must be split into username/password keys. _parse_proxy_url
+                # does that and returns None if the URL is unusable.
+                proxy_config = _parse_proxy_url(proxy_url)
+                if proxy_config:
+                    # Hold ONE residential IP for this whole apply run; the next
+                    # apply (next get_context call) rotates to a fresh IP.
+                    proxy_config = _apply_sticky_session(proxy_config)
+                    # Log host:port only — never the credentials.
+                    logger.info(f"[Browser] Using proxy for '{platform}': {proxy_config['server']}")
+                else:
+                    logger.warning("[Browser] PROXY_URL set but could not be parsed; proceeding without a proxy")
 
         # CRITICAL: When using real Chrome (channel="chrome"), DO NOT override
         # the user_agent or sec-ch-ua headers. The browser sends a consistent
