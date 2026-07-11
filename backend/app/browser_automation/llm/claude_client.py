@@ -86,6 +86,7 @@ def _resolve_api_keys() -> list[str]:
     # exhausted mid-run and 429s, and OpenRouter's free tier caps prompt tokens.
     # An explicit LLM_KEY_PRIORITY env (comma-separated env-var names) overrides.
     default_order = [
+        "OPENAI_API_KEY",
         "GEMINI_API_KEY",
         "GEMINI_API_KEY_2",
         "ANTHROPIC_API_KEY",
@@ -96,7 +97,13 @@ def _resolve_api_keys() -> list[str]:
         "GROQ_API_KEY_3",
         "OPENROUTER_API_KEY",
     ]
-    order = [n.strip() for n in os.getenv("LLM_KEY_PRIORITY", "").split(",") if n.strip()] or default_order
+    try:
+        # Admin-panel primary-provider toggle → env-var priority list. Falls back
+        # to the explicit LLM_KEY_PRIORITY env, then default_order.
+        from app.services.runtime_config import llm_key_priority
+        order = llm_key_priority()
+    except Exception:
+        order = [n.strip() for n in os.getenv("LLM_KEY_PRIORITY", "").split(",") if n.strip()] or default_order
     candidates = [os.getenv(name, "") for name in order]
     seen: set[str] = set()
     result = []
@@ -119,6 +126,7 @@ def _detect_provider(key: str) -> str:
     - ``sk-ant-*`` → native Anthropic
     - ``sk-or-*``  → OpenRouter (routes to any model via OpenAI-compat API)
     - ``gsk_*``    → Groq (OpenAI-compatible chat-completions API)
+    - ``sk-proj-*`` or ``sk-*`` → native OpenAI (since Anthropic/OpenRouter checked first)
     - everything else (``AIza*``, ``AQ.Ab*``, etc.) → native Gemini
     """
     if key.startswith("sk-ant-"):
@@ -127,6 +135,8 @@ def _detect_provider(key: str) -> str:
         return "openrouter"
     if key.startswith("gsk_"):
         return "groq"
+    if key.startswith("sk-proj-") or key.startswith("sk-"):
+        return "openai"
     return "gemini"
 
 
@@ -146,7 +156,7 @@ class ClaudeClient:
 
         if not self._keys:
             logger.warning(
-                "[Claude] No API key found (ANTHROPIC_API_KEY / ANTHROPIC_API_KEY_2 / "
+                "[Claude] No API key found (OPENAI_API_KEY / ANTHROPIC_API_KEY / ANTHROPIC_API_KEY_2 / "
                 "OPENROUTER_API_KEY / GEMINI_API_KEY)"
             )
             self.api_key = ""
@@ -159,7 +169,11 @@ class ClaudeClient:
         self._anthropic = self._make_anthropic_client(self.api_key)
         # Show the model that will ACTUALLY be used for this provider — logging
         # the Anthropic default while running on Gemini was misleading.
-        _disp_model = _GEMINI_TEXT_MODEL if self.provider == "gemini" else self.model_name
+        _disp_model = (
+            _GEMINI_TEXT_MODEL if self.provider == "gemini"
+            else os.getenv("OPENAI_MODEL", "gpt-4o-mini") if self.provider == "openai"
+            else self.model_name
+        )
         logger.info(
             f"[LLM] provider={self.provider} model={_disp_model} "
             f"key_prefix={self.api_key[:7]!r} fallback_keys={len(self._keys) - 1}"
@@ -391,6 +405,86 @@ class ClaudeClient:
         except Exception as exc:
             raise LLMUnavailable(f"OpenRouter response parse failed: {exc}") from exc
 
+    async def _call_openai(
+        self,
+        prompt: str,
+        image_bytes: Optional[bytes],
+        temperature: float,
+        timeout_s: float,
+        system: Optional[str],
+    ) -> str:
+        openai_base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        if image_bytes:
+            model = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
+        else:
+            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+        _max_vision = int(os.getenv("OPENAI_MAX_TOKENS_VISION", "800"))
+        _max_text = int(os.getenv("OPENAI_MAX_TOKENS_TEXT", "2400"))
+
+        if image_bytes:
+            user_content: Any = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
+                    },
+                },
+            ]
+        else:
+            user_content = prompt
+
+        messages: list = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user_content})
+
+        payload = {
+            "model": model,
+            "max_tokens": _max_vision if image_bytes else _max_text,
+            "temperature": temperature,
+            "messages": messages,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                r = await client.post(
+                    f"{openai_base}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+            if r.status_code != 200:
+                raise LLMUnavailable(f"OpenAI HTTP {r.status_code}: {r.text[:400]}")
+            body = r.json()
+        except LLMUnavailable:
+            raise
+        except Exception as exc:
+            raise LLMUnavailable(f"OpenAI call failed: {exc}") from exc
+        try:
+            choices = body.get("choices") or []
+            msg = (choices[0] if choices else {}).get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, list):
+                text = "".join(
+                    (c or {}).get("text", "") for c in content if isinstance(c, dict)
+                ).strip()
+            else:
+                text = str(content or "").strip()
+            usage = body.get("usage") or {}
+            telemetry.record(
+                provider="openai", model=model,
+                input_tokens=int(usage.get("prompt_tokens") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("completion_tokens") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
+        except Exception as exc:
+            raise LLMUnavailable(f"OpenAI response parse failed: {exc}") from exc
+
     async def _call_groq(
         self,
         prompt: str,
@@ -562,7 +656,13 @@ class ClaudeClient:
         for _idx, key in enumerate(keys_snapshot):
             provider = _detect_provider(key)
             try:
-                if provider == "openrouter":
+                if provider == "openai":
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_openai(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                elif provider == "openrouter":
                     # Temporarily swap key for this call
                     orig_key, self.api_key = self.api_key, key
                     try:

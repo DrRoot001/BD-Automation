@@ -325,7 +325,25 @@ def _supabase_auth_headers() -> dict:
     }
 
 
-async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") -> Optional[str]:
+def _candidate_doc_basename(candidate_profile: Optional[dict], kind: str) -> str:
+    """Professional, candidate-named upload filename base — e.g.
+    'James_William_Resume' / 'James_William_Cover_Letter'.
+
+    This becomes the filename the ATS/recruiter SEES on the uploaded PDF, so it
+    must carry the candidate's real name — never a UUID/hash storage-object
+    name (which reads as bot-generated and looks unprofessional).
+    """
+    import re
+    p = candidate_profile or {}
+    name = (p.get("name") or f"{p.get('first_name', '')} {p.get('last_name', '')}").strip()
+    safe = re.sub(r"[^A-Za-z0-9]+", " ", name).strip()
+    safe = "_".join(w.capitalize() for w in safe.split()) or "Candidate"
+    return f"{safe}_{kind}"
+
+
+async def _resolve_file_to_local_path(
+    url_or_path: str, suffix: str = ".pdf", display_name: Optional[str] = None
+) -> Optional[str]:
     """Return a local filesystem path for the given URL or path.
 
     - If it's already a valid local path → return as-is.
@@ -356,47 +374,45 @@ async def _resolve_file_to_local_path(url_or_path: str, suffix: str = ".pdf") ->
             resp = await client.get(url_or_path, headers=headers)
             resp.raise_for_status()
 
-        filename = None
-        parsed = urlparse(url_or_path)
-        if parsed.path:
-            filename = os.path.basename(parsed.path)
-        if not filename:
-            filename = os.path.basename(unquote(parsed.path))
-        if not filename:
-            filename = f"downloaded{suffix}"
-
-        # Strip version suffixes like _v38, -v38, _version38, etc. at the end of the base name
-        # e.g., resume_v38.pdf -> resume.pdf, cover_letter_v2.pdf -> cover_letter.pdf
-        import re
-        base, ext = os.path.splitext(filename)
-        cleaned_base = re.sub(r'[_-]v(?:ersion)?_?\d+$', '', base, flags=re.IGNORECASE)
-        cleaned_base = re.sub(r'v\d+$', '', cleaned_base, flags=re.IGNORECASE)
-        cleaned_base = cleaned_base.rstrip('_-')
-        filename = cleaned_base + ext
-
-        if not filename.lower().endswith(suffix.lower()):
-            filename += suffix
-        # Avoid collisions when different URLs share the same basename (common for signed URLs).
         import hashlib
+        import re
         digest = hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
-        root, ext = os.path.splitext(filename)
-        filename = f"{root}-{digest}{ext}"
 
-        # Use a project-local, stable cache dir instead of the OS temp
-        # dir. Windows aggressively cleans %TEMP% (Storage Sense, tempfile
-        # module context managers elsewhere in this process, and any
-        # sibling cleanup call that walks tempfile.gettempdir()) — an
-        # already-downloaded resume can vanish between the executor's
-        # initial resolve and a later retry-attempt upload inside the
-        # AgentLoop, which is exactly what we saw on Palantir: the resume
-        # download succeeded on entry, but the file was gone by the time
-        # the form-fill retry called set_input_files → hard "Local file
-        # not found" failure at C:\Users\<u>\AppData\Local\Temp\... .
-        # A per-candidate cache under backend/data/ is out of every
-        # tempdir-cleanup path and survives across retries + runs.
+        if display_name:
+            # Caller wants a professional, candidate-named file (e.g.
+            # "James_William_Resume.pdf"). This basename is EXACTLY what the ATS
+            # shows the recruiter on the uploaded PDF — so keep it clean and
+            # NEVER expose the UUID/hash storage-object name.
+            safe = re.sub(r'[^A-Za-z0-9]+', '_', display_name).strip('_') or "Document"
+            filename = safe + suffix
+        else:
+            filename = None
+            parsed = urlparse(url_or_path)
+            if parsed.path:
+                filename = os.path.basename(parsed.path)
+            if not filename:
+                filename = os.path.basename(unquote(parsed.path))
+            if not filename:
+                filename = f"downloaded{suffix}"
+            # Strip version suffixes like _v38, -v38 → resume.pdf / cover_letter.pdf
+            base, ext = os.path.splitext(filename)
+            cleaned_base = re.sub(r'[_-]v(?:ersion)?_?\d+$', '', base, flags=re.IGNORECASE)
+            cleaned_base = re.sub(r'v\d+$', '', cleaned_base, flags=re.IGNORECASE)
+            cleaned_base = cleaned_base.rstrip('_-')
+            filename = cleaned_base + ext
+            if not filename.lower().endswith(suffix.lower()):
+                filename += suffix
+            root, ext = os.path.splitext(filename)
+            filename = f"{root}-{digest}{ext}"
+
+        # Project-local, stable cache dir (survives OS %TEMP% cleanup, which was
+        # deleting already-downloaded resumes mid-run on Windows). The url-digest
+        # is a SUBDIR — so a display_name file stays clean
+        # (James_William_Resume.pdf) while still avoiding cross-URL collisions in
+        # the cache, and the file survives across retries + runs.
         _here = os.path.dirname(os.path.abspath(__file__))
         _backend_root = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
-        cache_dir = os.path.join(_backend_root, "data", "upload_cache")
+        cache_dir = os.path.join(_backend_root, "data", "upload_cache", digest)
         os.makedirs(cache_dir, exist_ok=True)
         temp_path = os.path.join(cache_dir, filename)
         with open(temp_path, "wb") as f:
@@ -555,7 +571,10 @@ class ApplicationExecutor:
             if not package.resume_url:
                 raise ValueError("ApplicationPackage.resume_url is empty — cannot proceed")
 
-            _temp_resume = await _resolve_file_to_local_path(package.resume_url, ".pdf")
+            _temp_resume = await _resolve_file_to_local_path(
+                package.resume_url, ".pdf",
+                display_name=_candidate_doc_basename(package.candidate_profile, "Resume"),
+            )
             if not _temp_resume:
                 raise FileNotFoundError(f"Resume file could not be resolved: {package.resume_url}")
 
@@ -573,7 +592,10 @@ class ApplicationExecutor:
 
             _temp_cover: Optional[str] = None
             if package.cover_letter_url:
-                _temp_cover = await _resolve_file_to_local_path(package.cover_letter_url, ".pdf")
+                _temp_cover = await _resolve_file_to_local_path(
+                    package.cover_letter_url, ".pdf",
+                    display_name=_candidate_doc_basename(package.candidate_profile, "Cover_Letter"),
+                )
                 if not _temp_cover:
                     logger.warning(f"Cover letter could not be resolved ({package.cover_letter_url}); "
                                    "continuing without it")
@@ -1009,6 +1031,26 @@ class ApplicationExecutor:
                         f"steps={loop_result.steps_taken} error={loop_result.error!r}"
                     )
 
+                    # Self-learned portal memory: record what worked (or the wall
+                    # we hit) on THIS host so the next visit to it starts smarter.
+                    # Uses package.job_url (the same host the loop read its
+                    # playbook from) + effective_platform (inner ATS). Best-effort.
+                    try:
+                        from ..agent import portal_memory as _portal_memory
+                        _pm_err = loop_result.error or ""
+                        _pm_caps = [c for c in ("turnstile", "recaptcha", "hcaptcha", "datadome")
+                                    if c in _pm_err.lower()] or None
+                        _portal_memory.record(
+                            package.job_url,
+                            outcome=loop_result.status,
+                            actions=loop_result.actions,
+                            ats=(locals().get("effective_platform") or package.platform),
+                            captcha_types=_pm_caps,
+                            note=(_pm_err[:200] or None),
+                        )
+                    except Exception as _pm_exc:
+                        logger.debug(f"[M4] portal_memory.record skipped: {_pm_exc}")
+
                     # ── Captcha genuinely unsolvable → clean BLOCKED terminal ──
                     # The loop surfaces CAPTCHA_UNSUPPORTED (e.g. Turnstile
                     # managed-mode on a datacenter IP) via loop_result.error.
@@ -1083,21 +1125,46 @@ class ApplicationExecutor:
                         # Mutual Exclusion: We no longer fall back to the deterministic
                         # pipeline if AgentLoop gets stuck. Running both on the same
                         # React DOM causes conflicting state and lost data.
-                        logger.error(
-                            f"[M4] AgentLoop non-terminal ({loop_result.status}) — "
-                            "aborting application to prevent fallback conflict"
+                        #
+                        # Single exception: LLM_UNAVAILABLE before the loop touched
+                        # anything (only perceive/scroll/wait actions ran). The DOM is
+                        # pristine, so the scripted pipeline can't conflict — falling
+                        # back there preserves "the run never blocks on the AI".
+                        _passive_kinds = {"verify_page", "scroll", "wait"}
+                        _touched_dom = any(
+                            a.kind not in _passive_kinds
+                            for a in (loop_result.actions or [])
                         )
-                        raise Exception(
-                            f"AgentLoop failed to complete ({loop_result.status}): {loop_result.error}. "
-                            "Failing application to prevent deterministic fallback conflict."
-                        )
+                        if loop_result.status == "LLM_UNAVAILABLE" and not _touched_dom:
+                            logger.warning(
+                                "[M4] AgentLoop LLM_UNAVAILABLE with untouched DOM — "
+                                "falling back to scripted pipeline"
+                            )
+                        else:
+                            logger.error(
+                                f"[M4] AgentLoop non-terminal ({loop_result.status}) — "
+                                "aborting application to prevent fallback conflict"
+                            )
+                            raise Exception(
+                                f"AgentLoop failed to complete ({loop_result.status}): {loop_result.error}. "
+                                "Failing application to prevent deterministic fallback conflict."
+                            )
 
                 except Exception as exc:
                     # Intentional terminal outcomes must propagate, NOT fall
                     # through to the scripted pipeline. "EMAIL_VERIFICATION_REQUIRED"
                     # means submit already fired — re-running scripted submit would
                     # double-apply. "AgentLoop aborted" is an explicit wrong-page/abort.
-                    if "AgentLoop aborted" in str(exc) or "EMAIL_VERIFICATION_REQUIRED" in str(exc) or "BLOCKED: Email verification" in str(exc):
+                    # "AgentLoop failed to complete" is the mutual-exclusion abort above —
+                    # without this clause it was swallowed here and the scripted pipeline
+                    # ran anyway on the agent's half-filled DOM.
+                    _terminal_markers = (
+                        "AgentLoop aborted",
+                        "AgentLoop failed to complete",
+                        "EMAIL_VERIFICATION_REQUIRED",
+                        "BLOCKED: Email verification",
+                    )
+                    if any(m in str(exc) for m in _terminal_markers):
                         raise
                     logger.warning(f"[M4] AgentLoop raised (non-fatal, falling back): {exc}")
 

@@ -378,6 +378,7 @@ async def retry_application(
     })
     
     # 8. Dispatch celery task
+    from app.celery_app import EXECUTION_QUEUE
     from app.tasks.browser_automation import execute_application
     package = {
         "application_id": str(application_id),
@@ -390,7 +391,7 @@ async def retry_application(
         "cover_letter_url": app.cover_letter_url or "",
         "screening_answers": screening_answers
     }
-    execute_application.apply_async(args=[package], queue="queue:application_execution")
+    execute_application.apply_async(args=[package], queue=EXECUTION_QUEUE)
 
     return app
 
@@ -401,6 +402,7 @@ async def _dispatch_execute_application(db: AsyncSession, app: Application) -> N
     Used by the resume (unpause) endpoint to re-drive a QUEUED row whose original
     Celery message was consumed and skipped while the row was paused.
     """
+    from app.celery_app import EXECUTION_QUEUE
     from app.models.job import Job
     from app.models.resume import Resume
     from app.tasks.browser_automation import execute_application
@@ -443,7 +445,7 @@ async def _dispatch_execute_application(db: AsyncSession, app: Application) -> N
         "cover_letter_url": app.cover_letter_url or "",
         "screening_answers": screening_answers,
     }
-    execute_application.apply_async(args=[package], queue="queue:application_execution")
+    execute_application.apply_async(args=[package], queue=EXECUTION_QUEUE)
 
 
 @router.post("/{application_id}/cancel", response_model=ApplicationResponse)

@@ -1,5 +1,6 @@
 import os
 import json
+import secrets
 import logging
 from typing import Optional
 from urllib.parse import urlparse, unquote
@@ -59,6 +60,44 @@ def _parse_proxy_url(proxy_url: str) -> Optional[dict]:
         cfg["username"] = unquote(parsed.username)
     if parsed.password:
         cfg["password"] = unquote(parsed.password)
+    return cfg
+
+
+def _apply_sticky_session(proxy_config: Optional[dict]) -> Optional[dict]:
+    """Append a fresh random session token to the proxy password so every
+    request in THIS context shares ONE upstream residential IP, while the NEXT
+    context (i.e. the next apply run — get_context() is called once per apply)
+    gets a brand-new IP. Without this, a "randomize IP" residential plan hands
+    out a different IP per request and breaks multi-step ATS forms mid-submit.
+
+    IPRoyal carries session state in the PASSWORD field, not the username:
+        <password>_session-<id>_lifetime-<ttl>
+    (the existing `_country-us` suffix is another such param and is preserved).
+
+    Controlled by env:
+      PROXY_STICKY_SESSION   — "true"/"false". Default: auto-on when the proxy
+                               host looks like IPRoyal (geo.iproyal.com).
+      PROXY_SESSION_LIFETIME — IPRoyal lifetime suffix, e.g. "30m" (default),
+                               "1h". Hold long enough to cover one full apply.
+
+    No-op (returns the dict unchanged) when disabled or when there is no
+    password to attach the session to.
+    """
+    if not proxy_config or "password" not in proxy_config:
+        return proxy_config
+    server = proxy_config.get("server", "").lower()
+    default_on = "iproyal" in server
+    enabled = os.getenv("PROXY_STICKY_SESSION", str(default_on)).lower() == "true"
+    if not enabled:
+        return proxy_config
+    lifetime = (os.getenv("PROXY_SESSION_LIFETIME", "30m").strip() or "30m")
+    token = secrets.token_hex(8)
+    cfg = dict(proxy_config)
+    cfg["password"] = f"{cfg['password']}_session-{token}_lifetime-{lifetime}"
+    logger.info(
+        f"[Browser] Sticky proxy session: id={token} lifetime={lifetime} "
+        f"(one held IP for this apply run)"
+    )
     return cfg
 
 
@@ -233,6 +272,9 @@ class BrowserContextManager:
             # does that and returns None if the URL is unusable.
             proxy_config = _parse_proxy_url(proxy_url)
             if proxy_config:
+                # Hold ONE residential IP for this whole apply run; the next
+                # apply (next get_context call) rotates to a fresh IP.
+                proxy_config = _apply_sticky_session(proxy_config)
                 # Log host:port only — never the credentials.
                 logger.info(f"[Browser] Using proxy: {proxy_config['server']}")
             else:

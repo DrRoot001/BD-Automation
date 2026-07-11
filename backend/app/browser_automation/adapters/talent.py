@@ -136,11 +136,18 @@ class TalentAdapter(BasePlatformAdapter):
         # the apply flow (no cross-tab page-swap needed downstream).
         apply_href, kind = await self._read_apply_cta(page)
         if not apply_href:
-            raise RuntimeError(
-                "BLOCKED: Talent.com apply link not found (neither native Quick "
-                "Apply nor an external 'f-link' apply). Posting may be expired, "
-                "region-gated, or the DOM shifted."
+            # Hardcoded CTA selectors missed (DOM variant, or a layout shift).
+            # DON'T hard-block here — that's the "scripts break" failure mode.
+            # Leave the page on the job listing and DEFER to the vision AgentLoop
+            # (guided by the `talent` hints), which finds + clicks the apply
+            # button from what it can actually see. A genuinely-expired posting
+            # will then fail via the agent's own page classification instead of a
+            # pre-emptive block — strictly better coverage.
+            logger.warning(
+                "[Talent] apply CTA not found via selectors; deferring to the "
+                "AgentLoop to locate the apply button visually (no pre-emptive block)."
             )
+            return
         self._apply_kind = kind
         logger.info(f"[Talent] Apply CTA resolved (kind={kind}): {apply_href}")
         try:

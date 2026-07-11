@@ -250,7 +250,8 @@ async def run_matching_for_candidate(
     else:
         max_daily = getattr(candidate, "max_daily_apps_override", None)
         if max_daily is None:
-            max_daily = settings.max_daily_applications_per_candidate
+            from app.services import runtime_config
+            max_daily = runtime_config.get("max_daily_applications_per_candidate")
 
         time_24h_ago = datetime.now(timezone.utc) - timedelta(hours=24)
 

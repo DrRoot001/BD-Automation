@@ -112,20 +112,20 @@
     "value": "Password123!"
   },
   "country": {
-    "count": 3,
+    "count": 4,
     "field_type": "text",
     "label": "Country",
-    "last_seen": 1783610211,
+    "last_seen": 1783697113,
     "source": "agent_loop",
     "value": "United States"
   },
   "country phone code": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "Country Phone Code*",
-    "last_seen": 1783638556,
-    "source": "rules",
-    "value": "+15512166306"
+    "last_seen": 1783767038,
+    "source": "agent_loop",
+    "value": "+1"
   },
   "current company / employer": {
     "count": 1,
@@ -183,6 +183,14 @@
     "source": "rules",
     "value": "Newark, NJ"
   },
+  "do you have any upcoming moving plans": {
+    "count": 4,
+    "field_type": "radio",
+    "label": "Do you have any upcoming moving plans? *",
+    "last_seen": 1783697389,
+    "source": "screening",
+    "value": "No, I do not have any upcoming moving plans."
+  },
   "do you have at least 5 years of experience as a training specialist with the servicenow platform": {
     "count": 1,
     "field_type": "textarea",
@@ -215,6 +223,14 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "do you reside in the u.s., canada, india or europe`s countries": {
+    "count": 4,
+    "field_type": "radio",
+    "label": "Do you reside in the U.S., Canada, India or Europe`s countries? *",
+    "last_seen": 1783697390,
+    "source": "screening",
+    "value": "Yes, I reside in the United States."
+  },
   "e-mail obbligatorio": {
     "count": 1,
     "field_type": "email",
@@ -224,11 +240,11 @@
     "value": "james12william893@gmail.com"
   },
   "email": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
-    "label": "Email*",
-    "last_seen": 1783609899,
-    "source": "profile_direct",
+    "label": "Email",
+    "last_seen": 1783713083,
+    "source": "agent_loop",
     "value": "james12william893@gmail.com"
   },
   "email address": {
@@ -280,10 +296,10 @@
     "value": "William"
   },
   "first name": {
-    "count": 1,
+    "count": 3,
     "field_type": "text",
     "label": "First Name",
-    "last_seen": 1783608553,
+    "last_seen": 1783713055,
     "source": "agent_loop",
     "value": "james"
   },
@@ -335,6 +351,14 @@
     "source": "agent_loop",
     "value": "ServiceNow"
   },
+  "in case we extend an offer, how much time do you need before you can start a new position": {
+    "count": 2,
+    "field_type": "radio",
+    "label": "In case we extend an offer, how much time do you need before you can start a new position? *",
+    "last_seen": 1783697387,
+    "source": "screening",
+    "value": "I can start within 2 weeks of accepting an offer."
+  },
   "job title or keyword": {
     "count": 1,
     "field_type": "text",
@@ -344,10 +368,10 @@
     "value": "Senior Software Engineer"
   },
   "last name": {
-    "count": 1,
+    "count": 2,
     "field_type": "text",
     "label": "Last Name",
-    "last_seen": 1783608566,
+    "last_seen": 1783713067,
     "source": "agent_loop",
     "value": "William"
   },
@@ -374,6 +398,14 @@
     "last_seen": 1783638548,
     "source": "rules",
     "value": "james"
+  },
+  "mobile number": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Mobile Number",
+    "last_seen": 1783713098,
+    "source": "agent_loop",
+    "value": "5512166306"
   },
   "name": {
     "count": 1,
@@ -416,12 +448,12 @@
     "value": "+15512166306"
   },
   "phone number": {
-    "count": 1,
+    "count": 6,
     "field_type": "text",
     "label": "Phone Number*",
-    "last_seen": 1783638405,
+    "last_seen": 1783696748,
     "source": "agent_loop",
-    "value": "+15512166306"
+    "value": "5512166306"
   },
   "portfolio url": {
     "count": 1,
@@ -558,6 +590,14 @@
     "last_seen": 1783610270,
     "source": "agent_loop",
     "value": "Master's Degree"
+  },
+  "what is your linkedin profile url": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your LinkedIn profile URL?",
+    "last_seen": 1783696895,
+    "source": "screening",
+    "value": "https://www.linkedin.com/in/james-william"
   },
   "where": {
     "count": 1,

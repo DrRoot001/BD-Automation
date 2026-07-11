@@ -623,6 +623,14 @@
     "source": "llm:0.80",
     "value": "Available to start immediately"
   },
+  "do you have any upcoming moving plans": {
+    "count": 4,
+    "field_type": "radio",
+    "label": "Do you have any upcoming moving plans? *",
+    "last_seen": 1783697389,
+    "source": "screening",
+    "value": "No, I do not have any upcoming moving plans."
+  },
   "do you have at least 5 years of experience as a training specialist with the servicenow platform": {
     "count": 1,
     "field_type": "textarea",
@@ -710,6 +718,14 @@
     "last_seen": 1781972731,
     "source": "smart_infer",
     "value": "Yes"
+  },
+  "do you reside in the u.s., canada, india or europe`s countries": {
+    "count": 4,
+    "field_type": "radio",
+    "label": "Do you reside in the U.S., Canada, India or Europe`s countries? *",
+    "last_seen": 1783697390,
+    "source": "screening",
+    "value": "Yes, I reside in the United States."
   },
   "earliest start date": {
     "count": 1,
@@ -966,6 +982,14 @@
     "last_seen": 1783076549,
     "source": "agent_loop",
     "value": "No relationship to current employees"
+  },
+  "in case we extend an offer, how much time do you need before you can start a new position": {
+    "count": 2,
+    "field_type": "radio",
+    "label": "In case we extend an offer, how much time do you need before you can start a new position? *",
+    "last_seen": 1783697387,
+    "source": "screening",
+    "value": "I can start within 2 weeks of accepting an offer."
   },
   "job title or keyword": {
     "count": 1,

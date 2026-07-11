@@ -183,9 +183,13 @@ async def tailor_resume(
     final_resume_json = resume_json
 
     try:
-        threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
-    except ValueError:
-        threshold_val = 75.0
+        from app.services.runtime_config import get as _rc_get
+        threshold_val = float(_rc_get("apply_score_threshold"))
+    except Exception:
+        try:
+            threshold_val = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        except ValueError:
+            threshold_val = 75.0
 
     # Always run at least one iteration if it's a contract role,
     # otherwise run if the score is less than the threshold value.

@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "host": "gdit.wd5.myworkdayjobs.com",
+    "updated": 1783768512,
+    "runs": 4,
+    "successes": 0
+  },
+  "ats": "workday",
+  "notes": [
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day",
+    "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed",
+    "DOM unchanged for 4 consecutive steps"
+  ],
+  "last_outcome": "LLM_UNAVAILABLE"
+}

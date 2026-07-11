@@ -3254,7 +3254,19 @@ class AgentLoop:
             "email/password form exists, do NOT sign in — continue if possible or "
             "stop; taking an SSO path is always the wrong move.\n"
         )
-        return base + resume_block + hints_block + login_block + screening_block + schema_block
+        # Self-learned per-portal playbook — the agent's OWN memory of this exact
+        # host from past runs (working selectors, flow, success signal, captcha /
+        # login flags). Empty for never-seen portals, so behaviour is unchanged
+        # until the agent has actually visited this host at least once.
+        portal_block = ""
+        try:
+            from . import portal_memory as _portal_memory
+            portal_block = _portal_memory.format_for_prompt(
+                str((self.job_ctx or {}).get("job_url") or "")
+            )
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] portal memory render failed (non-fatal): {exc}")
+        return base + resume_block + hints_block + portal_block + login_block + screening_block + schema_block
 
     # ──────────────────────────────────────────────────────────────────────
     # Lever 2: memory pre-fill — recall + apply known answers before the LLM

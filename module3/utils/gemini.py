@@ -40,6 +40,17 @@ class GroqResponse:
                 
         self.usage_metadata = UsageMetadata(prompt_tokens, completion_tokens)
 
+class OpenAIResponse:
+    def __init__(self, text: str, prompt_tokens: int = 0, completion_tokens: int = 0):
+        self.text = text
+        
+        class UsageMetadata:
+            def __init__(self, in_tokens: int, out_tokens: int):
+                self.prompt_token_count = in_tokens
+                self.candidates_token_count = out_tokens
+                
+        self.usage_metadata = UsageMetadata(prompt_tokens, completion_tokens)
+
 def _clean_response_text(text: str, is_json: bool) -> str:
     text = text.strip()
     if is_json:
@@ -235,6 +246,98 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
                 delay = min(30.0, delay * 2.0)
             else:
                 print(f"[GEMINI ERROR] Attempt {attempt+1} failed: {e}")
+                if attempt == max_retries - 1:
+                    raise e
+                await asyncio.sleep(1.0)
+    return None
+
+async def _generate_with_openai(api_key, contents, response_schema, temperature, max_retries, initial_delay, response_mime_type, system_instruction=None):
+    openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+    if isinstance(contents, list):
+        user_content = ""
+        for item in contents:
+            if isinstance(item, str):
+                user_content += item
+            elif hasattr(item, "text"):
+                user_content += item.text
+            else:
+                user_content += str(item)
+    else:
+        user_content = str(contents)
+
+    messages = []
+    if system_instruction:
+        messages.append({"role": "system", "content": system_instruction})
+    messages.append({"role": "user", "content": user_content})
+
+    payload = {
+        "model": openai_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": 1500,
+    }
+
+    if response_schema or response_mime_type == "application/json":
+        payload["response_format"] = {"type": "json_object"}
+        if response_schema:
+            if hasattr(response_schema, "model_json_schema"):
+                schema_desc = json.dumps(response_schema.model_json_schema(), indent=2)
+            else:
+                schema_desc = str(response_schema)
+            payload["messages"][0]["content"] += f"\n\nCRITICAL: You must return valid JSON that conforms strictly to this JSON Schema:\n{schema_desc}"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+
+    delay = initial_delay
+    for attempt in range(max_retries):
+        try:
+            start_time = time.time()
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=payload
+                )
+            
+            if resp.status_code == 429 or resp.status_code == 402:
+                raise RuntimeError(f"Rate limit or quota hit ({resp.status_code}): {resp.text}")
+
+            if resp.status_code != 200:
+                raise ValueError(f"OpenAI API error ({resp.status_code}): {resp.text}")
+
+            data = resp.json()
+            choices = data.get("choices", [])
+            if not choices:
+                raise ValueError(f"OpenAI returned empty choices: {data}")
+
+            text_content = choices[0]["message"]["content"]
+            is_json = bool(response_schema or response_mime_type == "application/json")
+            text_content = _clean_response_text(text_content, is_json)
+
+            usage = data.get("usage", {})
+            prompt_tokens = usage.get("prompt_tokens", 0)
+            completion_tokens = usage.get("completion_tokens", 0)
+
+            latency_ms = (time.time() - start_time) * 1000
+            cost_usd = (prompt_tokens / 1_000_000 * 0.150) + (completion_tokens / 1_000_000 * 0.600)
+
+            print(f"[OPENAI SUCCESS] Model: {openai_model} | Latency: {latency_ms:.0f}ms | Tokens (In/Out): {prompt_tokens}/{completion_tokens} | Est. Cost: ${cost_usd:.6f}")
+            return OpenAIResponse(text_content, prompt_tokens, completion_tokens)
+
+        except Exception as e:
+            err_str = str(e)
+            is_rate_limit = "429" in err_str or "Rate limit" in err_str or "RESOURCE_EXHAUSTED" in err_str or "402" in err_str
+
+            if is_rate_limit and attempt < max_retries - 1:
+                print(f"[OPENAI RETRY] Rate limit hit. Retrying in {delay:.2f}s... (Attempt {attempt+1}/{max_retries})")
+                await asyncio.sleep(delay)
+                delay = min(30.0, delay * 2.0)
+            else:
+                print(f"[OPENAI ERROR] Attempt {attempt+1} failed: {e}")
                 if attempt == max_retries - 1:
                     raise e
                 await asyncio.sleep(1.0)
@@ -476,13 +579,9 @@ async def generate_content_with_retry(
     if is_multimodal:
         model = os.getenv("GEMINI_VISION_MODEL", model)
 
-    # Provider priority: GEMINI FIRST. Operator topped up the Gemini account and
-    # wants it to be the primary path — Groq's daily-TPD ceiling (100k tokens)
-    # and Anthropic's per-credit billing made them poor primaries. Gemini is the
-    # vision-capable provider AND the operator's preferred LLM, so it always
-    # leads. Groq stays second as a cheap fast fallback when it has quota;
-    # Anthropic last so a paid credit isn't burned on a transient Gemini blip.
+    # Provider priority: OPENAI FIRST.
     candidates = [
+        ("OPENAI_API_KEY", os.getenv("OPENAI_API_KEY")),
         ("GEMINI_API_KEY", os.getenv("GEMINI_API_KEY")),
         ("GROQ_API_KEY", os.getenv("GROQ_API_KEY")),
         ("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY")),
@@ -503,8 +602,10 @@ async def generate_content_with_retry(
             providers.append(("groq", key))
         elif key.startswith("sk-or-"):
             providers.append(("openrouter", key))
-        elif key.startswith("sk-ant-") or key.startswith("sk-"):
+        elif key.startswith("sk-ant-"):
             providers.append(("anthropic", key))
+        elif key.startswith("sk-proj-") or key.startswith("sk-"):
+            providers.append(("openai", key))
         else:
             providers.append(("gemini", key))
 
@@ -519,7 +620,7 @@ async def generate_content_with_retry(
         providers = vision_providers
 
     if not providers:
-        raise ValueError("No AI API keys (GEMINI_API_KEY, ANTHROPIC_API_KEY, etc.) configured in environment variables.")
+        raise ValueError("No AI API keys (OPENAI_API_KEY, GEMINI_API_KEY, ANTHROPIC_API_KEY, etc.) configured in environment variables.")
 
     # Reorder providers to place the last known working API key at the front of the list
     if _working_provider_key:
@@ -541,7 +642,15 @@ async def generate_content_with_retry(
         current_max_retries = 2 if has_fallback else max_retries
         
         try:
-            if provider_type == "groq":
+            if provider_type == "openai":
+                res = await _generate_with_openai(
+                    api_key, contents, response_schema, temperature,
+                    current_max_retries, initial_delay, response_mime_type,
+                    system_instruction=system_instruction
+                )
+                _working_provider_key = api_key
+                return res
+            elif provider_type == "groq":
                 res = await _generate_with_groq(
                     api_key, contents, response_schema, temperature, 
                     current_max_retries, initial_delay, response_mime_type,

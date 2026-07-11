@@ -40,9 +40,13 @@ async def score_job_fit(
     combined_score = ats_score
 
     try:
-        _apply_threshold = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
-    except ValueError:
-        _apply_threshold = 75.0
+        from app.services.runtime_config import get as _rc_get
+        _apply_threshold = float(_rc_get("apply_score_threshold"))
+    except Exception:
+        try:
+            _apply_threshold = float(os.getenv("APPLY_SCORE_THRESHOLD", "75"))
+        except ValueError:
+            _apply_threshold = 75.0
     should_apply = combined_score >= _apply_threshold
 
     return MatchResult(
