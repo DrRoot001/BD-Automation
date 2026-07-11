@@ -2,6 +2,7 @@ import os
 import json
 import secrets
 import logging
+import weakref
 from typing import Optional
 from urllib.parse import urlparse, unquote
 import redis.asyncio as redis
@@ -10,6 +11,23 @@ from dotenv import load_dotenv
 from .stealth_config import get_stealth_config, build_stealth_init_script, StealthConfig
 
 load_dotenv()
+
+# Maps each live BrowserContext → the EXACT proxy dict it was created with
+# (post sticky-session, so the credentials pin the SAME upstream residential
+# IP). The captcha service reads this to solve a Cloudflare managed challenge
+# (AntiCloudflareTask) through the identical IP the browser uses — a
+# cf_clearance cookie is only valid for the IP+UA that solved it. Keyed weakly
+# so entries evict when the context is GC'd; concurrency-safe (per-context).
+_CONTEXT_PROXY: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def get_proxy_for_context(context) -> Optional[dict]:
+    """Return the proxy dict a context was created with, or None (no proxy /
+    unknown context). Never raises."""
+    try:
+        return _CONTEXT_PROXY.get(context)
+    except Exception:
+        return None
 logger = logging.getLogger(__name__)
 
 
@@ -422,6 +440,15 @@ class BrowserContextManager:
                 logger.info(f"[Browser] Restored redis cookies for {platform} (legacy list)")
             except Exception as exc:
                 logger.warning(f"[Browser] Could not restore legacy redis cookies for {platform}: {exc}")
+
+        # Remember the exact proxy this context uses so the captcha service can
+        # solve a Cloudflare managed challenge (AntiCloudflareTask) through the
+        # SAME residential IP (cf_clearance is bound to IP+UA).
+        if proxy_config:
+            try:
+                _CONTEXT_PROXY[context] = proxy_config
+            except Exception:
+                pass
 
         return context
 

@@ -317,6 +317,43 @@ def test_dom_hash_pierces_shadow_dom():
     assert "shadowRoot" in src and "deepAll" in src
 
 
+# ── Cloudflare managed-challenge solving (himalayas.app "Just a moment") ─────
+
+def test_captcha_service_has_cloudflare_challenge_path():
+    import inspect
+    from backend.app.browser_automation.captcha.service import CaptchaService
+    assert hasattr(CaptchaService, "solve_cloudflare_challenge")
+    assert hasattr(CaptchaService, "_is_cloudflare_interstitial")
+    # The turnstile dispatch must route an INTERSTITIAL to the CF challenge
+    # solver (proxy-based) BEFORE the proxyless widget path — a bare sitekey on
+    # an interstitial yields anti-captcha "site key is invalid".
+    src = inspect.getsource(CaptchaService._perform_single_solve)
+    assert "_is_cloudflare_interstitial" in src
+    assert "solve_cloudflare_challenge" in src
+
+
+def test_cloudflare_solver_uses_correct_anticaptcha_tasks():
+    import inspect
+    from backend.app.browser_automation.captcha.service import CaptchaService
+    src = inspect.getsource(CaptchaService.solve_cloudflare_challenge)
+    # Correct anti-captcha task types (NOT the non-existent 'AntiCloudflareTask').
+    assert "TurnstileTaskProxyless" in src
+    assert "TurnstileTask" in src
+    assert "AntiCloudflareTask" not in src
+    # CF-page params (cData/chlPageData) are required for a managed challenge.
+    assert "cData" in src and "chlPageData" in src
+    # The render hook captures those params (they only exist at render time).
+    assert "__cfParams" in CaptchaService._CF_TURNSTILE_HOOK_JS
+    assert "render" in CaptchaService._CF_TURNSTILE_HOOK_JS
+
+
+def test_context_manager_exposes_proxy_for_context():
+    from backend.app.browser_automation.browser.context_manager import get_proxy_for_context
+    # Unknown/None context → None, never raises (used by the CF solver).
+    assert get_proxy_for_context(None) is None
+    assert get_proxy_for_context(object()) is None
+
+
 if __name__ == "__main__":
     import subprocess
     raise SystemExit(subprocess.call([sys.executable, "-m", "pytest", __file__, "-q"]))
