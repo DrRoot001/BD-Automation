@@ -128,41 +128,41 @@ def test_recover_stuck_applications(mock_task_session, mock_publish):
     
     now = datetime.now(timezone.utc)
     
-    # QUEUED threshold is 60 min — 65 min should be caught
+    # QUEUED threshold is 15 min — 65 min should be caught
     stuck_app = Application(
         id=uuid.uuid4(),
         status="QUEUED",
         created_at=now - timedelta(minutes=65)
     )
     
-    # 30 min QUEUED is NOT stuck (below 60-min threshold)
+    # 10 min QUEUED is NOT stuck (below 15-min threshold)
     recent_app = Application(
         id=uuid.uuid4(),
         status="QUEUED",
-        created_at=now - timedelta(minutes=30)
+        created_at=now - timedelta(minutes=10)
     )
     
-    # APPLICATION_STARTED threshold is 30 min — 35 min should be caught
+    # APPLICATION_STARTED threshold is 70 min — 80 min should be caught
     stuck_started = Application(
         id=uuid.uuid4(),
         status="APPLICATION_STARTED",
-        created_at=now - timedelta(minutes=35)
+        created_at=now - timedelta(minutes=80)
     )
     
-    # 20 min APPLICATION_STARTED is NOT stuck (threshold is 30 min)
+    # 30 min APPLICATION_STARTED is NOT stuck (threshold is 70 min)
     recent_started = Application(
         id=uuid.uuid4(),
         status="APPLICATION_STARTED",
-        created_at=now - timedelta(minutes=20)
+        created_at=now - timedelta(minutes=30)
     )
     
     # First execute call: raw SQL JOIN query returns (id, status, last_updated) rows
     # The watchdog filters by threshold logic in Python
     raw_rows = [
         (stuck_app.id, "QUEUED", now - timedelta(minutes=65)),
-        (recent_app.id, "QUEUED", now - timedelta(minutes=30)),
-        (stuck_started.id, "APPLICATION_STARTED", now - timedelta(minutes=35)),
-        (recent_started.id, "APPLICATION_STARTED", now - timedelta(minutes=20)),
+        (recent_app.id, "QUEUED", now - timedelta(minutes=10)),
+        (stuck_started.id, "APPLICATION_STARTED", now - timedelta(minutes=80)),
+        (recent_started.id, "APPLICATION_STARTED", now - timedelta(minutes=30)),
     ]
     mock_raw_result = MagicMock()
     mock_raw_result.fetchall.return_value = raw_rows

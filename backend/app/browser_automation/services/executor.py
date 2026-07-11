@@ -342,7 +342,10 @@ def _candidate_doc_basename(candidate_profile: Optional[dict], kind: str) -> str
 
 
 async def _resolve_file_to_local_path(
-    url_or_path: str, suffix: str = ".pdf", display_name: Optional[str] = None
+    url_or_path: str,
+    suffix: str = ".pdf",
+    display_name: Optional[str] = None,
+    application_id: Optional[str] = None,
 ) -> Optional[str]:
     """Return a local filesystem path for the given URL or path.
 
@@ -376,7 +379,10 @@ async def _resolve_file_to_local_path(
 
         import hashlib
         import re
-        digest = hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
+        # Collision isolation happens via a per-application (or per-URL) cache
+        # SUBDIR (see cache_dir below), so the filename itself stays clean —
+        # exactly what the ATS shows the recruiter on the uploaded PDF.
+        cache_key = application_id or hashlib.sha256(url_or_path.encode("utf-8")).hexdigest()[:12]
 
         if display_name:
             # Caller wants a professional, candidate-named file (e.g.
@@ -402,8 +408,6 @@ async def _resolve_file_to_local_path(
             filename = cleaned_base + ext
             if not filename.lower().endswith(suffix.lower()):
                 filename += suffix
-            root, ext = os.path.splitext(filename)
-            filename = f"{root}-{digest}{ext}"
 
         # Project-local, stable cache dir (survives OS %TEMP% cleanup, which was
         # deleting already-downloaded resumes mid-run on Windows). The url-digest
@@ -412,7 +416,7 @@ async def _resolve_file_to_local_path(
         # the cache, and the file survives across retries + runs.
         _here = os.path.dirname(os.path.abspath(__file__))
         _backend_root = os.path.abspath(os.path.join(_here, "..", "..", "..", ".."))
-        cache_dir = os.path.join(_backend_root, "data", "upload_cache", digest)
+        cache_dir = os.path.join(_backend_root, "data", "upload_cache", cache_key)
         os.makedirs(cache_dir, exist_ok=True)
         temp_path = os.path.join(cache_dir, filename)
         with open(temp_path, "wb") as f:
@@ -574,6 +578,7 @@ class ApplicationExecutor:
             _temp_resume = await _resolve_file_to_local_path(
                 package.resume_url, ".pdf",
                 display_name=_candidate_doc_basename(package.candidate_profile, "Resume"),
+                application_id=package.application_id,
             )
             if not _temp_resume:
                 raise FileNotFoundError(f"Resume file could not be resolved: {package.resume_url}")
@@ -595,6 +600,7 @@ class ApplicationExecutor:
                 _temp_cover = await _resolve_file_to_local_path(
                     package.cover_letter_url, ".pdf",
                     display_name=_candidate_doc_basename(package.candidate_profile, "Cover_Letter"),
+                    application_id=package.application_id,
                 )
                 if not _temp_cover:
                     logger.warning(f"Cover letter could not be resolved ({package.cover_letter_url}); "
