@@ -155,9 +155,24 @@ class TalentAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.warning(f"[Talent] apply-href goto soft-failed ({exc}); continuing")
 
-        # BOTH flavours land first on talent's near-blank /redirect page, which
-        # guards the hop with a Google reCAPTCHA v2 checkbox. Solve it (free AI
-        # checkbox-pass + Whisper audio, paid provider as backup) before we go on.
+        # Fail fast on a CloudFront/AWS-WAF 403 'Request blocked' — talent.com
+        # hard-blocks the /redirect apply endpoint for automated browsers at the
+        # CDN layer (no captcha is ever presented). Waiting for / "solving" a
+        # reCAPTCHA here is futile (anti-captcha has nothing to solve), so raise
+        # an accurate terminal reason immediately instead of the misleading
+        # "reCAPTCHA not passed" after a 25s+paid-solve dead end.
+        await self.human_delay(1.0, 2.0)
+        if await self._is_waf_blocked(page):
+            raise RuntimeError(
+                "BLOCKED: talent.com returned a CloudFront/WAF 403 'Request blocked' "
+                "on its external-apply redirect — this is a CDN-level bot block, "
+                "NOT a captcha (nothing for anti-captcha to solve). Reach the "
+                f"employer's ATS another way. url={page.url!r}"
+            )
+
+        # BOTH flavours otherwise land on talent's near-blank /redirect page,
+        # which may guard the hop with a Google reCAPTCHA v2 checkbox. Solve it
+        # (free AI checkbox-pass + Whisper audio, paid provider as backup).
         await self._solve_interstitial_captcha(page)
 
         if kind == "external":
@@ -251,6 +266,32 @@ class TalentAdapter(BasePlatformAdapter):
         try:
             host = (urlparse(page.url or "").hostname or "").lower()
             return bool(host) and "talent.com" not in host
+        except Exception:
+            return False
+
+    @staticmethod
+    async def _is_waf_blocked(page: Page) -> bool:
+        """True when talent.com's CDN (AWS CloudFront) hard-blocks the request
+        with a 403 'Request blocked' page.
+
+        talent.com's external-apply /redirect endpoint is protected by a
+        CloudFront/AWS-WAF bot rule that returns this 403 to automated browsers
+        (verified 2026-07-12: identical block proxied AND direct, no captcha
+        widget ever rendered). This is NOT a solvable captcha — no anti-captcha
+        task type applies — so detecting it lets us fail fast with an honest
+        reason instead of burning 25s + paid solve attempts on a reCAPTCHA that
+        will never appear."""
+        try:
+            title = (await page.title()) or ""
+            if "ERROR" in title and "request could not be satisfied" in title.lower():
+                return True
+            body = await page.evaluate(
+                "() => (document.body && document.body.innerText || '').slice(0, 300)"
+            )
+            b = (body or "").lower()
+            return ("request blocked" in b
+                    or ("the request could not be satisfied" in b and "cloudfront" in b)
+                    or ("403 error" in b and "request blocked" in b))
         except Exception:
             return False
 
