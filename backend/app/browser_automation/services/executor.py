@@ -13,7 +13,13 @@ from dotenv import load_dotenv
 from playwright.async_api import BrowserContext, Page
 
 from ..adapters import BasePlatformAdapter, get_adapter
-from ..agent import AgentLoop, LoopResult, PageAgent, diagnose_failure, get_learned_fixes
+from ..agent import (
+    AgentLoop,
+    LoopResult,
+    PageAgent,
+    diagnose_failure,
+    get_learned_fixes,
+)
 from ..browser import BrowserContextManager
 from ..forms import detect_form, fill_form_with_llm
 from .models import ApplicationPackage, ApplicationResult
@@ -1012,6 +1018,10 @@ class ApplicationExecutor:
                             f"[M4] Raising AgentLoop step budget to {_loop_max_steps} "
                             f"for multi-step platform {_loop_plat_key!r}"
                         )
+                    # Portal memory is recalled INSIDE AgentLoop._build_system_prompt
+                    # (via portal_memory.format_for_prompt on the job/live host),
+                    # so no recall wiring is needed here — the executor only
+                    # RECORDS the outcome after the run (below).
                     agent_loop = AgentLoop(
                         candidate_profile=package.candidate_profile,
                         job_context=job_ctx_for_loop,
@@ -1039,15 +1049,22 @@ class ApplicationExecutor:
 
                     # Self-learned portal memory: record what worked (or the wall
                     # we hit) on THIS host so the next visit to it starts smarter.
-                    # Uses package.job_url (the same host the loop read its
-                    # playbook from) + effective_platform (inner ATS). Best-effort.
+                    # Prefer the LIVE landed host (page.url) — for passthrough
+                    # flows (talent.com→smartrecruiters) that is the real portal
+                    # the loop keyed its playbook on — falling back to job_url.
+                    # + effective_platform (inner ATS). Best-effort, never raises.
                     try:
                         from ..agent import portal_memory as _portal_memory
                         _pm_err = loop_result.error or ""
                         _pm_caps = [c for c in ("turnstile", "recaptcha", "hcaptcha", "datadome")
                                     if c in _pm_err.lower()] or None
+                        _pm_host = ""
+                        try:
+                            _pm_host = (urlparse(page.url or "").hostname or "")
+                        except Exception:
+                            _pm_host = ""
                         _portal_memory.record(
-                            package.job_url,
+                            _pm_host or package.job_url,
                             outcome=loop_result.status,
                             actions=loop_result.actions,
                             ats=(locals().get("effective_platform") or package.platform),

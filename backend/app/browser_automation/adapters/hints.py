@@ -765,31 +765,74 @@ _HINTS: Dict[str, Dict[str, Any]] = {
 
     "smartrecruiters": {
         "apply_selectors": [
-            "button:has-text('Interested')",
+            "a[href*='/oneclick-ui/']",
+            "a:has-text(\"I'm interested\")",
+            "button:has-text(\"I'm interested\")",
             "a:has-text('Interested')",
             "button:has-text('Apply')",
-            "a:has-text('Apply')",
         ],
         "submit_selectors": [
             "button[type='submit']",
             "button:has-text('Submit application')",
-            "button:has-text('Apply')",
+            "button:has-text('Submit')",
         ],
         "success_patterns": [
             "application submitted",
             "thank you for applying",
+            "thanks for applying",
             "your application was sent",
             "application received",
         ],
         "url_hint": (
-            "SmartRecruiters listings live on jobs.smartrecruiters.com/<company>/<id>; "
-            "the Apply/'I'm Interested' button opens a hosted multi-section form "
-            "(may route through app.smartrecruiters.com). No login wall for apply."
+            "SmartRecruiters postings live on jobs.smartrecruiters.com/<Company>/"
+            "<id>-<slug>. The \"I'm interested\" CTA is a plain <a> whose href is "
+            "the real application form: jobs.smartrecruiters.com/oneclick-ui/"
+            "company/<Company>/publication/<uuid>. No login wall for apply."
         ),
         "quirks": [
-            "Multi-section form (Personal / Experience / Questions) — sections expand inline; fill top-to-bottom and scroll before submit.",
-            "Resume upload parses and pre-fills fields; verify rather than overwrite.",
-            "Some postings redirect from jobs.smartrecruiters.com to app.smartrecruiters.com — judge the page by its final host.",
+            "The whole oneclick-ui form is built from <spl-*> web components with SHADOW DOM — raw CSS ids often resolve stale; prefer get_by_label/role selectors (they pierce shadow roots). Known stable inner ids: #first-name-input, #last-name-input, #email-input, #confirm-email-input, #linkedin-input, #website-input, #hiring-manager-message-input.",
+            "'Confirm your email' is REQUIRED and must exactly repeat the email address.",
+            "A REQUIRED privacy-consent checkbox (#noPolicy) sits above Submit — it must be checked or Submit silently fails.",
+            "NEVER click 'Apply With Indeed', 'Apply with LinkedIn' or any autofill/import widget — manual field fill only (same policy as SSO).",
+            "Resume goes into the spl-dropzone file input inside the 'Resume' section; the profile-image upload near the top is NOT the resume — skip it.",
+            "Which fields are required varies per company (City/Phone/Resume may or may not be) — trust the * markers on the live form.",
+            "Phone uses a country-code widget: pick the country first, then type the national number into the tel input.",
+            "Experience/Education 'Add' sections are optional — skip them unless marked required.",
+            "After Submit some companies ask extra screening questions or send an email-verification code — answer them / fetch the code from Gmail, do not stop at the first Submit click.",
+        ],
+    },
+
+    "jobvite": {
+        "apply_selectors": [
+            "a[href*='/apply']",
+            "a:has-text('Apply')",
+            "button:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            "button:has-text('Send Application')",
+            "button[type='submit']",
+            "button:has-text('Submit')",
+        ],
+        "success_patterns": [
+            "thank you for applying",
+            "application has been sent",
+            "application has been received",
+            "successfully submitted",
+        ],
+        "url_hint": (
+            "Jobvite postings live on jobs.jobvite.com/<company>/job/<id> (or a "
+            "company careers domain powered by Jobvite). The Apply CTA is a "
+            "plain <a> to the same URL + /apply — the application is a single "
+            "page at jobs.jobvite.com/<company>/job/<id>/apply. No login wall."
+        ),
+        "quirks": [
+            "Field ids/names are per-tenant random tokens (jv-field-XXXX / input-XXXX) — NEVER reuse ids across jobs; target fields by their visible label.",
+            "Resume section is usually REQUIRED: click the 'Select' button and use its file input (#file-input-0), or paste resume text into the 'Type or paste your Resume here' textarea as fallback.",
+            "NEVER click the 'LinkedIn' import button — manual field fill only (same policy as SSO).",
+            "Screening dropdowns (work authorization, sponsorship, etc.) are per-tenant native <select> elements and often REQUIRED — answer every one marked *.",
+            "The form embeds reCAPTCHA v2 (g-recaptcha-response) — solve it via the captcha service before the final submit.",
+            "A 'Next →' button steps through sections; the FINAL submit is the 'Send Application' button — keep advancing until it appears.",
+            "Cover letter attaches via the 'Add Cover Letter' button in Additional Files (optional).",
         ],
     },
 
@@ -875,16 +918,29 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "UNKNOWN PORTAL — there is no scripted playbook. Decide the flow at "
             "runtime PURELY from the screenshot + DOM you are shown each turn. Do "
             "not assume any specific layout.",
+            "THINK ONE STEP AHEAD before every action. Before you click, predict "
+            "what it should do: 'this Apply button should open the application "
+            "form', 'this Next button should reveal the next section', 'this "
+            "Submit should send the application and show a confirmation'. After "
+            "the action, CHECK the new screenshot against your prediction. If the "
+            "page did NOT change the way you expected (same page, an error banner "
+            "appeared, a modal opened, a new tab opened), do NOT blindly repeat "
+            "the same action — change approach: scroll to find the real control, "
+            "pick a different selector, dismiss the modal, or switch to the new "
+            "tab. Repeating an action that already did nothing is the #1 way runs "
+            "get stuck — never do the exact same thing twice in a row.",
             "STEP 1 — REACH THE FORM. If you see a job description with an "
-            "Apply/Apply Now/Easy Apply button and no form yet, click it once and "
-            "wait for the form (it may open inline, in a modal, or on a new page). "
-            "If a form is already visible, start filling immediately — do not hunt "
+            "Apply/Apply Now/Easy Apply/'I'm interested' button and no form yet, "
+            "click it once and wait for the form (it may open inline, in a modal, "
+            "on a new page, or in a NEW TAB — if a new tab opens, work in it). If "
+            "a form is already visible, start filling immediately — do not hunt "
             "for an Apply button.",
             "STEP 2 — LOGIN WALL (if any). If a sign-in/login form blocks the "
             "application, log in with the candidate's EMAIL + PASSWORD (see the "
             "LOGIN / SIGN-IN HANDLING section). Manual login ONLY — never click "
             "'Continue with Google' or any social/SSO button, and never leave the "
-            "site to an OAuth page.",
+            "site to an OAuth page. Ignore optional 'Apply with LinkedIn/Indeed' "
+            "autofill/import widgets — always fill the fields manually.",
             "STEP 3 — FILL EVERY REQUIRED FIELD intelligently from the identity "
             "card, resume, and pre-resolved answers: name, email, phone, location, "
             "work authorization, screening questions, EEO/demographics. Upload the "
@@ -892,13 +948,36 @@ _HINTS: Dict[str, Dict[str, Any]] = {
             "letter input if one exists). Use ONE fill_field per field; for "
             "dropdowns/comboboxes emit fill_field with the option text (never click "
             "through options).",
+            "FIELD-FINDING when a selector goes stale or nothing matches: prefer "
+            "the field's VISIBLE LABEL over brittle CSS ids. Emit fill_field with "
+            "the human field_label (e.g. 'First name', 'Email') and a best-guess "
+            "selector — the runner resolves by label/placeholder/aria automatically "
+            "and pierces open shadow DOM. Random-looking ids (react-aria..., "
+            "jv-field-..., spl-form-element_...) are auto-generated and CHANGE "
+            "between page loads — never rely on them; describe the field by label.",
+            "HARD FIELD TYPES: (a) custom dropdown / combobox / typeahead — emit "
+            "fill_field with the exact option TEXT; if a listbox pops open, the "
+            "runner selects the matching option. (b) date pickers — fill the ISO "
+            "value or the format the placeholder shows. (c) intl phone widgets — "
+            "the country is usually pre-set to the candidate's country; just type "
+            "the number. (d) required consent / policy / privacy CHECKBOXES — these "
+            "are easy to miss and silently block submit; scan for any unchecked "
+            "required checkbox near the submit button and check it. (e) 'confirm "
+            "email' fields — repeat the email exactly.",
             "STEP 4 — MULTI-STEP. If the form spans multiple steps/pages, complete "
             "the visible step, then use next_step (Next/Continue/Save & Continue) "
             "to advance, and repeat until the final Submit. Never treat a 'Next' "
             "button as the final submit.",
             "STEP 5 — SUBMIT once every required field is filled: click the final "
-            "Submit/Send application button. If an email verification code screen "
-            "appears after submit, it is fetched and filled for you — just wait.",
+            "Submit/Send application button. If the submit button is DISABLED, a "
+            "required field or checkbox is still incomplete — scroll the whole form "
+            "and fill what is missing rather than clicking a dead button. If an "
+            "email verification code screen appears after submit, it is fetched and "
+            "filled for you — just wait. If a CAPTCHA appears, emit solve_captcha.",
+            "BEFORE giving up: if you cannot find a field or control, SCROLL "
+            "(both directions) and re-read — most 'missing' fields are just below "
+            "the fold or inside a section that must be expanded first. Only stop "
+            "when you have genuinely exhausted the page.",
             "Only emit 'done' when you can SEE a real confirmation (e.g. "
             "'application submitted' / 'thank you for applying' / a confirmation "
             "page). Do NOT claim done on a job-description page, an error banner, "
@@ -927,8 +1006,10 @@ def get_platform_hints(platform: str) -> Dict[str, Any]:
     # Dots are stripped too so dotted hosts match compact keys (e.g.
     # jobs.source='thehiring.cafe' → 'thehiringcafe' → matches 'hiringcafe').
     normalized = key.replace("-", "").replace("_", "").replace(".", "")
-    # Most specific first so e.g. 'smartapply' wins before any looser match.
-    for k in _HINTS:
+    # Most specific (longest key) first so e.g. 'smartapply' wins over
+    # 'indeed' for 'smartapply.indeed.com'. Plain insertion order used to
+    # let whichever entry was defined earlier shadow the more specific one.
+    for k in sorted(_HINTS, key=len, reverse=True):
         if k == "generic":
             continue
         if k in key or k in normalized:

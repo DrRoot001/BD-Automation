@@ -170,6 +170,11 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
 
     from module3.utils.gemini import generate_content_with_retry
 
+    # Two-attempt LLM scoring with layered recovery. The model occasionally
+    # emits truncated/glitched JSON; rather than skip the job (my original
+    # branch raised here), fall through to the keyword-overlap heuristic so the
+    # application never dies on a beauty-metric. Uses response_schema for
+    # structured output and two complementary repairers.
     result = None
     for attempt in range(2):
         try:

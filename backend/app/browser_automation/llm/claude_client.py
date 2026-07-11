@@ -54,11 +54,18 @@ _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
 # Lever 4 (cost optimization): AgentLoop vision turns return a single-action
 # JSON object. Bare JSON is ~70 tokens, BUT reasoning-capable models (Gemini
 # 3.5 Flash, Opus 4.x) spend hidden "thinking" tokens that COUNT against
-# max_output_tokens. The old cap of 200 was being burned entirely on
-# reasoning, leaving the JSON truncated mid-string (`{"kind":"fill_field"}`).
-# 800 gives reasoning headroom without meaningful cost — only generated
-# tokens are billed, not the cap.
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
+# max_output_tokens. The old cap of 800 was still consumed almost entirely by
+# gemini-3.5-flash's dynamic thinking (thoughtsTokenCount is invisible in
+# candidatesTokenCount), leaving 13-34 token truncated fragments that failed
+# JSON parsing 3x in a row and aborted whole applications. Thinking is now
+# bounded via GEMINI_THINKING_BUDGET (below); 2048 gives the answer itself
+# room even if a small budget is re-enabled. Only generated tokens are billed.
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "2048"))
+# Thinking budget for Gemini hybrid-reasoning models (gemini-3.5-flash).
+# 0 disables thinking entirely for the browser agent's action calls — they
+# need a fast deterministic JSON action, not chain-of-thought. Raise (e.g.
+# 256) only together with a higher CLAUDE_MAX_TOKENS_VISION.
+_GEMINI_THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
@@ -585,6 +592,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str],
+        expect_json: bool = True,
     ) -> str:
         model = _GEMINI_VISION_MODEL if image_bytes else _GEMINI_TEXT_MODEL
         parts: list = []
@@ -602,7 +610,15 @@ class ClaudeClient:
             "generationConfig": {
                 "temperature": temperature,
                 "maxOutputTokens": _MAX_TOKENS_VISION if image_bytes else _MAX_TOKENS_TEXT,
-                "responseMimeType": "application/json" if not image_bytes else "text/plain",
+                # JSON mode also for vision turns: every generate_json caller
+                # (agent step, page classify, visual success) expects a JSON
+                # object back, and text/plain let thinking-model prose leak in.
+                # generate_text (prose) callers pass expect_json=False.
+                "responseMimeType": "application/json" if expect_json else "text/plain",
+                # gemini-3.5-flash is a hybrid thinking model whose thought
+                # tokens draw from maxOutputTokens. Unbounded (default) thinking
+                # consumed the whole budget and returned truncated fragments.
+                "thinkingConfig": {"thinkingBudget": _GEMINI_THINKING_BUDGET},
             },
         }
         if system:
@@ -624,7 +640,21 @@ class ClaudeClient:
                 raise LLMUnavailable(f"Gemini returned no candidates: {body}")
             content = cands[0].get("content") or {}
             parts_out = content.get("parts") or []
-            text = "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+            # Exclude thought parts — thinking-model reasoning must never be
+            # mistaken for the answer.
+            text = "".join(
+                p.get("text", "")
+                for p in parts_out
+                if isinstance(p, dict) and not p.get("thought")
+            ).strip()
+            finish = cands[0].get("finishReason")
+            if finish == "MAX_TOKENS":
+                logger.warning(
+                    "[Gemini] finishReason=MAX_TOKENS — answer truncated "
+                    "(thoughtsTokenCount=%s). Raise CLAUDE_MAX_TOKENS_VISION "
+                    "or lower GEMINI_THINKING_BUDGET.",
+                    (body.get("usageMetadata") or {}).get("thoughtsTokenCount"),
+                )
             usage = body.get("usageMetadata") or {}
             telemetry.record(
                 provider="gemini", model=model,
@@ -645,6 +675,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str] = None,
+        expect_json: bool = True,
     ) -> str:
         self._ensure()
         last_exc: Exception = LLMUnavailable("No keys to try")
@@ -678,7 +709,10 @@ class ClaudeClient:
                 elif provider == "gemini":
                     orig_key, self.api_key = self.api_key, key
                     try:
-                        return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system)
+                        return await self._call_gemini(
+                            prompt, image_bytes, temperature, timeout_s, system,
+                            expect_json=expect_json,
+                        )
                     finally:
                         self.api_key = orig_key
                 else:
@@ -817,7 +851,31 @@ class ClaudeClient:
                         candidates.append(text[start:i + 1])
                         start = -1
         # Prefer the last balanced object (the action usually comes last).
-        return candidates[-1] if candidates else None
+        if candidates:
+            return candidates[-1]
+        # Last resort: a MAX_TOKENS-truncated object has an opening `{` but no
+        # closing brace. Close any open string and append `}`s so a usable
+        # prefix (e.g. {"kind":"click","selector":"...) still parses instead
+        # of cascading into an LLM_UNAVAILABLE abort of the whole application.
+        if start >= 0:
+            fragment = text[start:].rstrip()
+            if in_str:
+                fragment += '"'
+            # Drop a dangling `"key":` (no value) or bare `,"key` fragment,
+            # then any trailing comma — e.g. `{"kind":"fill_field","selector":"#x","`
+            fragment = re.sub(r',?\s*"[^"]*"\s*:\s*$', "", fragment)
+            fragment = re.sub(r',\s*"[^"]*"?\s*$', "", fragment)
+            fragment = fragment.rstrip().rstrip(",")
+            repaired = fragment + "}" * (depth if depth > 0 else 1)
+            try:
+                json.loads(repaired)
+            except json.JSONDecodeError:
+                return None
+            logger.warning(
+                "[Claude] repaired truncated JSON object (head=%r)", repaired[:80]
+            )
+            return repaired
+        return None
 
     async def generate_text(
         self,
@@ -826,7 +884,9 @@ class ClaudeClient:
         temperature: float = 0.2,
         timeout_s: float = 30.0,
     ) -> str:
-        return await self._call(prompt, image_bytes, temperature, timeout_s)
+        return await self._call(
+            prompt, image_bytes, temperature, timeout_s, expect_json=False
+        )
 
 
 _singleton: Optional[ClaudeClient] = None
