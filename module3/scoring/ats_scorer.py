@@ -125,27 +125,38 @@ async def calculate_ats_score(resume: ResumeData, job: NormalizedJob) -> ATSScor
     )
 
     from module3.utils.gemini import generate_content_with_retry
-    
-    response = await generate_content_with_retry(
-        contents=combined_prompt,
-        system_instruction=_SYSTEM_PROMPT,
-        temperature=0.0,
-        response_mime_type="application/json"
-    )
 
-    try:
-        raw_text = response.text.strip()
-        if raw_text.startswith("```"):
-            lines = raw_text.splitlines()
-            start = 1
-            end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
-            raw_text = "\n".join(lines[start:end]).strip()
-        
-        result = _lenient_json_loads(raw_text)
-    except Exception as e:
-        print("Failed to parse LLM ATS evaluation response:", e)
-        print("Raw response:", response.text)
-        raise ValueError(f"Failed to calculate ATS score: {e}")
+    # One full re-generation on unparseable JSON: the model occasionally emits
+    # a glitched object (duplicated fragment after a closing quote — seen live
+    # 2026-07-10) that even lenient parsing can't repair. A single fresh call
+    # almost always succeeds; without it the whole job is skipped as llm_error.
+    result = None
+    last_err: Exception | None = None
+    for parse_attempt in range(2):
+        response = await generate_content_with_retry(
+            contents=combined_prompt,
+            system_instruction=_SYSTEM_PROMPT,
+            temperature=0.0,
+            response_mime_type="application/json"
+        )
+        try:
+            raw_text = response.text.strip()
+            if raw_text.startswith("```"):
+                lines = raw_text.splitlines()
+                start = 1
+                end = len(lines) - 1 if lines[-1].strip() == "```" else len(lines)
+                raw_text = "\n".join(lines[start:end]).strip()
+
+            result = _lenient_json_loads(raw_text)
+            break
+        except Exception as e:
+            last_err = e
+            print("Failed to parse LLM ATS evaluation response:", e)
+            print("Raw response:", response.text)
+            if parse_attempt == 0:
+                print("[ATS] retrying LLM evaluation once (malformed JSON)")
+    if result is None:
+        raise ValueError(f"Failed to calculate ATS score: {last_err}")
 
     breakdown = result.get("scoring_breakdown", {})
     

@@ -83,6 +83,27 @@ class LearnedFixes:
             return
         if not self._loaded:
             self._load()
+        if channel == "submit":
+            # Poison guard: an "Apply" CTA anchor is a form ENTRY POINT, not a
+            # submit control. The vision fallback once clicked talent.com's
+            # 'a:has-text("Apply Now")' while hunting for a submit button and
+            # it got learned here — every later run then "submitted" by
+            # re-opening the apply page. Reject anchors with apply-text and
+            # anything already learned as this platform's apply_button.
+            # (Real submit buttons that say "Apply" are <button>s, still fine.)
+            sel_l = selector.strip().lower()
+            if selector in self._data.get("apply_button", []):
+                logger.warning(
+                    f"[LearnedFixes] {self.ats}: refusing to learn submit selector "
+                    f"{selector!r} — it is already this platform's apply_button"
+                )
+                return
+            if sel_l.startswith("a") and "apply" in sel_l:
+                logger.warning(
+                    f"[LearnedFixes] {self.ats}: refusing to learn submit selector "
+                    f"{selector!r} — apply-text anchors are entry points, not submits"
+                )
+                return
         current = [s for s in self._data.get(channel, []) if s != selector]
         current.insert(0, selector)
         # Cap at 10 to avoid unbounded growth on a flaky site

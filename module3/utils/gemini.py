@@ -191,6 +191,19 @@ async def _generate_with_gemini(api_key, contents, response_schema, temperature,
     if system_instruction:
         config_args["system_instruction"] = system_instruction
 
+    # gemini-3.5-flash is a hybrid thinking model: unbounded (default) thinking
+    # draws from max_output_tokens and raises the odds of glitched/truncated
+    # JSON. Module 3 calls are structured extraction/scoring — bound thinking
+    # to GEMINI_THINKING_BUDGET (default 0 = off). try/except keeps older
+    # google-genai SDKs (no ThinkingConfig) working unchanged.
+    try:
+        _budget = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
+        config_args["thinking_config"] = types.ThinkingConfig(
+            thinking_budget=_budget, include_thoughts=False
+        )
+    except (AttributeError, TypeError, ValueError):
+        pass
+
     config = types.GenerateContentConfig(**config_args)
 
     delay = initial_delay

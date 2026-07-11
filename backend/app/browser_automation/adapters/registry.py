@@ -8,9 +8,11 @@ from .greenhouse import GreenhouseAdapter
 from .himalayas import HimalayasAdapter
 from .icims import ICIMSAdapter
 from .indeed import IndeedAdapter
+from .jobvite import JobviteAdapter
 from .lever import LeverAdapter
 from .linkedin import LinkedInEasyApplyAdapter
 from .remoterocketship import RemoteRocketshipAdapter
+from .smartrecruiters import SmartRecruitersAdapter
 from .talent import TalentAdapter
 from .workday import WorkdayAdapter
 from .ziprecruiter import ZipRecruiterAdapter
@@ -26,6 +28,8 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "remote100k": RemoteRocketshipAdapter,
     "icims": ICIMSAdapter,
     "indeed": IndeedAdapter,
+    "smartrecruiters": SmartRecruitersAdapter,
+    "jobvite": JobviteAdapter,
     "dice": DiceAdapter,
     "talent": TalentAdapter,
     "builtin": BuiltInAdapter,
@@ -66,6 +70,10 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
             cls = ICIMSAdapter
         elif "linkedin" in key:
             cls = LinkedInEasyApplyAdapter
+        elif "smartrecruiters" in normalized:
+            cls = SmartRecruitersAdapter
+        elif "jobvite" in normalized:
+            cls = JobviteAdapter
         elif "indeed.com" in key or "smartapply" in key:
             cls = IndeedAdapter
         elif "dice.com" in key or "dice" in normalized:

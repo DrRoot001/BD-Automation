@@ -50,7 +50,13 @@ _ATS_HOSTS: tuple[tuple[str, str, str], ...] = (
     ("apply.workable.com",        "/j/",           "generic"),
     ("workable.com",              "/j/",           "generic"),
     ("ats.rippling.com",          "",              "generic"),
-    ("jobs.smartrecruiters.com",  "",              "generic"),
+    # Dedicated adapters (2026-07-11): talent.com external applies frequently
+    # land on SmartRecruiters/Jobvite; routing them to their real slugs makes
+    # the passthrough delegate the dedicated adapter AND lets the AgentLoop's
+    # mid-run reclassify pull their hints when a new tab opens on these hosts.
+    ("jobs.smartrecruiters.com",  "",              "smartrecruiters"),
+    ("jobs.jobvite.com",          "/job/",         "jobvite"),
+    ("jobvite.com",               "/job/",         "jobvite"),
     ("pinpointhq.com",            "",              "generic"),
     ("linkedin.com",              "/jobs/view/",   "linkedin"),
 )
@@ -88,6 +94,12 @@ def _detect_ats_from_url(url: str) -> Optional[str]:
     path = (parsed.path or "").lower()
     if not host:
         return None
+    # SmartRecruiters' application form URL is
+    # jobs.smartrecruiters.com/oneclick-ui/company/<Co>/publication/<uuid> —
+    # its "/company/" segment would false-trip the non-application blocklist
+    # below, so allow it explicitly before stage 1.
+    if "jobs.smartrecruiters.com" in host and "/oneclick-ui/" in path:
+        return "smartrecruiters"
     # Stage 1 — kill obvious non-application URLs early.
     for bad in _NON_APPLICATION_PATH_PATTERNS:
         if bad in path:

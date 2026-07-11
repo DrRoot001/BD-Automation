@@ -13,7 +13,16 @@ from dotenv import load_dotenv
 from playwright.async_api import BrowserContext, Page
 
 from ..adapters import BasePlatformAdapter, get_adapter
-from ..agent import AgentLoop, LoopResult, PageAgent, diagnose_failure, get_learned_fixes
+from ..agent import (
+    AgentLoop,
+    LoopResult,
+    PageAgent,
+    diagnose_failure,
+    get_learned_fixes,
+    memory_key,
+    recall_portal_memory,
+    record_portal_outcome,
+)
 from ..browser import BrowserContextManager
 from ..forms import detect_form, fill_form_with_llm
 from .models import ApplicationPackage, ApplicationResult
@@ -975,6 +984,19 @@ class ApplicationExecutor:
                             f"[M4] Raising AgentLoop step budget to {_loop_max_steps} "
                             f"for multi-step platform {_loop_plat_key!r}"
                         )
+                    # Portal memory — recall what past runs on THIS portal
+                    # learned (winning flow, reliable submit control, last
+                    # failure to avoid) and inject it into the AI's prompt.
+                    # Keyed by effective platform slug, or host for unknown
+                    # portals. Cold start returns "" (no-op).
+                    _mem_key = memory_key(effective_platform, page.url)
+                    _mem_recall = ""
+                    try:
+                        _mem_recall = recall_portal_memory(_mem_key)
+                        if _mem_recall:
+                            logger.info(f"[M4] Injecting portal memory for {_mem_key!r}")
+                    except Exception as _mexc:
+                        logger.debug(f"[M4] portal-memory recall failed (non-fatal): {_mexc}")
                     agent_loop = AgentLoop(
                         candidate_profile=package.candidate_profile,
                         job_context=job_ctx_for_loop,
@@ -990,6 +1012,7 @@ class ApplicationExecutor:
                         # is injected only at password-field fill time and never
                         # reaches the LLM prompt/history.
                         candidate_credentials=_cand_creds,
+                        portal_memory=_mem_recall,
                     )
                     frame_loc = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None)
                     loop_result: LoopResult = await agent_loop.run(
@@ -998,6 +1021,24 @@ class ApplicationExecutor:
                     logger.info(
                         f"[M4] AgentLoop finished: status={loop_result.status} "
                         f"steps={loop_result.steps_taken} error={loop_result.error!r}"
+                    )
+
+                    # Self-learning: persist this run's outcome to portal memory
+                    # so the NEXT run on this portal recalls what worked / failed.
+                    # A submit that fired counts as a success for learning even
+                    # if confirmation was pending. Best-effort; never raises.
+                    _mem_ok = (
+                        loop_result.status == "SUBMITTED"
+                        or getattr(agent_loop, "_submit_fired", False)
+                    )
+                    record_portal_outcome(
+                        memory_key(effective_platform, page.url),
+                        host=(urlparse(page.url or "").hostname or None),
+                        ok=_mem_ok,
+                        status=loop_result.status,
+                        steps=loop_result.steps_taken,
+                        actions=loop_result.actions,
+                        error=loop_result.error,
                     )
 
                     # ── Captcha genuinely unsolvable → clean BLOCKED terminal ──
