@@ -63,15 +63,16 @@ async def check_imports() -> bool:
 async def check_gemini_key() -> bool:
     section("2. Claude API key")
     key = (
-        os.getenv("ANTHROPIC_API_KEY")
+        os.getenv("OPENAI_API_KEY")
+        or os.getenv("ANTHROPIC_API_KEY")
         or os.getenv("CLAUDE_API_KEY")
         or os.getenv("GEMINI_API_KEY")
         or ""
     ).strip()
     if not key:
-        print("  FAIL  No Anthropic/Claude key found (ANTHROPIC_API_KEY / GEMINI_API_KEY)")
+        print("  FAIL  No OpenAI/Anthropic/Claude key found (OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY)")
         return False
-    print(f"  OK    Claude API key set ({len(key)} chars, prefix={key[:7]!r})")
+    print(f"  OK    Claude/OpenAI API key set ({len(key)} chars, prefix={key[:7]!r})")
     return True
 
 

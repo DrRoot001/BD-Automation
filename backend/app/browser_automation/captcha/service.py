@@ -4,7 +4,7 @@ import logging
 import os
 import random
 import time
-from typing import Optional
+from typing import Any, Optional
 
 import httpx
 from dotenv import load_dotenv
@@ -133,6 +133,24 @@ class CaptchaService:
                 sol = body.get("solution", {})
                 return sol.get("gRecaptchaResponse") or sol.get("token") or sol.get("text") or ""
         raise TimeoutError("AntiCaptcha: timed out waiting for solution")
+
+    async def _anticaptcha_poll_solution(self, client: httpx.AsyncClient, task_id: int,
+                                         polls: int = 24, client_key: Optional[str] = None) -> dict:
+        """Like _anticaptcha_poll but returns the FULL solution object. Needed for
+        AntiCloudflareTask, whose result carries a cf_clearance COOKIE (+ the
+        userAgent it must be paired with), not a single token string."""
+        for _ in range(polls):
+            await asyncio.sleep(5)
+            r = await client.post(
+                "https://api.anti-captcha.com/getTaskResult",
+                json={"clientKey": client_key or self.api_key, "taskId": task_id},
+            )
+            body = r.json()
+            if body.get("errorId") != 0:
+                raise RuntimeError(f"AntiCaptcha error: {body.get('errorDescription')}")
+            if body.get("status") == "ready":
+                return body.get("solution", {}) or {}
+        raise TimeoutError("AntiCaptcha: timed out waiting for Cloudflare solution")
 
     def _resolve_anticaptcha_key(self) -> str:
         """Return the AntiCaptcha key regardless of the configured provider.
@@ -605,6 +623,313 @@ class CaptchaService:
             except Exception:
                 pass
 
+    async def _is_cloudflare_interstitial(self, page: Page) -> bool:
+        """True when the page is a Cloudflare full-page bot-check interstitial
+        (managed challenge), as opposed to a standalone Turnstile widget on a
+        real application form. Detected by title / challenge containers / the
+        'security verification' body text / a challenges.cloudflare.com script
+        on an otherwise near-empty page."""
+        try:
+            title = (await page.title() or "").lower()
+        except Exception:
+            title = ""
+        if "just a moment" in title or "attention required" in title or "access denied" in title:
+            return True
+        try:
+            return bool(await page.evaluate(r'''() => {
+                if (document.querySelector('#challenge-running, #challenge-stage, #cf-challenge-running, #trk_jschal_js, #cf-please-wait')) return true;
+                const t = ((document.body && document.body.innerText) || '').toLowerCase();
+                if (t.includes('performing security verification')
+                    || t.includes('verify you are human')
+                    || t.includes('checking your browser')
+                    || t.includes('needs to review the security of your connection')) return true;
+                // A Cloudflare Turnstile challenge script on an otherwise
+                // content-less page is an interstitial, not a form widget.
+                const cf = !!document.querySelector('script[src*="challenges.cloudflare.com"]');
+                const bodyLen = (document.body && document.body.innerText || '').length;
+                return cf && bodyLen < 800;
+            }'''))
+        except Exception:
+            return False
+
+    # Injected BEFORE the challenge renders: hooks window.turnstile.render so we
+    # capture the Cloudflare-specific params (sitekey/action/cData/chlPageData)
+    # and the success callback. Anti-Captcha needs cData+chlPageData to solve a
+    # Cloudflare CHALLENGE-PAGE Turnstile (a bare sitekey → "site key invalid"),
+    # and the token must be handed to the widget's own callback so Cloudflare
+    # issues cf_clearance and navigates.
+    _CF_TURNSTILE_HOOK_JS = r"""() => {
+        if (window.__cfHookInstalled) return;
+        window.__cfHookInstalled = true;
+        window.__cfParams = null;
+        window.__cfCallback = null;
+        const wrap = (ts) => {
+            try {
+                if (!ts || ts.__hooked) return ts;
+                ts.__hooked = true;
+                const orig = ts.render;
+                ts.render = function(container, opts) {
+                    try {
+                        window.__cfParams = {
+                            sitekey: (opts && opts.sitekey) || '',
+                            action: (opts && opts.action) || '',
+                            cData: (opts && opts.cData) || '',
+                            chlPageData: (opts && (opts.chlPageData || opts.pagedata)) || '',
+                        };
+                        window.__cfCallback = (opts && opts.callback) || null;
+                    } catch (e) {}
+                    return orig.apply(this, arguments);
+                };
+            } catch (e) {}
+            return ts;
+        };
+        // defineProperty SETTER TRAP: catch the exact moment Cloudflare's
+        // api.js assigns window.turnstile (a poll races the onload callback and
+        // loses). Wrap whatever is already there too.
+        let _ts = window.turnstile;
+        if (_ts) wrap(_ts);
+        try {
+            Object.defineProperty(window, 'turnstile', {
+                configurable: true,
+                get() { return _ts; },
+                set(v) { _ts = wrap(v); },
+            });
+        } catch (e) {}
+        // Belt-and-suspenders poll for cache-loaded cases.
+        let n = 0;
+        const iv = setInterval(() => { if (window.turnstile) wrap(window.turnstile); if (++n > 160) clearInterval(iv); }, 40);
+    }"""
+
+    async def solve_cloudflare_challenge(self, page: Page) -> CaptchaSolution:
+        """Solve a Cloudflare MANAGED-CHALLENGE interstitial ("Just a moment…").
+
+        A CF challenge page renders a Turnstile widget whose params (cData /
+        chlPageData / action) are REQUIRED by Anti-Captcha's TurnstileTask — a
+        bare sitekey yields "site key is invalid" (the failure we saw live). We:
+          1. install a turnstile.render hook, reload so it fires, and capture
+             {sitekey, action, cData, chlPageData} + the widget's callback;
+          2. solve via TurnstileTaskProxyless, and if that is rejected, retry as
+             the PROXIED TurnstileTask through the SAME residential IP the
+             browser uses (get_proxy_for_context) with a matching userAgent;
+          3. hand the returned token to the widget's callback (and the hidden
+             cf-turnstile-response input) so Cloudflare completes and navigates.
+
+        Returns success only when the page actually leaves the challenge.
+        """
+        start = time.monotonic()
+        ac_key = self._resolve_anticaptcha_key()
+        if not ac_key:
+            return CaptchaSolution(
+                captcha_type="turnstile", success=False,
+                error="CAPTCHA_UNSUPPORTED: Cloudflare challenge needs an Anti-Captcha key (ANTI_CAPTCHA_API_KEY)",
+                solve_time_seconds=0, cost_usd=0)
+
+        # Resolve the browser's egress proxy + UA once.
+        try:
+            user_agent = await page.evaluate("() => navigator.userAgent")
+        except Exception:
+            user_agent = ""
+        proxy_config = None
+        try:
+            from ..browser.context_manager import get_proxy_for_context
+            proxy_config = get_proxy_for_context(page.context)
+        except Exception:
+            proxy_config = None
+
+        # Install the render hook; it re-arms on every navigation (document-start).
+        try:
+            await page.context.add_init_script(self._CF_TURNSTILE_HOOK_JS)
+        except Exception as exc:
+            logger.debug(f"[CAPTCHA] could not add turnstile hook (non-fatal): {exc}")
+        challenge_url = page.url
+
+        async def _capture_params():
+            """Reload + capture FRESH CF Turnstile params. They expire in seconds
+            (a stale cData/chlPageData → 'could not load widget'), so every solve
+            attempt re-captures. The widget renders in a cross-origin
+            challenges.cloudflare.com IFRAME, so scan ALL frames (Playwright's
+            init script runs in each) and return the capturing frame too."""
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=45_000)
+            except Exception:
+                pass
+            for _ in range(18):
+                await asyncio.sleep(1.0)
+                for fr in page.frames:
+                    try:
+                        p = await fr.evaluate("() => window.__cfParams")
+                    except Exception:
+                        p = None
+                    if p and p.get("sitekey"):
+                        return p, fr
+            return None, None
+
+        def _build_tasks(params: dict) -> list:
+            base = {"websiteURL": challenge_url, "websiteKey": params["sitekey"]}
+            if params.get("action"):
+                base["action"] = params["action"]
+            if params.get("cData"):
+                base["cData"] = params["cData"]
+            if params.get("chlPageData"):
+                base["chlPageData"] = params["chlPageData"]
+            tasks = [{**base, "type": "TurnstileTaskProxyless"}]
+            # Proxied variant: anti-captcha requires an IP (not hostname) and a
+            # <1s proxy. IPRoyal residential latency trips AC's 1s gate, so it is
+            # OFF by default (it would just waste ~50s failing). Enable
+            # CF_SOLVE_PROXIED_TASK=true only with a fast (datacenter/premium)
+            # proxy. The sticky-session token still pins the exit IP.
+            _use_proxied = os.getenv("CF_SOLVE_PROXIED_TASK", "false").strip().lower() in ("1", "true", "yes", "on")
+            if _use_proxied and proxy_config and proxy_config.get("server"):
+                from urllib.parse import urlparse as _up
+                import socket as _sock
+                pp = _up(proxy_config["server"])
+                sch = (pp.scheme or "http").lower()
+                try:
+                    pip = _sock.gethostbyname(pp.hostname or "")
+                except Exception:
+                    pip = pp.hostname or ""
+                pt = dict(base)
+                pt["type"] = "TurnstileTask"
+                pt["proxyType"] = "socks5" if sch.startswith("socks") else "http"
+                pt["proxyAddress"] = pip
+                pt["proxyPort"] = pp.port or (443 if sch == "https" else 80)
+                if user_agent:
+                    pt["userAgent"] = user_agent
+                if proxy_config.get("username"):
+                    pt["proxyLogin"] = proxy_config["username"]
+                if proxy_config.get("password"):
+                    pt["proxyPassword"] = proxy_config["password"]
+                tasks.append(pt)
+            return tasks
+
+        # A CF challenge's params are ephemeral, so a transient anti-captcha
+        # "could not load widget / try again" is retried with a FRESH capture.
+        _TRANSIENT = ("could not load", "try again", "unable to load", "please try")
+        try:
+            max_rounds = int(os.getenv("CF_SOLVE_ROUNDS", "3"))
+        except ValueError:
+            max_rounds = 3
+        token = ""
+        params_frame = None
+        last_err = ""
+        for rnd in range(1, max_rounds + 1):
+            params, params_frame = await _capture_params()
+            if not params or not params.get("sitekey"):
+                dom_key = await self._extract_turnstile_sitekey(page)
+                if not dom_key:
+                    last_err = "could not capture Turnstile params (no widget rendered)"
+                    logger.warning(f"[CAPTCHA] CF round {rnd}/{max_rounds}: {last_err}")
+                    continue
+                params = {"sitekey": dom_key, "action": "", "cData": "", "chlPageData": ""}
+            logger.info(
+                f"[CAPTCHA] CF round {rnd}/{max_rounds}: sitekey={params['sitekey']!r} "
+                f"cData={'y' if params.get('cData') else 'n'} chlPageData={'y' if params.get('chlPageData') else 'n'}"
+            )
+            round_transient = False
+            for task in _build_tasks(params):
+                try:
+                    async with httpx.AsyncClient(timeout=60) as client:
+                        tid = await self._anticaptcha_submit(client, task, client_key=ac_key)
+                        sol = await self._anticaptcha_poll_solution(client, tid, polls=24, client_key=ac_key)
+                    token = sol.get("token") or sol.get("gRecaptchaResponse") or ""
+                    if token:
+                        logger.info(f"[CAPTCHA] CF Turnstile token obtained via {task['type']}")
+                        break
+                except Exception as exc:
+                    last_err = str(exc)
+                    is_t = any(m in last_err.lower() for m in _TRANSIENT)
+                    round_transient = round_transient or is_t
+                    logger.warning(
+                        f"[CAPTCHA] {task['type']} failed ({'transient' if is_t else 'hard'}): {last_err[:160]}"
+                    )
+                    continue
+            if token:
+                break
+            if not round_transient:
+                break  # hard failure (bad sitekey, unsupported) — re-capture won't help
+
+        if not token:
+            return CaptchaSolution(
+                captcha_type="turnstile", success=False,
+                error=f"CAPTCHA_UNSUPPORTED: Cloudflare Turnstile unsolved ({last_err[:120]})",
+                solve_time_seconds=time.monotonic() - start, cost_usd=0)
+
+        # Hand the token to the widget callback (this is what makes Cloudflare
+        # accept it, set cf_clearance, and navigate) + fill the hidden input.
+        # Invoke in the SAME frame that rendered the widget, then every frame.
+        inject_js = (
+            "(tok) => { try { if (window.__cfCallback) window.__cfCallback(tok); } catch(e){} "
+            "try { document.querySelectorAll('[name=\"cf-turnstile-response\"]').forEach(el=>el.value=tok); } catch(e){} }"
+        )
+        _inject_frames = [params_frame] if params_frame else []
+        _inject_frames += [f for f in page.frames if f is not params_frame]
+        for fr in _inject_frames:
+            try:
+                await fr.evaluate(inject_js, token)
+            except Exception:
+                continue
+
+        # Wait for Cloudflare to clear the interstitial and navigate to the site.
+        cleared = False
+        for _ in range(20):
+            await asyncio.sleep(1.0)
+            try:
+                title = (await page.title()) or ""
+            except Exception:
+                title = ""
+            if title and "just a moment" not in title.lower():
+                cleared = True
+                break
+        if not cleared:
+            # Last resort: a reload sometimes finalizes the clearance cookie.
+            try:
+                await page.reload(wait_until="domcontentloaded", timeout=30_000)
+                await asyncio.sleep(3.0)
+                title = (await page.title()) or ""
+                cleared = "just a moment" not in title.lower()
+            except Exception:
+                pass
+
+        if cleared:
+            logger.info(f"[CAPTCHA] Cloudflare challenge CLEARED in {time.monotonic() - start:.1f}s")
+        else:
+            logger.warning("[CAPTCHA] Cloudflare token applied but interstitial did not clear")
+        return CaptchaSolution(
+            captcha_type="turnstile", token=token, success=cleared,
+            error=None if cleared else "cloudflare challenge token applied but page did not clear",
+            solve_time_seconds=time.monotonic() - start, cost_usd=0.003)
+
+    async def _apply_cf_cookies(self, page: Page, cookies: Any) -> bool:
+        """Set anti-captcha-returned Cloudflare cookies (cf_clearance etc.) on the
+        live context, scoped to the current host. Accepts either a {name: value}
+        dict or a list of cookie objects. Returns True if any cookie was set."""
+        if not cookies:
+            return False
+        from urllib.parse import urlparse as _up
+        host = (_up(page.url).hostname or "").lower()
+        if not host:
+            return False
+        url = f"https://{host}/"
+        to_add = []
+        try:
+            if isinstance(cookies, dict):
+                for name, value in cookies.items():
+                    if name and value is not None:
+                        to_add.append({"name": str(name), "value": str(value), "url": url})
+            elif isinstance(cookies, list):
+                for c in cookies:
+                    if isinstance(c, dict) and c.get("name"):
+                        entry = {"name": str(c["name"]), "value": str(c.get("value", "")), "url": url}
+                        to_add.append(entry)
+            if not to_add:
+                return False
+            await page.context.add_cookies(to_add)
+            logger.info(f"[CAPTCHA] applied {len(to_add)} Cloudflare cookie(s) to {host}")
+            return True
+        except Exception as exc:
+            logger.warning(f"[CAPTCHA] could not apply Cloudflare cookies: {exc}")
+            return False
+
     async def _extract_turnstile_sitekey(self, page: Page) -> Optional[str]:
         """Locate the Cloudflare Turnstile sitekey on the current page.
 
@@ -1000,13 +1325,28 @@ class CaptchaService:
             return solution
 
         elif captcha_type == "turnstile":
+            # CRITICAL ORDERING: a Cloudflare full-page MANAGED CHALLENGE
+            # ("Just a moment…") often DOES render a Turnstile widget with an
+            # extractable sitekey — but the proxyless TurnstileTaskProxyless
+            # CANNOT solve an interstitial-embedded widget (anti-captcha returns
+            # "site key is invalid"). So detect the interstitial FIRST and route
+            # to the proxy-based AntiCloudflareTask (cf_clearance cookie) even
+            # when a sitekey is present. Only a standalone widget on a real form
+            # (not an interstitial) takes the token path. This is the
+            # himalayas.app / bot-walled-host path the proxy + Anti-Captcha are FOR.
+            if await self._is_cloudflare_interstitial(page):
+                logger.info("[CAPTCHA] Cloudflare managed-challenge interstitial detected → AntiCloudflareTask (proxy)")
+                return await self.solve_cloudflare_challenge(page)
             sitekey = await self._extract_turnstile_sitekey(page)
-            if not sitekey:
-                logger.warning("[CAPTCHA] Turnstile sitekey not found")
-                return CaptchaSolution(captcha_type="turnstile", success=False,
-                                       solve_time_seconds=0, cost_usd=0)
-            action, cdata = await self._extract_turnstile_action(page)
-            return await self.solve_turnstile(page, sitekey, action=action, cdata=cdata)
+            if sitekey:
+                # Standalone Turnstile widget on a form → token solve.
+                action, cdata = await self._extract_turnstile_action(page)
+                return await self.solve_turnstile(page, sitekey, action=action, cdata=cdata)
+            # No sitekey and not obviously an interstitial — last resort: still
+            # try the Cloudflare challenge solver (it no-ops cleanly if there's
+            # no proxy / nothing to solve).
+            logger.info("[CAPTCHA] Turnstile has no sitekey → attempting Cloudflare managed-challenge solve")
+            return await self.solve_cloudflare_challenge(page)
 
         elif captcha_type == "image":
             return await self.solve_image_captcha(page, captcha_type)

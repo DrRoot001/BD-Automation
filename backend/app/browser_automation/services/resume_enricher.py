@@ -143,6 +143,29 @@ def _clean_city(city: str) -> str:
     return s
 
 
+# Role/title nouns that never appear in a real US city name. Tailored-resume
+# headers put the JOB TITLE next to the name ("CRM Specialist, MS Dynamics"),
+# and the City-ST regex happily matched "CRM Specialist, MS" as a Mississippi
+# city (seen live 2026-07-10 → location filled as "CRM Specialist, MS, USA").
+# Rejecting any candidate city containing one of these tokens is near-zero
+# false-negative: no US city is named after a job role.
+_ROLE_WORDS = frozenset({
+    "specialist", "engineer", "developer", "manager", "architect", "analyst",
+    "consultant", "director", "coordinator", "administrator", "designer",
+    "scientist", "technician", "recruiter", "accountant", "supervisor",
+    "president", "officer", "representative", "executive", "associate",
+    "intern", "lead", "senior", "junior", "principal", "staff", "head",
+    "dynamics", "salesforce", "crm", "erp", "devops", "fullstack", "frontend",
+    "backend", "software", "hardware", "marketing", "sales", "product",
+    "project", "program", "solutions", "solution", "resume", "curriculum",
+})
+
+
+def _looks_like_role(city: str) -> bool:
+    """True when a candidate 'city' is actually a job title / role fragment."""
+    return any(tok in _ROLE_WORDS for tok in re.split(r"[^a-z]+", city.lower()) if tok)
+
+
 def _extract_us_location(text: str) -> Optional[Tuple[str, str, str]]:
     """Find the candidate's US location. Returns (city, state_name, state_abbr).
 
@@ -174,6 +197,8 @@ def _scan_location(text: str) -> Optional[Tuple[str, str, str]]:
     )
     for m in abbr_pattern.finditer(text):
         city_raw = _clean_city(m.group(1))
+        if _looks_like_role(city_raw):
+            continue
         second = m.group(2)
         second_upper = second.upper()
         # 1a: real state code
@@ -196,6 +221,8 @@ def _scan_location(text: str) -> Optional[Tuple[str, str, str]]:
     )
     for m in name_pattern.finditer(text):
         city_raw = _clean_city(m.group(1))
+        if _looks_like_role(city_raw):
+            continue
         state_lower = m.group(2).lower()
         if state_lower in _STATE_NAME_TO_ABBR and len(city_raw) >= 2:
             abbr = _STATE_NAME_TO_ABBR[state_lower]
@@ -209,6 +236,8 @@ def _scan_location(text: str) -> Optional[Tuple[str, str, str]]:
     )
     for m in verbose_pattern.finditer(text):
         city_raw = _clean_city(m.group(1))
+        if _looks_like_role(city_raw):
+            continue
         mapped = _US_CITY_TO_STATE.get(city_raw.lower())
         if mapped and len(city_raw) >= 2:
             state_name, abbr = mapped

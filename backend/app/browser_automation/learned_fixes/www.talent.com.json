@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "ats": "www.talent.com",
+    "last_updated": 1783694606
+  },
+  "apply_button": [
+    "a:has-text(\"Apply Now\")"
+  ]
+}

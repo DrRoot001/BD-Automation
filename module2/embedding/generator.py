@@ -11,7 +11,8 @@ import os
 from typing import List
 
 try:
-    import google.generativeai as genai
+    from google import genai
+    from google.genai import types as genai_types
     GEMINI_AVAILABLE = True
 except Exception:
     GEMINI_AVAILABLE = False
@@ -43,19 +44,37 @@ def _pseudo_embedding(text: str, dim: int = EMBEDDING_DIM) -> List[float]:
 def generate_embedding(texts: List[str]) -> List[List[float]]:
     """Generate embeddings for a list of texts.
 
-    Tries Gemini first if GEMINI_API_KEY is set.
     Tries OpenAI if environment variable `OPENAI_API_KEY` is set and package available.
+    Tries Gemini if GEMINI_API_KEY is set.
     Otherwise uses deterministic pseudo embeddings.
     """
+    if OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
+        # Use OpenAI embeddings API (text-embedding-3-small or similar)
+        try:
+            model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
+            if hasattr(openai, "OpenAI"):
+                # Bound the call: the OpenAI SDK defaults to a 10-minute timeout
+                # with retries, which (when invoked from a request handler) can
+                # stall the pipeline. Fail fast to the pseudo-embedding fallback.
+                client = openai.OpenAI(timeout=20.0, max_retries=1)
+                resp = client.embeddings.create(model=model, input=texts)
+                return [r.embedding for r in resp.data]
+            else:
+                resp = openai.Embedding.create(model=model, input=texts)
+                return [r["embedding"] for r in resp["data"]]
+        except Exception:
+            # Fallback to next methods
+            pass
+
     if GEMINI_AVAILABLE and os.getenv("GEMINI_API_KEY"):
         try:
-            genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-            result = genai.embed_content(
-                model="models/gemini-embedding-001",
-                content=texts,
-                task_type="retrieval_document"
+            client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+            response = client.models.embed_content(
+                model="gemini-embedding-001",
+                contents=texts,
+                config=genai_types.EmbedContentConfig(task_type="RETRIEVAL_DOCUMENT")
             )
-            embeddings = result.get("embedding", [])
+            embeddings = [emb.values for emb in response.embeddings]
             
             # Handle case where only a single embedding is returned (not wrapped in a list)
             if embeddings and not isinstance(embeddings[0], list):
@@ -74,24 +93,6 @@ def generate_embedding(texts: List[str]) -> List[List[float]]:
                 emb = [x / norm for x in emb]
                 padded_embeddings.append(emb)
             return padded_embeddings
-        except Exception:
-            # Fallback to next methods
-            pass
-
-    if OPENAI_AVAILABLE and os.getenv("OPENAI_API_KEY"):
-        # Use OpenAI embeddings API (text-embedding-3-small or similar)
-        try:
-            model = os.getenv("OPENAI_EMBEDDING_MODEL", "text-embedding-3-small")
-            if hasattr(openai, "OpenAI"):
-                # Bound the call: the OpenAI SDK defaults to a 10-minute timeout
-                # with retries, which (when invoked from a request handler) can
-                # stall the pipeline. Fail fast to the pseudo-embedding fallback.
-                client = openai.OpenAI(timeout=20.0, max_retries=1)
-                resp = client.embeddings.create(model=model, input=texts)
-                return [r.embedding for r in resp.data]
-            else:
-                resp = openai.Embedding.create(model=model, input=texts)
-                return [r["embedding"] for r in resp["data"]]
         except Exception:
             # Fallback to pseudo
             return [_pseudo_embedding(t) for t in texts]

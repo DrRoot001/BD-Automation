@@ -1,0 +1,18 @@
+{
+  "_meta": {
+    "host": "dice.com",
+    "updated": 1783767127,
+    "runs": 1,
+    "successes": 1
+  },
+  "ats": "www.dice.com",
+  "working_selectors": {
+    "click": [
+      "button:has-text('Submit')"
+    ]
+  },
+  "flow": [
+    "click"
+  ],
+  "last_outcome": "SUBMITTED"
+}

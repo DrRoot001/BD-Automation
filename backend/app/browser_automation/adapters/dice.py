@@ -151,6 +151,12 @@ class DiceAdapter(BasePlatformAdapter):
         self._iframe_mode: bool = False
         self._frame_locator = None
         self._frame = None
+        # External-apply passthrough (talent.py pattern): when the posting has
+        # no Easy Apply, we follow the employer redirect and delegate to the
+        # inner ATS adapter; the executor picks up hints via `_inner` and the
+        # expired-check via `_resolved_url`.
+        self._inner = None
+        self._resolved_url: Optional[str] = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Navigation (auth + Easy Apply entry)
@@ -190,10 +196,16 @@ class DiceAdapter(BasePlatformAdapter):
             # Distinguish "not Easy Apply" from "couldn't find any apply button"
             external = await self._has_external_apply(page)
             if external:
-                raise RuntimeError(
-                    "BLOCKED: Dice posting is external-apply only (no Easy Apply). "
-                    "This adapter only drives Dice Easy Apply postings."
+                # External apply — the posting routes to the employer's own
+                # site/ATS. Follow the redirect and delegate to the inner ATS
+                # adapter so the AI (with the right hints) drives that form,
+                # exactly like the talent.com passthrough.
+                logger.info(
+                    "[Dice] No Easy Apply — posting is external-apply; "
+                    "following the employer redirect"
                 )
+                await self._follow_external_apply(page)
+                return
             raise RuntimeError(
                 "BLOCKED: Easy Apply button not found. Posting may be expired, "
                 "session unauthenticated, or Dice DOM shifted."
@@ -405,9 +417,15 @@ class DiceAdapter(BasePlatformAdapter):
                 logger.warning(f"[Dice] work-authorization fix failed (non-fatal): {exc}")
 
     async def detect_application_type(self, page: Page) -> str:
+        if self._inner:
+            return await self._inner.detect_application_type(page)
         return "EASY_APPLY"
 
     async def refresh_frame(self, page: Page) -> None:
+        if self._inner:
+            await self._inner.refresh_frame(page)
+            self._mirror_inner_attrs()
+            return None
         # No persistent iframe to track.
         return None
 
@@ -637,6 +655,142 @@ class DiceAdapter(BasePlatformAdapter):
             return False
 
     # ──────────────────────────────────────────────────────────────────────
+    # External apply — employer-redirect passthrough (talent.py pattern)
+    # ──────────────────────────────────────────────────────────────────────
+
+    # Tracking/redirect hosts Dice routes external applies through before the
+    # employer's real site loads. Treated as "still in transit".
+    _REDIRECT_HOSTS = ("appcast.io", "click.appcast", "jsv3.recruitics.com")
+
+    def _is_off_dice(self, page: Page) -> bool:
+        from urllib.parse import urlparse
+        try:
+            host = (urlparse(page.url or "").hostname or "").lower()
+        except Exception:
+            return False
+        if not host or "dice.com" in host:
+            return False
+        return not any(t in host for t in self._REDIRECT_HOSTS)
+
+    async def _follow_external_apply(self, page: Page, timeout_s: float = 40.0) -> None:
+        """Follow the external Apply CTA to the employer's site, detect the
+        ATS from the final URL and delegate to the matching inner adapter
+        (generic when unknown) — same passthrough shape as talent.py, so the
+        executor picks up the inner platform's hints for the AgentLoop."""
+        from .registry import get_adapter
+        from .remoterocketship import _detect_ats_from_url
+
+        # Prefer navigating the anchor's href in THIS tab — Dice's external
+        # CTA usually window.open()s a new tab, which would strand the
+        # executor's page object on the job detail. Read the DOM property
+        # (el.href — always absolute), never the raw attribute: Dice renders
+        # relative hrefs and page.goto() rejects those as invalid URLs.
+        href: Optional[str] = None
+        _cur = (page.url or "").split("#", 1)[0]
+        for a in (
+            page.get_by_role("link", name=_EXTERNAL_APPLY_NAME_RE).first,
+            page.locator("a:has-text('Apply now'), a:has-text('Apply on company')").first,
+        ):
+            try:
+                if await a.count() == 0 or not await a.is_visible():
+                    continue
+                _h = (await a.evaluate("el => el.href || ''")) or ""
+                # http(s) only (javascript:/mailto: pseudo-links fall through
+                # to the click branch) and never a same-page '#' anchor.
+                if _h.startswith("http") and _h.split("#", 1)[0] != _cur:
+                    href = _h
+                    break
+            except Exception:
+                continue
+
+        if href:
+            try:
+                await page.goto(href, wait_until="domcontentloaded", timeout=45_000)
+            except Exception as exc:
+                logger.warning(f"[Dice] external href goto soft-failed ({exc}); settling")
+        else:
+            # Button CTA — click and adopt whichever tab the employer site
+            # opens in, then continue in the executor's original page.
+            popup = None
+            try:
+                async with page.context.expect_page(timeout=15_000) as new_page_info:
+                    btn = page.get_by_role("button", name=_EXTERNAL_APPLY_NAME_RE).first
+                    await btn.scroll_into_view_if_needed()
+                    await btn.click(timeout=_FIELD_TIMEOUT_MS)
+                popup = await new_page_info.value
+            except Exception:
+                pass  # no popup — the click may have navigated in-place
+            if popup is not None:
+                try:
+                    await popup.wait_for_load_state("domcontentloaded", timeout=20_000)
+                except Exception:
+                    pass
+                # window.open flows open about:blank first and set location
+                # from JS — poll for a real http(s) URL before adopting it.
+                target = ""
+                _pu_deadline = time.monotonic() + 10.0
+                while time.monotonic() < _pu_deadline:
+                    _pu = popup.url or ""
+                    if _pu.startswith("http"):
+                        target = _pu
+                        break
+                    await asyncio.sleep(0.5)
+                try:
+                    await popup.close()
+                except Exception:
+                    pass
+                if target:
+                    try:
+                        await page.goto(target, wait_until="domcontentloaded", timeout=45_000)
+                    except Exception as exc:
+                        logger.warning(f"[Dice] popup-url goto soft-failed ({exc})")
+                else:
+                    logger.warning("[Dice] external popup never left about:blank")
+
+        # Wait out the tracking-redirect chain (click.appcast.io → employer).
+        deadline = time.monotonic() + timeout_s
+        while time.monotonic() < deadline:
+            if self._is_off_dice(page):
+                break
+            await asyncio.sleep(0.8)
+
+        final_url = page.url or ""
+        if not self._is_off_dice(page):
+            raise RuntimeError(
+                "BLOCKED: Dice external apply did not reach the employer site "
+                f"(url={final_url!r})."
+            )
+
+        self._resolved_url = final_url
+        ats_key = _detect_ats_from_url(final_url)
+        if ats_key:
+            logger.info(f"[Dice] External apply → detected {ats_key!r} ATS at {final_url!r}; delegating")
+            self._inner = get_adapter(ats_key)
+            try:
+                await self._inner.navigate_to_application(page, final_url)
+            except Exception as exc:
+                logger.warning(
+                    f"[Dice] inner {ats_key!r} navigate soft-failed ({exc}); "
+                    "continuing on the already-loaded page"
+                )
+        else:
+            logger.info(
+                f"[Dice] External apply → no known ATS at {final_url!r}; "
+                "using generic adapter (AgentLoop drives the employer form)"
+            )
+            self._inner = get_adapter("generic")
+        self._mirror_inner_attrs()
+
+    def _mirror_inner_attrs(self) -> None:
+        """Copy the inner adapter's iframe/frame attributes up so the executor's
+        getattr() reads resolve against the delegated ATS."""
+        if not self._inner:
+            return
+        self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
+        self._frame_locator = getattr(self._inner, "_frame_locator", None)
+        self._frame = getattr(self._inner, "_frame", None)
+
+    # ──────────────────────────────────────────────────────────────────────
     # Submit / verify — fallback only (AgentLoop normally handles these).
     # ──────────────────────────────────────────────────────────────────────
 
@@ -650,12 +804,20 @@ class DiceAdapter(BasePlatformAdapter):
         pre_detected_form=None,
         candidate_id: Optional[str] = None,
     ) -> bool:
+        if self._inner:
+            return await self._inner.fill_application(
+                page, profile, resume_path, cover_letter_path,
+                screening_answers, pre_detected_form=pre_detected_form,
+                candidate_id=candidate_id,
+            )
         from ..forms import detect_form, fill_form
 
         form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
         return await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
 
     async def submit(self, page: Page) -> bool:
+        if self._inner:
+            return await self._inner.submit(page)
         # Priority 1 — role=button with a submit-y name.
         try:
             btn = page.get_by_role("button", name=_SUBMIT_NAME_RE).first
@@ -691,6 +853,8 @@ class DiceAdapter(BasePlatformAdapter):
         await self.human_delay(1.0, 2.0)
 
     async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
+        if self._inner:
+            return await self._inner.verify_success(page)
         # Primary — success URL pattern.
         try:
             if _SUCCESS_URL_RE.search(page.url or ""):

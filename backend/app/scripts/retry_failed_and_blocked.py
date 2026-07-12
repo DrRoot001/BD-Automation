@@ -80,7 +80,8 @@ async def main():
                 "cover_letter_url": app.cover_letter_url or "",
                 "screening_answers": screening_answers
             }
-            execute_application.apply_async(args=[package], queue="queue:application_execution")
+            from app.celery_app import EXECUTION_QUEUE
+            execute_application.apply_async(args=[package], queue=EXECUTION_QUEUE)
             print(f"Retried application {app.id} for job {job.title} ({job.source})")
 
 if __name__ == '__main__':

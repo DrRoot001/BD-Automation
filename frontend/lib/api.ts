@@ -454,6 +454,12 @@ export const api = {
   // ── Admin: live pipeline / queue operations view ──────────────────────────
   getOpsStats: () =>
     fetchJSON<OpsStats>('/dashboard/ops'),
+
+  // ── Admin: runtime settings (live across all workers, no restart) ─────────
+  getSettings: () =>
+    fetchJSON<SettingsResponse>('/settings'),
+  updateSettings: (updates: Record<string, string | number>) =>
+    putJSON<SettingsResponse>('/settings', updates),
 }
 
 export interface JobCategoryCount {
@@ -467,4 +473,19 @@ export interface OpsStats {
   applications_in_flight: number
   applications_today: number
   submitted_today: number
+}
+
+export interface RuntimeSetting {
+  value: string | number
+  type: 'number' | 'select'
+  label: string
+  help?: string
+  source: 'override' | 'default'
+  options?: string[]
+  min?: number
+  max?: number
+}
+
+export interface SettingsResponse {
+  settings: Record<string, RuntimeSetting>
 }

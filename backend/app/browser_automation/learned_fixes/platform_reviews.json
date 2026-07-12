@@ -441,6 +441,102 @@
       {
         "timestamp": "2026-07-10T06:40:54.283950",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-10T15:11:48.894616",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T15:13:28.520995",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-10T15:27:00.735660",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-10T15:28:23.934912",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-10T15:29:56.600303",
+        "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-10T18:00:57.867559",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T19:38:10.324950",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T19:39:18.697100",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T19:54:21.395296",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T19:55:19.960984",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T19:59:09.199886",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-10T20:00:09.232142",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-11T10:52:51.572217",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T10:56:39.416738",
+        "error": "AgentLoop aborted: no form visible"
+      },
+      {
+        "timestamp": "2026-07-11T11:00:08.721261",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per minute (TPM): Limit 30000, Used 21482, Requested 10450. Please try again in 3.864s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\". Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T11:02:46.953186",
+        "error": "AgentLoop aborted: Agent did not verify page within 20 steps"
+      },
+      {
+        "timestamp": "2026-07-11T11:05:10.026369",
+        "error": "AgentLoop aborted: Agent did not verify page within 20 steps"
+      },
+      {
+        "timestamp": "2026-07-11T11:06:48.631247",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 0 field(s): [])"
+      },
+      {
+        "timestamp": "2026-07-11T11:06:52.357111",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 0 field(s): [])"
+      },
+      {
+        "timestamp": "2026-07-11T11:09:50.662289",
+        "error": "AgentLoop aborted: no form visible after multiple scrolls and waits"
+      },
+      {
+        "timestamp": "2026-07-11T11:10:09.735617",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 0 field(s): [])"
+      },
+      {
+        "timestamp": "2026-07-11T11:12:03.588035",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 0 field(s): [])"
+      },
+      {
+        "timestamp": "2026-07-11T11:16:37.932547",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 91181, Requested 10543. Please try again in 24m49.535999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T11:44:58.240773",
+        "error": "AgentLoop aborted: no form visible after multiple scrolls and waits"
       }
     ]
   },
@@ -585,6 +681,10 @@
       {
         "timestamp": "2026-07-09T13:25:51.633285",
         "error": "Resume file could not be resolved: https://rdfnydteruigmajebxsm.supabase.co/storage/v1/object/public/updated_resume/a1a05db4-7877-420e-93be-b5fad7f59edd/79221fe6-b722-453d-b95b-2638e39c84e2/v25/Dexter_Watts_resume.pdf"
+      },
+      {
+        "timestamp": "2026-07-10T15:13:53.659668",
+        "error": "BLOCKED: Dice login email field not found"
       }
     ]
   },
@@ -625,6 +725,14 @@
       },
       {
         "timestamp": "2026-07-10T00:59:03.934621",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-10T15:29:28.068076",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-10T15:31:04.636375",
         "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
       }
     ]
@@ -885,6 +993,42 @@
       {
         "timestamp": "2026-07-10T06:31:27.907943",
         "error": "BLOCKED: vision-agent flagged page state: login popup modal"
+      },
+      {
+        "timestamp": "2026-07-11T10:49:46.005510",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per minute (TPM): Limit 30000, Used 26935, Requested 10060. Please try again in 13.99s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\". Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T10:51:35.653698",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T10:52:00.596139",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per minute (TPM): Limit 30000, Used 25647, Requested 10595. Please try again in 12.484s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T10:57:53.064122",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T10:59:59.541822",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T11:12:00.702683",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 500000, Used 498453, Requested 10521. Please try again in 25m50.707199999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T11:13:10.764990",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): OpenAI HTTP 429: {\n    \"error\": {\n        \"message\": \"Rate limit reached for gpt-4o in organization org-nvlgU4zV6lleDOByYsMxF7Cf on tokens per min (TPM): Limit 30000, Used 19844, Requested 10169. Please try again in 26ms. Visit https://platform.openai.com/account/rate-limits to learn more.\",\n        \"type\": \"tokens\",\n        \"param\": null,\n        \"code\": \"rate_limit_exceeded\"\n    }\n}\n. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-11T11:15:14.966293",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 0 field(s): [])"
+      },
+      {
+        "timestamp": "2026-07-11T11:18:47.102987",
+        "error": "AgentLoop aborted: Agent did not verify page within 20 steps"
       }
     ]
   },
@@ -922,6 +1066,14 @@
       {
         "timestamp": "2026-07-09T23:20:36.134185",
         "error": "BLOCKED: Talent.com apply link not found (neither native Quick Apply nor an external 'f-link' apply). Posting may be expired, region-gated, or the DOM shifted."
+      },
+      {
+        "timestamp": "2026-07-11T10:35:00.744966",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/jobs?l=Colonia&id=606156942807670413'"
+      },
+      {
+        "timestamp": "2026-07-11T10:41:15.190952",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=627627917177138440&pid=6c16c38ca32c&action'"
       }
     ]
   },
@@ -981,6 +1133,31 @@
       },
       {
         "timestamp": "2026-07-09T23:42:09.227848",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-10T18:05:48.176934",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
+      },
+      {
+        "timestamp": "2026-07-10T18:07:09.255186",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
+      },
+      {
+        "timestamp": "2026-07-11T00:13:42.073492",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
+      },
+      {
+        "timestamp": "2026-07-11T11:04:39.708110",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
+      }
+    ]
+  },
+  "hiring.cafe": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-10T19:52:05.951836",
         "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
       }
     ]

@@ -132,3 +132,4 @@ diag_*.py
 *_diag_*.png
 lever_*.png
 *.bak_before_*
+.env.bak.*

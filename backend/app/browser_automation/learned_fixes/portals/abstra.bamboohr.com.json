@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "host": "abstra.bamboohr.com",
+    "updated": 1783768011,
+    "runs": 2,
+    "successes": 0
+  },
+  "ats": "generic",
+  "notes": [
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day",
+    "no form visible"
+  ],
+  "last_outcome": "LLM_UNAVAILABLE"
+}

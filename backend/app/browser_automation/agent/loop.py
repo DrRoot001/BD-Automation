@@ -726,6 +726,29 @@ _DOM_SNAPSHOT_JS = """() => {
     const MAX_FIELDS = 250;
     const MAX_ERRORS = 10;
 
+    // Shadow-DOM piercing. Web-component ATSes (SmartRecruiters <spl-*>, some
+    // Jobvite/Workday widgets) put their REAL form fields inside OPEN shadow
+    // roots, where a plain document.querySelectorAll can never reach them — so
+    // the AI used to receive a snapshot with no fields at all and hallucinated
+    // selectors from the screenshot ("input[id='first-name']" when the real
+    // field was "#first-name-input" inside a shadow root). deepQueryAll walks
+    // every open shadow root so those fields ARE surfaced. (Playwright's own
+    // locator engine already pierces open shadow DOM, so any selector/label we
+    // emit for a shadow field still resolves at fill time.)
+    function deepQueryAll(selector, root, acc, depth) {
+        root = root || document;
+        acc = acc || [];
+        depth = depth || 0;
+        if (depth > 12) return acc;
+        try { root.querySelectorAll(selector).forEach(m => acc.push(m)); } catch (e) {}
+        let hosts;
+        try { hosts = root.querySelectorAll('*'); } catch (e) { hosts = []; }
+        for (const el of hosts) {
+            if (el.shadowRoot) deepQueryAll(selector, el.shadowRoot, acc, depth + 1);
+        }
+        return acc;
+    }
+
     // Pass 1 — collect validation-error messages so the AI can see what the
     // form rejected after a submit click. These often live BELOW the fold and
     // are the #1 reason a fill-and-submit run gets stuck looping on Submit.
@@ -824,7 +847,11 @@ _DOM_SNAPSHOT_JS = """() => {
         if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim().slice(0, 80);
         const id = el.id;
         if (id) {
-            const lbl = document.querySelector('label[for="' + id + '"]');
+            // getRootNode() so a shadow-scoped <label for=...> is found (a
+            // shadow root's labels are NOT reachable from document).
+            const scope = el.getRootNode ? el.getRootNode() : document;
+            const lbl = (scope.querySelector ? scope.querySelector('label[for="' + id + '"]') : null)
+                || document.querySelector('label[for="' + id + '"]');
             if (lbl) return lbl.textContent.trim().slice(0, 80);
         }
         let p = el.parentElement;
@@ -836,8 +863,8 @@ _DOM_SNAPSHOT_JS = """() => {
         return el.placeholder || el.name || el.id || '?';
     }
 
-    // Native inputs / selects / textareas
-    document.querySelectorAll('input, select, textarea').forEach(el => {
+    // Native inputs / selects / textareas (shadow-DOM piercing)
+    deepQueryAll('input, select, textarea').forEach(el => {
         if (out.length >= MAX_FIELDS) return;
         const type = (el.type || 'text').toLowerCase();
         if (skip_types.has(type)) return;
@@ -915,8 +942,8 @@ _DOM_SNAPSHOT_JS = """() => {
         out.push(entry);
     });
 
-    // Custom dropdowns (react-select combobox inputs)
-    document.querySelectorAll('[role="combobox"]').forEach(el => {
+    // Custom dropdowns (react-select combobox inputs; shadow-DOM piercing)
+    deepQueryAll('[role="combobox"]').forEach(el => {
         if (out.length >= MAX_FIELDS) return;
         if (inPhoneWidget(el)) return;
         if (inConsentBanner(el)) return;
@@ -972,7 +999,7 @@ _DOM_SNAPSHOT_JS = """() => {
     // <input type="checkbox"> is display:none, so it's excluded above, and
     // this is the AI's ONLY way to actually see and click the real answer
     // control).
-    document.querySelectorAll('button, input[type="submit"], input[type="button"]').forEach(el => {
+    deepQueryAll('button, input[type="submit"], input[type="button"]').forEach(el => {
         if (out.length >= MAX_FIELDS) return;
         if (inConsentBanner(el)) return;
         const rect = el.getBoundingClientRect();
@@ -1004,7 +1031,7 @@ _DOM_SNAPSHOT_JS = """() => {
     // is `<a id="apply_button">Apply for this Job</a>` (not a <button>!). Without
     // surfacing these the AI can never "see" the Apply link in its DOM view and
     // ends up wandering the page wondering why no form appears.
-    document.querySelectorAll('a').forEach(el => {
+    deepQueryAll('a').forEach(el => {
         if (out.length >= MAX_FIELDS) return;
         if (inConsentBanner(el)) return;
         const rect = el.getBoundingClientRect();
@@ -1013,11 +1040,17 @@ _DOM_SNAPSHOT_JS = """() => {
         if (!text) return;
         // Only include anchors whose text strongly suggests an application
         // action — avoid flooding the snapshot with every nav/footer link.
-        if (!/\b(apply|submit your|view application|start application)\b/i.test(text)) return;
+        // "interested" covers SmartRecruiters' "I'm interested" CTA whose href
+        // IS the application form.
+        if (!/\b(apply|submit your|view application|start application|interested)\b/i.test(text)) return;
         const sel = el.id ? '#' + el.id : 'a:has-text("' + text.slice(0, 40) + '")';
         if (seen.has(sel)) return;
         seen.add(sel);
-        out.push({ sel, type: 'apply_link', label: text.slice(0, 80) });
+        // Surface the destination so the AI can REASON about where a click
+        // leads before clicking (e.g. an href containing /oneclick-ui/ or
+        // /apply is the real application form). el.href is always absolute.
+        const dest = (el.getAttribute('href') || '').slice(0, 160);
+        out.push({ sel, type: 'apply_link', label: text.slice(0, 80), href: dest || undefined });
     });
 
     // ── Form Status checklist ────────────────────────────────────────────
@@ -1027,7 +1060,7 @@ _DOM_SNAPSHOT_JS = """() => {
     const formStatus = { totalRequired: 0, filled: 0, unfilled: [] };
     const seenRadioGroups = new Set();
     const seenCheckboxFieldsets = new Set();
-    document.querySelectorAll(
+    deepQueryAll(
         'input:not([type=hidden]):not([type=submit]):not([type=button]):not([type=image]):not([type=reset]), '
       + 'select, textarea, [role="combobox"]'
     ).forEach(el => {
@@ -1373,7 +1406,10 @@ async def _dom_snapshot(page: Page, frame: Optional[Frame] = None, is_iframe_mod
             req = " [required]" if f.get("required") else ""
             opts = f" options={f['options']}" if f.get("options") else ""
             note = f" {f['options_note']}" if f.get("options_note") else ""
-            lines.append(f"  {f['sel']} | {f['type']} | {f.get('label','?')}{req}{opts}{note}")
+            # Surface the anchor destination so the AI can reason about where a
+            # click leads before clicking (e.g. →/oneclick-ui/ = the real form).
+            dest = f" →{f['href']}" if f.get("href") else ""
+            lines.append(f"  {f['sel']} | {f['type']} | {f.get('label','?')}{req}{opts}{note}{dest}")
         return "\n".join(lines) or "(no interactive elements found)"
     except Exception as exc:
         logger.warning(f"[AgentLoop] dom_snapshot failed: {exc}")
@@ -1385,11 +1421,25 @@ async def _dom_hash(ctx) -> str:
     Filters out innerHTML which changes constantly due to loaders/ads."""
     try:
         data = await ctx.evaluate("""() => {
-            let vals = Array.from(document.querySelectorAll('input, select, textarea')).map(e => {
+            // Pierce open shadow roots so field values inside web components
+            // (SmartRecruiters <spl-*>) are part of the hash — otherwise
+            // filling a shadow field never changes the hash and the stall
+            // detector falsely reports STUCK mid-form.
+            function deepAll(selector) {
+                const acc = [];
+                (function walk(root, depth) {
+                    if (depth > 12) return;
+                    try { root.querySelectorAll(selector).forEach(m => acc.push(m)); } catch (e) {}
+                    let hosts; try { hosts = root.querySelectorAll('*'); } catch (e) { hosts = []; }
+                    for (const el of hosts) if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
+                })(document, 0);
+                return acc;
+            }
+            let vals = deepAll('input, select, textarea').map(e => {
                 if (e.type === 'checkbox' || e.type === 'radio') return e.checked;
                 return e.value;
             }).join('|');
-            let formText = Array.from(document.querySelectorAll('form, button, [role="button"], label, h1, h2')).map(e => (e.textContent || '').trim()).join('|');
+            let formText = deepAll('form, button, [role="button"], label, h1, h2').map(e => (e.textContent || '').trim()).join('|');
             let nodeCount = document.querySelectorAll('*').length;
             return vals + '|' + formText + '|' + nodeCount;
         }""")
@@ -1795,6 +1845,7 @@ async def _execute_action(
     resume_path: Optional[str],
     cover_letter_path: Optional[str],
     credentials: Optional[Dict[str, str]] = None,
+    profile: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """Execute one action. Returns True if Playwright succeeded."""
     ctx = frame or page
@@ -2127,7 +2178,7 @@ async def _execute_action(
             and "github" not in _lbl
         )
         if _is_linkedin_field:
-            _li_target = _linkedin_policy_value(self.profile)
+            _li_target = _linkedin_policy_value(profile)
             if value.strip() != _li_target and value.strip().upper() != _li_target.upper():
                 logger.info(
                     f"[AgentLoop] LinkedIn policy override: AI proposed {value[:50]!r} "
@@ -2140,7 +2191,7 @@ async def _execute_action(
             # format — "N/A" fails with "Please enter a valid URL" and kills
             # the submit (seen live on Ashby/ClickUp). Swap in a real URL when
             # the profile has one; otherwise leave the AI's value untouched.
-            _url = _professional_url_value(self.profile)
+            _url = _professional_url_value(profile)
             if _url:
                 logger.info(
                     f"[AgentLoop] URL-validated link field {action.field_label!r}: "
@@ -2845,6 +2896,11 @@ class AgentLoop:
         candidate_credentials: Optional[Dict[str, str]] = None,
     ):
         self.profile = candidate_profile
+        # Live host used to key the self-learned portal playbook (agent.
+        # portal_memory) in _build_system_prompt. Starts empty (falls back to
+        # job_url); set to the resolved host when navigation lands on a
+        # passthrough/new-tab portal so recall keys on the REAL portal.
+        self._portal_memory_host: str = ""
         # Portal login credentials (login_email / password / gmail) loaded from
         # the candidate's DB profile. Used to log the AI into portals the BD user
         # previously signed into (email/password saved in the frontend). The
@@ -2968,6 +3024,10 @@ class AgentLoop:
             self._platform = new_key
             self._hints = get_platform_hints(new_key)
             self.verify_gate_limit = self._hints.get("verify_gate_limit", self.verify_gate_limit)
+            # Key the self-learned portal playbook on the LIVE host now that a
+            # passthrough/new-tab resolved to a real portal (e.g. talent.com →
+            # jobs.smartrecruiters.com), so recall/record hit the right file.
+            self._portal_memory_host = url
             self._system_prompt = self._build_system_prompt()
             logger.info(
                 f"[AgentLoop] platform re-detected mid-run: {old} -> {new_key} ({url})"
@@ -3254,7 +3314,21 @@ class AgentLoop:
             "email/password form exists, do NOT sign in — continue if possible or "
             "stop; taking an SSO path is always the wrong move.\n"
         )
-        return base + resume_block + hints_block + login_block + screening_block + schema_block
+        # Self-learned per-portal playbook — the agent's OWN memory of this exact
+        # host from past runs (working selectors, flow, success signal, captcha /
+        # login flags). Empty for never-seen portals, so behaviour is unchanged
+        # until the agent has actually visited this host at least once. Prefer a
+        # live host (set once navigation resolves a passthrough/new-tab) over the
+        # original job_url so talent.com→smartrecruiters keys on the real portal.
+        portal_block = ""
+        try:
+            from . import portal_memory as _portal_memory
+            _pm_url = (getattr(self, "_portal_memory_host", "")
+                       or str((self.job_ctx or {}).get("job_url") or ""))
+            portal_block = _portal_memory.format_for_prompt(_pm_url)
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] portal memory render failed (non-fatal): {exc}")
+        return base + resume_block + hints_block + portal_block + login_block + screening_block + schema_block
 
     # ──────────────────────────────────────────────────────────────────────
     # Lever 2: memory pre-fill — recall + apply known answers before the LLM
@@ -5116,7 +5190,8 @@ class AgentLoop:
         _ats_hints = (
             ("ashbyhq", "ashby"), ("greenhouse", "greenhouse"), ("lever.co", "lever"),
             ("myworkday", "workday"), ("icims", "icims"),
-            ("smartrecruiters", "smartrecruiters"), ("dice", "dice"),
+            ("smartrecruiters", "smartrecruiters"), ("jobvite", "jobvite"),
+            ("dice", "dice"),
         )
         sender_hint = ""
         try:
@@ -7070,6 +7145,7 @@ class AgentLoop:
                 ok = await _execute_action(
                     action, page, frame, self.resume_path, self.cover_letter_path,
                     credentials=self._credentials,
+                    profile=self.profile,
                 )
                 action.ok = ok
 

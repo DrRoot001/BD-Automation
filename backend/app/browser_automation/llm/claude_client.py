@@ -54,11 +54,18 @@ _MAX_TOKENS_TEXT = int(os.getenv("CLAUDE_MAX_TOKENS_TEXT", "2400"))
 # Lever 4 (cost optimization): AgentLoop vision turns return a single-action
 # JSON object. Bare JSON is ~70 tokens, BUT reasoning-capable models (Gemini
 # 3.5 Flash, Opus 4.x) spend hidden "thinking" tokens that COUNT against
-# max_output_tokens. The old cap of 200 was being burned entirely on
-# reasoning, leaving the JSON truncated mid-string (`{"kind":"fill_field"}`).
-# 800 gives reasoning headroom without meaningful cost — only generated
-# tokens are billed, not the cap.
-_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "800"))
+# max_output_tokens. The old cap of 800 was still consumed almost entirely by
+# gemini-3.5-flash's dynamic thinking (thoughtsTokenCount is invisible in
+# candidatesTokenCount), leaving 13-34 token truncated fragments that failed
+# JSON parsing 3x in a row and aborted whole applications. Thinking is now
+# bounded via GEMINI_THINKING_BUDGET (below); 2048 gives the answer itself
+# room even if a small budget is re-enabled. Only generated tokens are billed.
+_MAX_TOKENS_VISION = int(os.getenv("CLAUDE_MAX_TOKENS_VISION", "2048"))
+# Thinking budget for Gemini hybrid-reasoning models (gemini-3.5-flash).
+# 0 disables thinking entirely for the browser agent's action calls — they
+# need a fast deterministic JSON action, not chain-of-thought. Raise (e.g.
+# 256) only together with a higher CLAUDE_MAX_TOKENS_VISION.
+_GEMINI_THINKING_BUDGET = int(os.getenv("GEMINI_THINKING_BUDGET", "0"))
 _MAX_TOKENS = int(os.getenv("CLAUDE_MAX_TOKENS", "2400"))  # back-compat
 _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
 # Native Gemini (Google AI Studio) — used when the operator drops in an AIza* key.
@@ -86,6 +93,7 @@ def _resolve_api_keys() -> list[str]:
     # exhausted mid-run and 429s, and OpenRouter's free tier caps prompt tokens.
     # An explicit LLM_KEY_PRIORITY env (comma-separated env-var names) overrides.
     default_order = [
+        "OPENAI_API_KEY",
         "GEMINI_API_KEY",
         "GEMINI_API_KEY_2",
         "ANTHROPIC_API_KEY",
@@ -96,7 +104,13 @@ def _resolve_api_keys() -> list[str]:
         "GROQ_API_KEY_3",
         "OPENROUTER_API_KEY",
     ]
-    order = [n.strip() for n in os.getenv("LLM_KEY_PRIORITY", "").split(",") if n.strip()] or default_order
+    try:
+        # Admin-panel primary-provider toggle → env-var priority list. Falls back
+        # to the explicit LLM_KEY_PRIORITY env, then default_order.
+        from app.services.runtime_config import llm_key_priority
+        order = llm_key_priority()
+    except Exception:
+        order = [n.strip() for n in os.getenv("LLM_KEY_PRIORITY", "").split(",") if n.strip()] or default_order
     candidates = [os.getenv(name, "") for name in order]
     seen: set[str] = set()
     result = []
@@ -119,6 +133,7 @@ def _detect_provider(key: str) -> str:
     - ``sk-ant-*`` → native Anthropic
     - ``sk-or-*``  → OpenRouter (routes to any model via OpenAI-compat API)
     - ``gsk_*``    → Groq (OpenAI-compatible chat-completions API)
+    - ``sk-proj-*`` or ``sk-*`` → native OpenAI (since Anthropic/OpenRouter checked first)
     - everything else (``AIza*``, ``AQ.Ab*``, etc.) → native Gemini
     """
     if key.startswith("sk-ant-"):
@@ -127,6 +142,8 @@ def _detect_provider(key: str) -> str:
         return "openrouter"
     if key.startswith("gsk_"):
         return "groq"
+    if key.startswith("sk-proj-") or key.startswith("sk-"):
+        return "openai"
     return "gemini"
 
 
@@ -146,7 +163,7 @@ class ClaudeClient:
 
         if not self._keys:
             logger.warning(
-                "[Claude] No API key found (ANTHROPIC_API_KEY / ANTHROPIC_API_KEY_2 / "
+                "[Claude] No API key found (OPENAI_API_KEY / ANTHROPIC_API_KEY / ANTHROPIC_API_KEY_2 / "
                 "OPENROUTER_API_KEY / GEMINI_API_KEY)"
             )
             self.api_key = ""
@@ -159,7 +176,11 @@ class ClaudeClient:
         self._anthropic = self._make_anthropic_client(self.api_key)
         # Show the model that will ACTUALLY be used for this provider — logging
         # the Anthropic default while running on Gemini was misleading.
-        _disp_model = _GEMINI_TEXT_MODEL if self.provider == "gemini" else self.model_name
+        _disp_model = (
+            _GEMINI_TEXT_MODEL if self.provider == "gemini"
+            else os.getenv("OPENAI_MODEL", "gpt-4o-mini") if self.provider == "openai"
+            else self.model_name
+        )
         logger.info(
             f"[LLM] provider={self.provider} model={_disp_model} "
             f"key_prefix={self.api_key[:7]!r} fallback_keys={len(self._keys) - 1}"
@@ -391,6 +412,86 @@ class ClaudeClient:
         except Exception as exc:
             raise LLMUnavailable(f"OpenRouter response parse failed: {exc}") from exc
 
+    async def _call_openai(
+        self,
+        prompt: str,
+        image_bytes: Optional[bytes],
+        temperature: float,
+        timeout_s: float,
+        system: Optional[str],
+    ) -> str:
+        openai_base = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        if image_bytes:
+            model = os.getenv("OPENAI_VISION_MODEL", "gpt-4o-mini")
+        else:
+            model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+
+        _max_vision = int(os.getenv("OPENAI_MAX_TOKENS_VISION", "800"))
+        _max_text = int(os.getenv("OPENAI_MAX_TOKENS_TEXT", "2400"))
+
+        if image_bytes:
+            user_content: Any = [
+                {"type": "text", "text": prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/jpeg;base64," + base64.b64encode(image_bytes).decode()
+                    },
+                },
+            ]
+        else:
+            user_content = prompt
+
+        messages: list = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": user_content})
+
+        payload = {
+            "model": model,
+            "max_tokens": _max_vision if image_bytes else _max_text,
+            "temperature": temperature,
+            "messages": messages,
+        }
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout_s) as client:
+                r = await client.post(
+                    f"{openai_base}/chat/completions",
+                    headers=headers,
+                    json=payload,
+                )
+            if r.status_code != 200:
+                raise LLMUnavailable(f"OpenAI HTTP {r.status_code}: {r.text[:400]}")
+            body = r.json()
+        except LLMUnavailable:
+            raise
+        except Exception as exc:
+            raise LLMUnavailable(f"OpenAI call failed: {exc}") from exc
+        try:
+            choices = body.get("choices") or []
+            msg = (choices[0] if choices else {}).get("message") or {}
+            content = msg.get("content")
+            if isinstance(content, list):
+                text = "".join(
+                    (c or {}).get("text", "") for c in content if isinstance(c, dict)
+                ).strip()
+            else:
+                text = str(content or "").strip()
+            usage = body.get("usage") or {}
+            telemetry.record(
+                provider="openai", model=model,
+                input_tokens=int(usage.get("prompt_tokens") or telemetry.estimate_from_text(prompt)),
+                output_tokens=int(usage.get("completion_tokens") or telemetry.estimate_from_text(text)),
+                has_image=bool(image_bytes),
+            )
+            return text
+        except Exception as exc:
+            raise LLMUnavailable(f"OpenAI response parse failed: {exc}") from exc
+
     async def _call_groq(
         self,
         prompt: str,
@@ -491,6 +592,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str],
+        expect_json: bool = True,
     ) -> str:
         model = _GEMINI_VISION_MODEL if image_bytes else _GEMINI_TEXT_MODEL
         parts: list = []
@@ -508,7 +610,15 @@ class ClaudeClient:
             "generationConfig": {
                 "temperature": temperature,
                 "maxOutputTokens": _MAX_TOKENS_VISION if image_bytes else _MAX_TOKENS_TEXT,
-                "responseMimeType": "application/json" if not image_bytes else "text/plain",
+                # JSON mode also for vision turns: every generate_json caller
+                # (agent step, page classify, visual success) expects a JSON
+                # object back, and text/plain let thinking-model prose leak in.
+                # generate_text (prose) callers pass expect_json=False.
+                "responseMimeType": "application/json" if expect_json else "text/plain",
+                # gemini-3.5-flash is a hybrid thinking model whose thought
+                # tokens draw from maxOutputTokens. Unbounded (default) thinking
+                # consumed the whole budget and returned truncated fragments.
+                "thinkingConfig": {"thinkingBudget": _GEMINI_THINKING_BUDGET},
             },
         }
         if system:
@@ -530,7 +640,21 @@ class ClaudeClient:
                 raise LLMUnavailable(f"Gemini returned no candidates: {body}")
             content = cands[0].get("content") or {}
             parts_out = content.get("parts") or []
-            text = "".join(p.get("text", "") for p in parts_out if isinstance(p, dict)).strip()
+            # Exclude thought parts — thinking-model reasoning must never be
+            # mistaken for the answer.
+            text = "".join(
+                p.get("text", "")
+                for p in parts_out
+                if isinstance(p, dict) and not p.get("thought")
+            ).strip()
+            finish = cands[0].get("finishReason")
+            if finish == "MAX_TOKENS":
+                logger.warning(
+                    "[Gemini] finishReason=MAX_TOKENS — answer truncated "
+                    "(thoughtsTokenCount=%s). Raise CLAUDE_MAX_TOKENS_VISION "
+                    "or lower GEMINI_THINKING_BUDGET.",
+                    (body.get("usageMetadata") or {}).get("thoughtsTokenCount"),
+                )
             usage = body.get("usageMetadata") or {}
             telemetry.record(
                 provider="gemini", model=model,
@@ -551,6 +675,7 @@ class ClaudeClient:
         temperature: float,
         timeout_s: float,
         system: Optional[str] = None,
+        expect_json: bool = True,
     ) -> str:
         self._ensure()
         last_exc: Exception = LLMUnavailable("No keys to try")
@@ -562,7 +687,13 @@ class ClaudeClient:
         for _idx, key in enumerate(keys_snapshot):
             provider = _detect_provider(key)
             try:
-                if provider == "openrouter":
+                if provider == "openai":
+                    orig_key, self.api_key = self.api_key, key
+                    try:
+                        return await self._call_openai(prompt, image_bytes, temperature, timeout_s, system)
+                    finally:
+                        self.api_key = orig_key
+                elif provider == "openrouter":
                     # Temporarily swap key for this call
                     orig_key, self.api_key = self.api_key, key
                     try:
@@ -578,7 +709,10 @@ class ClaudeClient:
                 elif provider == "gemini":
                     orig_key, self.api_key = self.api_key, key
                     try:
-                        return await self._call_gemini(prompt, image_bytes, temperature, timeout_s, system)
+                        return await self._call_gemini(
+                            prompt, image_bytes, temperature, timeout_s, system,
+                            expect_json=expect_json,
+                        )
                     finally:
                         self.api_key = orig_key
                 else:
@@ -717,7 +851,31 @@ class ClaudeClient:
                         candidates.append(text[start:i + 1])
                         start = -1
         # Prefer the last balanced object (the action usually comes last).
-        return candidates[-1] if candidates else None
+        if candidates:
+            return candidates[-1]
+        # Last resort: a MAX_TOKENS-truncated object has an opening `{` but no
+        # closing brace. Close any open string and append `}`s so a usable
+        # prefix (e.g. {"kind":"click","selector":"...) still parses instead
+        # of cascading into an LLM_UNAVAILABLE abort of the whole application.
+        if start >= 0:
+            fragment = text[start:].rstrip()
+            if in_str:
+                fragment += '"'
+            # Drop a dangling `"key":` (no value) or bare `,"key` fragment,
+            # then any trailing comma — e.g. `{"kind":"fill_field","selector":"#x","`
+            fragment = re.sub(r',?\s*"[^"]*"\s*:\s*$', "", fragment)
+            fragment = re.sub(r',\s*"[^"]*"?\s*$', "", fragment)
+            fragment = fragment.rstrip().rstrip(",")
+            repaired = fragment + "}" * (depth if depth > 0 else 1)
+            try:
+                json.loads(repaired)
+            except json.JSONDecodeError:
+                return None
+            logger.warning(
+                "[Claude] repaired truncated JSON object (head=%r)", repaired[:80]
+            )
+            return repaired
+        return None
 
     async def generate_text(
         self,
@@ -726,7 +884,9 @@ class ClaudeClient:
         temperature: float = 0.2,
         timeout_s: float = 30.0,
     ) -> str:
-        return await self._call(prompt, image_bytes, temperature, timeout_s)
+        return await self._call(
+            prompt, image_bytes, temperature, timeout_s, expect_json=False
+        )
 
 
 _singleton: Optional[ClaudeClient] = None

@@ -85,6 +85,11 @@ def _get_threshold() -> float:
     # a hardcoded 75 silently gated out most jobs when APPLY_SCORE_THRESHOLD
     # was unset.
     try:
+        from app.services.runtime_config import get as _rc_get
+        return float(_rc_get("apply_score_threshold"))
+    except Exception:
+        pass
+    try:
         return float(os.getenv("APPLY_SCORE_THRESHOLD", "45"))
     except ValueError:
         return 45.0

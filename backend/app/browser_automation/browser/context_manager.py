@@ -1,6 +1,8 @@
 import os
 import json
+import secrets
 import logging
+import weakref
 from typing import Optional
 from urllib.parse import urlparse, unquote
 import redis.asyncio as redis
@@ -9,6 +11,23 @@ from dotenv import load_dotenv
 from .stealth_config import get_stealth_config, build_stealth_init_script, StealthConfig
 
 load_dotenv()
+
+# Maps each live BrowserContext → the EXACT proxy dict it was created with
+# (post sticky-session, so the credentials pin the SAME upstream residential
+# IP). The captcha service reads this to solve a Cloudflare managed challenge
+# (AntiCloudflareTask) through the identical IP the browser uses — a
+# cf_clearance cookie is only valid for the IP+UA that solved it. Keyed weakly
+# so entries evict when the context is GC'd; concurrency-safe (per-context).
+_CONTEXT_PROXY: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def get_proxy_for_context(context) -> Optional[dict]:
+    """Return the proxy dict a context was created with, or None (no proxy /
+    unknown context). Never raises."""
+    try:
+        return _CONTEXT_PROXY.get(context)
+    except Exception:
+        return None
 logger = logging.getLogger(__name__)
 
 
@@ -59,6 +78,44 @@ def _parse_proxy_url(proxy_url: str) -> Optional[dict]:
         cfg["username"] = unquote(parsed.username)
     if parsed.password:
         cfg["password"] = unquote(parsed.password)
+    return cfg
+
+
+def _apply_sticky_session(proxy_config: Optional[dict]) -> Optional[dict]:
+    """Append a fresh random session token to the proxy password so every
+    request in THIS context shares ONE upstream residential IP, while the NEXT
+    context (i.e. the next apply run — get_context() is called once per apply)
+    gets a brand-new IP. Without this, a "randomize IP" residential plan hands
+    out a different IP per request and breaks multi-step ATS forms mid-submit.
+
+    IPRoyal carries session state in the PASSWORD field, not the username:
+        <password>_session-<id>_lifetime-<ttl>
+    (the existing `_country-us` suffix is another such param and is preserved).
+
+    Controlled by env:
+      PROXY_STICKY_SESSION   — "true"/"false". Default: auto-on when the proxy
+                               host looks like IPRoyal (geo.iproyal.com).
+      PROXY_SESSION_LIFETIME — IPRoyal lifetime suffix, e.g. "30m" (default),
+                               "1h". Hold long enough to cover one full apply.
+
+    No-op (returns the dict unchanged) when disabled or when there is no
+    password to attach the session to.
+    """
+    if not proxy_config or "password" not in proxy_config:
+        return proxy_config
+    server = proxy_config.get("server", "").lower()
+    default_on = "iproyal" in server
+    enabled = os.getenv("PROXY_STICKY_SESSION", str(default_on)).lower() == "true"
+    if not enabled:
+        return proxy_config
+    lifetime = (os.getenv("PROXY_SESSION_LIFETIME", "30m").strip() or "30m")
+    token = secrets.token_hex(8)
+    cfg = dict(proxy_config)
+    cfg["password"] = f"{cfg['password']}_session-{token}_lifetime-{lifetime}"
+    logger.info(
+        f"[Browser] Sticky proxy session: id={token} lifetime={lifetime} "
+        f"(one held IP for this apply run)"
+    )
     return cfg
 
 
@@ -223,20 +280,47 @@ class BrowserContextManager:
 
         # Proxy support — set PROXY_URL in .env for residential/rotating proxies.
         # Format: http://user:pass@host:port  or  socks5://user:pass@host:port
-        # Required for production use against sites with CloudFront/Akamai WAF that
-        # block IPs after repeated automated requests (monks.com, LinkedIn, etc.)
+        # Required for sites with CloudFront/Akamai/Cloudflare WAF that block
+        # datacenter IPs (himalayas, talent, linkedin, ...).
+        #
+        # SCOPING (important for throughput): a residential proxy adds ~3-4x
+        # latency PER REQUEST. Routing EVERY apply through it made the fast,
+        # non-walled hosts (Dice/Greenhouse/Lever/Ashby/SmartRecruiters) so slow
+        # that the 2 browser slots saturated and QUEUED jobs were reaped by the
+        # 15-min watchdog (observed live 2026-07-12). So the proxy is applied
+        # ONLY to hosts that actually need it:
+        #   PROXY_HOSTS      — comma-separated host substrings to proxy. If unset
+        #                      (and PROXY_URL is set) a built-in bot-walled set is
+        #                      used. Empty string ("") also means the default set.
+        #   PROXY_ALL_HOSTS  — "true" restores the old proxy-everything behavior.
         proxy_url = os.getenv("PROXY_URL", "").strip()
         proxy_config = None
         if proxy_url:
-            # Playwright IGNORES inline user:pass@ creds in the server field —
-            # they must be split into username/password keys. _parse_proxy_url
-            # does that and returns None if the URL is unusable.
-            proxy_config = _parse_proxy_url(proxy_url)
-            if proxy_config:
-                # Log host:port only — never the credentials.
-                logger.info(f"[Browser] Using proxy: {proxy_config['server']}")
+            _plat = (platform or "").lower()
+            _all = os.getenv("PROXY_ALL_HOSTS", "false").strip().lower() in ("1", "true", "yes", "on")
+            _hosts_env = os.getenv("PROXY_HOSTS", "").strip()
+            _default_hosts = "himalayas,talent,linkedin,glassdoor,ziprecruiter,indeed,monks,workday"
+            _proxy_hosts = [h.strip().lower() for h in (_hosts_env or _default_hosts).split(",") if h.strip()]
+            _needs_proxy = _all or any(h in _plat for h in _proxy_hosts)
+            if not _needs_proxy:
+                logger.info(
+                    f"[Browser] Proxy configured but SKIPPED for '{platform}' "
+                    f"(not a bot-walled host; keeps fast hosts fast). "
+                    f"Set PROXY_ALL_HOSTS=true or add to PROXY_HOSTS to force."
+                )
             else:
-                logger.warning("[Browser] PROXY_URL set but could not be parsed; proceeding without a proxy")
+                # Playwright IGNORES inline user:pass@ creds in the server field —
+                # they must be split into username/password keys. _parse_proxy_url
+                # does that and returns None if the URL is unusable.
+                proxy_config = _parse_proxy_url(proxy_url)
+                if proxy_config:
+                    # Hold ONE residential IP for this whole apply run; the next
+                    # apply (next get_context call) rotates to a fresh IP.
+                    proxy_config = _apply_sticky_session(proxy_config)
+                    # Log host:port only — never the credentials.
+                    logger.info(f"[Browser] Using proxy for '{platform}': {proxy_config['server']}")
+                else:
+                    logger.warning("[Browser] PROXY_URL set but could not be parsed; proceeding without a proxy")
 
         # CRITICAL: When using real Chrome (channel="chrome"), DO NOT override
         # the user_agent or sec-ch-ua headers. The browser sends a consistent
@@ -380,6 +464,15 @@ class BrowserContextManager:
                 logger.info(f"[Browser] Restored redis cookies for {platform} (legacy list)")
             except Exception as exc:
                 logger.warning(f"[Browser] Could not restore legacy redis cookies for {platform}: {exc}")
+
+        # Remember the exact proxy this context uses so the captcha service can
+        # solve a Cloudflare managed challenge (AntiCloudflareTask) through the
+        # SAME residential IP (cf_clearance is bound to IP+UA).
+        if proxy_config:
+            try:
+                _CONTEXT_PROXY[context] = proxy_config
+            except Exception:
+                pass
 
         return context
 
