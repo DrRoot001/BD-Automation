@@ -8,10 +8,13 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
 import { resolveFileUrl, formatJobUrl } from '@/components/utils'
 import { FAILURE_INFO } from '@/lib/failureReasons'
+import { applyManuallyClick } from '@/lib/extension'
+import { useToast } from '@/components/ui/Toast'
 import { ExternalLink, AlertCircle, ArrowLeft, FileText, Camera } from 'lucide-react'
 
 export default function ApplicationDetailPage() {
   const { id } = useParams()
+  const toast = useToast()
 
   const { data: application, isLoading: isAppLoading } = useQuery({
     queryKey: ['application', id],
@@ -168,6 +171,22 @@ export default function ApplicationDetailPage() {
                   href={formatJobUrl(job?.source_url)}
                   target="_blank"
                   rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.preventDefault()
+                    applyManuallyClick(
+                      {
+                        candidateId: application.candidate_id || '',
+                        jobUrl: formatJobUrl(job?.canonical_url) || formatJobUrl(job?.source_url) || '',
+                        applicationId: application.application_id,
+                        jobId: application.job_id,
+                        resumeId: application.resume_id ?? null,
+                        title: job?.title ?? null,
+                        company: job?.company ?? null,
+                      },
+                      formatJobUrl(job?.source_url) || '',
+                      toast,
+                    )
+                  }}
                   className="btn-danger !py-2 !px-4 !text-xs"
                 >
                   <ExternalLink className="w-4 h-4" />

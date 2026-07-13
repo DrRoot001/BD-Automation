@@ -133,3 +133,6 @@ diag_*.py
 lever_*.png
 *.bak_before_*
 .env.bak.*
+
+# Chrome extension local secrets (copy config.example.js -> config.js and fill in)
+bd-indeed-extension/config.js

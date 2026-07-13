@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>BD Indeed Auto-Apply</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>BD Indeed Auto-Apply</h1>
+    </div>
+    <button id="settingsBtn" class="icon-btn" title="Settings">&#9881;</button>
+  </header>
+
+  <!-- LOGIN VIEW -->
+  <section id="view-login" class="view" hidden>
+    <p class="muted">Sign in with your BD Automator backend account.</p>
+    <label>Email <input type="email" id="loginEmail" placeholder="you@company.com" /></label>
+    <label>Password <input type="password" id="loginPassword" /></label>
+    <button id="loginBtn" class="primary">Sign in</button>
+    <p id="loginError" class="error" hidden></p>
+  </section>
+
+  <!-- SETUP VIEW -->
+  <section id="view-setup" class="view" hidden>
+    <div class="row space-between">
+      <span class="muted" id="whoami"></span>
+      <button id="logoutBtn" class="link-btn">Sign out</button>
+    </div>
+
+    <label>Candidate
+      <select id="candidateSelect"><option value="">Loading candidates…</option></select>
+    </label>
+
+    <div class="jobs-source">
+      <div class="row space-between">
+        <strong>Jobs</strong>
+        <span>
+          <button id="fetchJobsBtn" class="small">Indeed (DB)</button>
+          <button id="fetchRescueBtn" class="small" title="Applications the backend agent marked BLOCKED/FAILED (captcha, login wall) — retry them here with you on standby">Rescue blocked</button>
+        </span>
+      </div>
+      <p class="muted src-line"><span id="dbJobsInfo">No jobs loaded yet.</span> <button id="clearDbBtn" class="link-btn clear-link" hidden>clear</button></p>
+      <p class="muted src-line"><span id="rescueInfo"></span> <button id="clearRescueBtn" class="link-btn clear-link" hidden>clear</button></p>
+      <label class="file-label">
+        CSV fallback (Indeed or company-site URLs)
+        <input type="file" id="csvInput" accept=".csv,.txt" />
+      </label>
+      <p class="muted src-line"><span id="csvInfo"></span> <button id="clearCsvBtn" class="link-btn clear-link" hidden>clear</button></p>
+
+      <label>Paste job URLs <span class="muted">(one per line — Indeed or company sites)</span>
+        <textarea id="pasteUrls" rows="3" placeholder="https://www.indeed.com/viewjob?jk=...&#10;https://company.com/careers/apply/123"></textarea>
+      </label>
+      <div class="row space-between">
+        <button id="addPastedBtn" class="small">Add pasted URLs</button>
+        <button id="clearPastedBtn" class="link-btn clear-link" hidden>clear</button>
+      </div>
+      <p class="muted" id="pasteInfo"></p>
+    </div>
+
+    <div class="row">
+      <label class="half">Max jobs <input type="number" id="maxJobs" min="1" max="100" value="10" /></label>
+      <label class="half checkbox"><input type="checkbox" id="autoSubmit" checked /> Auto-submit</label>
+    </div>
+
+    <div class="row">
+      <span class="half muted" style="align-self:center">Resume</span>
+      <div class="half seg" role="group" aria-label="Resume mode">
+        <button type="button" id="resumeTailored" class="seg-btn active">Tailored</button>
+        <button type="button" id="resumeBase" class="seg-btn">Base</button>
+      </div>
+    </div>
+
+    <button id="startBtn" class="primary" disabled>Start applying</button>
+    <p id="setupError" class="error" hidden></p>
+  </section>
+
+  <!-- RUN VIEW -->
+  <section id="view-run" class="view" hidden>
+    <div class="run-head">
+      <div>
+        <strong id="runCandidate"></strong>
+        <span id="runStatus" class="pill"></span>
+      </div>
+      <div class="run-counts" id="runCounts"></div>
+    </div>
+
+    <div id="attention" class="attention" hidden></div>
+
+    <ul id="jobList" class="job-list"></ul>
+
+    <div class="row controls">
+      <button id="pauseBtn" class="small">Pause</button>
+      <button id="resumeBtn" class="small" hidden>Resume</button>
+      <button id="markAppliedBtn" class="small" hidden title="Confirm the current application was submitted (use after verifying manually)">Mark applied</button>
+      <button id="skipBtn" class="small">Skip job</button>
+      <button id="stopBtn" class="small danger">Stop</button>
+      <button id="newRunBtn" class="small" hidden>New run</button>
+    </div>
+
+    <details class="logbox">
+      <summary>Activity log</summary>
+      <div id="logView"></div>
+    </details>
+  </section>
+
+  <!-- SETTINGS VIEW -->
+  <section id="view-settings" class="view" hidden>
+    <h2>Settings</h2>
+    <p class="muted">Backend URL, Gemini key/model and the Anthropic fallback are set in the code (config.js).</p>
+    <div class="row">
+      <label class="half">Desired salary <input type="text" id="setSalary" placeholder="85000" /></label>
+      <label class="half">Hours / week <input type="text" id="setHours" placeholder="40" /></label>
+    </div>
+    <label>Default location <span class="muted">(fallback when resume/profile has none — use "City, ST")</span>
+      <input type="text" id="setDefaultLocation" placeholder="United States" />
+    </label>
+    <div class="row">
+      <label class="half">Delay between jobs (s) <input type="number" id="setDelay" min="2" /></label>
+      <label class="half">Stall alert (min) <input type="number" id="setStall" min="2" /></label>
+    </div>
+    <button id="saveSettingsBtn" class="primary">Save settings</button>
+    <button id="backBtn" class="link-btn">Back</button>
+    <p id="settingsMsg" class="muted" hidden></p>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
