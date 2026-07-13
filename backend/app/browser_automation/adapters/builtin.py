@@ -26,7 +26,7 @@ from urllib.parse import urlparse
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
 from .base import BasePlatformAdapter
-from .session_utils import session_file_path
+from .session_utils import invalidate_session_file, session_file_path
 
 logger = logging.getLogger(__name__)
 
@@ -188,6 +188,20 @@ class BuiltInAdapter(BasePlatformAdapter):
                 logger.info(f"[BuiltIn] session already authenticated (url={page.url!r})")
                 return True
             await asyncio.sleep(1.0)
+
+        # Reaching here means the restored session did NOT authenticate us — we
+        # either landed on the login wall or the state stayed undecided (a live
+        # session returns True above). The cookies context_manager replayed are
+        # stale; wipe them (Redis blob + disk file) so the next run starts clean
+        # instead of re-replaying dead cookies into accounts.builtin.com, which
+        # 500s on stale OIDC state. On the wall path we re-login + re-save below.
+        try:
+            from ..browser.context_manager import clear_redis_session
+            await clear_redis_session(candidate_id, "builtin.com")
+        except Exception as exc:
+            logger.debug(f"[BuiltIn] redis session clear skipped: {exc}")
+        invalidate_session_file("builtin")
+
         if not on_wall:
             logger.warning(
                 f"[BuiltIn] login state undecided after 30s (url={page.url!r}) "

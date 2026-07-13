@@ -130,6 +130,37 @@ def _session_ttl_s() -> int:
     return max(1, days) * 86400
 
 
+async def clear_redis_session(candidate_id: str, platform: str) -> int:
+    """Delete a candidate's persisted Redis session blob(s) so a proven-stale
+    session isn't auto-restored on the next run (see get_context's restore).
+
+    Deletes the exact ``session:{candidate_id}:{platform}`` key plus any
+    host-variant keys for the same candidate — standard runs key on the bare
+    host (``builtin.com``), ad-hoc URL runs key on the full job URL, and both
+    must go or get_context re-restores a dead blob. Returns the number of keys
+    removed; never raises (session hygiene must not break a run).
+    """
+    try:
+        url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+        kwargs = {"ssl_cert_reqs": None} if url.startswith("rediss://") else {}
+        client = redis.from_url(url, **kwargs)
+        host = urlparse(platform if "//" in platform else f"//{platform}").hostname or platform
+        token = host.split(":")[0]
+        deleted = await client.delete(f"session:{candidate_id}:{platform}")
+        async for k in client.scan_iter(match=f"session:{candidate_id}:*{token}*", count=200):
+            deleted += await client.delete(k)
+        if deleted:
+            logger.warning(
+                f"[Browser] Cleared {deleted} stale session key(s) for "
+                f"{candidate_id} ({token}) — next run starts clean."
+            )
+        await client.aclose()
+        return deleted
+    except Exception as exc:
+        logger.debug(f"[Browser] clear_redis_session skipped: {exc}")
+        return 0
+
+
 class BrowserContextManager:
     def __init__(self):
         self.redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
