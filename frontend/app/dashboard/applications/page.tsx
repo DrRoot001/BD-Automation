@@ -12,6 +12,7 @@ import { formatJobUrl } from '@/components/utils'
 import { ApplicationDrawer } from '@/components/dashboard/ApplicationDrawer'
 import { useWebSocket } from '@/hooks/useWebSocket'
 import { useToast } from '@/components/ui/Toast'
+import { applyManuallyClick } from '@/lib/extension'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -196,7 +197,23 @@ export default function ApplicationsPage() {
                               href={formatJobUrl(app.job_url)}
                               target="_blank"
                               rel="noreferrer"
-                              onClick={(e) => e.stopPropagation()}
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                e.preventDefault()
+                                applyManuallyClick(
+                                  {
+                                    candidateId: app.candidate_id || '',
+                                    jobUrl: formatJobUrl(app.job_url) || '',
+                                    applicationId: app.application_id,
+                                    jobId: app.job_id,
+                                    resumeId: app.resume_id ?? null,
+                                    title: app.job_title ?? null,
+                                    company: app.company ?? null,
+                                  },
+                                  formatJobUrl(app.job_url) || '',
+                                  toast,
+                                )
+                              }}
                               className="inline-flex items-center gap-1 text-[10px] text-danger font-semibold hover:underline bg-danger/10 px-2 py-0.5 rounded border border-danger/20 shrink-0"
                               title="Apply manually to this job"
                             >

@@ -167,9 +167,11 @@ def create_app() -> FastAPI:
     from app.routers.dashboard import router as dashboard_router
     from app.routers.websocket import router as ws_router
     from app.routers.settings import router as settings_router
+    from app.routers.verification import router as verification_router
     app.include_router(dashboard_router)
     app.include_router(ws_router)
     app.include_router(settings_router)
+    app.include_router(verification_router)
 
     # ── Health endpoints ──────────────────────────────────────────────────────
     @app.get("/api/health", tags=["health"])

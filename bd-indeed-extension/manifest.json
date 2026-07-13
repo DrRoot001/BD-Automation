@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "BD Indeed Auto-Apply",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA5r14QHO0a+AV56dMlTLAgWcUNq/k4v6SCZqVGo/dxG2d645k0MO+RBpu1cEblBaZpQLM72Edt/J+1j6OysZm44nlN43+mhGCygwLl1CZobhWfE9FdH4ftgXb18aVlWBwYc+Mw/a0BbMpjYEUojkj5lhq84sqAlhFO6vKBIIixPD9IE621wFw3puj+ZJxUztcqU4V/pfSN7mGQlOUKK08705kqZ8JJg+UaTSkA/fK2BvPspicF//g9BllNI3X/yMJepT55hUL9fdVRjrVvHJ5R4bCdvdgYl3+cyFCeArRShO+LBeogPvkyC+uirBj9pUcx5bbUe/CsSf2QLODtQauuQIDAQAB",
+  "externally_connectable": {
+    "matches": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"]
+  },
+  "description": "BD Automator companion: applies to Indeed Easy Apply jobs for a selected candidate using backend data, tailored resumes, and AI-answered screening questions.",
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "BD Indeed Auto-Apply",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage", "tabs", "notifications", "alarms", "scripting"],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["https://*.indeed.com/*"],
+      "js": ["content/indeed.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}
