@@ -318,12 +318,20 @@ async def trigger_apply(
     bd_user_id = str(current_user.supabase_user_id) if current_user.supabase_user_id else None
 
     from app.tasks.dynamic_apply import dynamic_apply
+    import asyncio, functools
 
     try:
-        dynamic_apply.apply_async(
+        # apply_async is a synchronous blocking call (it opens a Redis connection
+        # to enqueue the task). Running it directly in the async endpoint would
+        # freeze the entire asyncio event loop while Redis connects, preventing
+        # uvicorn from sending the response → ECONNRESET. Offload to a thread so
+        # the event loop stays alive and the except block can actually fire.
+        dispatch = functools.partial(
+            dynamic_apply.apply_async,
             args=[candidate_id, request_body.max_apps, bd_user_id],
-            kwargs={"time_filter": request_body.time_filter, "platform": request_body.platform}
+            kwargs={"time_filter": request_body.time_filter, "platform": request_body.platform},
         )
+        await asyncio.to_thread(dispatch)
         _bg_log.info(
             f"[BG] Auto-apply task dispatched to Celery: candidate={candidate_id} "
             f"max_apps={request_body.max_apps} time_filter={request_body.time_filter} "
@@ -331,7 +339,10 @@ async def trigger_apply(
         )
     except Exception as e:
         _bg_log.error(f"[Apply] Failed to dispatch Celery task for candidate={candidate_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to start apply pipeline: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Could not queue apply pipeline — broker unavailable: {e}",
+        )
 
     return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
 

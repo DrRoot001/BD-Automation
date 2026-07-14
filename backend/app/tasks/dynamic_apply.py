@@ -175,6 +175,12 @@ async def _run(candidate_id: str, max_apps: int, bd_user_id: Optional[str] = Non
 
         jobs = await _fetch_open_jobs(client, candidate_id, time_filter=time_filter, platform=platform)
         if not jobs:
+            publish_event_sync("pipeline.progress", {
+                "candidate_id": candidate_id,
+                "bd_user_id": bd_user_id,
+                "step": "no_jobs",
+                "message": "No available jobs found in the database for the selected filters."
+            })
             return {"queued": [], "skipped": 0, "error": "no_jobs"}
 
         publish_event_sync("pipeline.progress", {

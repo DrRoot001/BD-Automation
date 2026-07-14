@@ -36,6 +36,16 @@ function sendToExtension(msg: object, timeoutMs = 600): Promise<ExtResponse> {
   })
 }
 
+/** Read the auth_token cookie set by the Next.js middleware. */
+function getAuthTokenFromCookie(): string | undefined {
+  if (typeof document === 'undefined') return undefined
+  return document.cookie
+    .split(';')
+    .map((c) => c.trim())
+    .find((c) => c.startsWith('auth_token='))
+    ?.split('=')[1]
+}
+
 export async function pingExtension(): Promise<{ installed: boolean; authed: boolean }> {
   const resp = await sendToExtension({ type: 'PING' })
   return { installed: !!resp?.installed, authed: !!resp?.authed }
@@ -46,14 +56,16 @@ export async function pingExtension(): Promise<{ installed: boolean; authed: boo
  * reviews and submits). Returns a user-facing outcome:
  *  - 'filling'       extension took the job; it opens its own tab
  *  - 'not_installed' extension absent → caller should open the job page itself
- *  - 'error'         extension present but refused (not logged in, run active…)
+ *  - 'error'         extension present but refused (run active…)
  */
 export async function manualApplyViaExtension(
   payload: ManualApplyPayload,
 ): Promise<{ outcome: 'filling' | 'not_installed' | 'error'; detail?: string }> {
   const { installed } = await pingExtension()
   if (!installed) return { outcome: 'not_installed' }
-  const resp = await sendToExtension({ type: 'MANUAL_APPLY', ...payload }, 15_000)
+  // Pass the app's session token so the extension doesn't need a prior popup login.
+  const token = getAuthTokenFromCookie()
+  const resp = await sendToExtension({ type: 'MANUAL_APPLY', ...payload, token }, 15_000)
   if (resp && (resp as any).ok) return { outcome: 'filling' }
   return {
     outcome: 'error',
