@@ -32,7 +32,7 @@ from typing import Optional, Tuple
 
 from playwright.async_api import Page
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -122,22 +122,19 @@ def _sessions_path(name: str) -> Path:
     return backend_dir / "data" / "sessions" / name
 
 
-class ZipRecruiterAdapter(BasePlatformAdapter):
+class ZipRecruiterAdapter(AutonomousAdapter):
     platform_name = "ziprecruiter"
+    hints_key = "ziprecruiter"
     container_selector = "form[data-testid='apply-form'], .apply-modal"
+    login_gated = True
 
-    def __init__(self) -> None:
+    def __init__(self, agent=None) -> None:
+        super().__init__(agent=agent)
         # True when the Apply click completed as a true 1-click apply (no
-        # form/modal shown) — fill/submit then become no-ops.
+        # form/modal shown) — the profile WAS the application.
         self._one_click_done: bool = False
-        # Last apply-outcome ("one_click" | "form" | None). None means neither
-        # a confirmation nor a form appeared — fill_application must NOT treat
-        # that as a completed 1-click apply.
+        # Last apply-outcome ("one_click" | "form" | None).
         self._apply_outcome: Optional[str] = None
-        # Executor reads these via getattr — no iframe on ZipRecruiter.
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Navigation
@@ -217,9 +214,6 @@ class ZipRecruiterAdapter(BasePlatformAdapter):
                 return "one_click"
             await asyncio.sleep(0.6)
         return None
-
-    async def detect_application_type(self, page: Page) -> str:
-        return "EASY_APPLY"
 
     # ──────────────────────────────────────────────────────────────────────
     # Authentication
@@ -345,91 +339,26 @@ class ZipRecruiterAdapter(BasePlatformAdapter):
     # Fill / submit / verify
     # ──────────────────────────────────────────────────────────────────────
 
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
+    # ── 1-click apply short-circuit; otherwise the shared loop drives it ──────
+    async def fill_application(self, page, profile, resume_path, cover_letter_path,
+                               screening_answers, pre_detected_form=None, candidate_id=None) -> bool:
         if self._one_click_done:
-            # True 1-click apply — the profile WAS the application.
             logger.info("[ZipRecruiter] 1-click already applied — nothing to fill")
             return True
-
-        try:
-            modal = page.locator(_MODAL_SELECTOR).first
-            has_form = await modal.count() > 0 and await modal.is_visible()
-        except Exception:
-            has_form = False
-        if not has_form and pre_detected_form is None:
-            if self._apply_outcome is None:
-                # Neither a confirmation nor a form appeared after the Apply
-                # click — do NOT treat as a completed 1-click apply (submit()
-                # would otherwise fall back to clicking button[type=submit],
-                # potentially on an unfilled external ATS form).
-                logger.warning(
-                    "[ZipRecruiter] No apply form present and no confirmation "
-                    "seen — not assuming 1-click apply"
-                )
-                return False
-            # No form materialised (some postings confirm without any text we
-            # matched) — treat as 1-click rather than failing the fill step.
-            logger.info("[ZipRecruiter] No apply form present — treating as 1-click apply")
-            return True
-
-        from ..forms import detect_form, fill_form
-
-        form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
-        return await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
+        return await super().fill_application(
+            page, profile, resume_path, cover_letter_path, screening_answers,
+            pre_detected_form=pre_detected_form, candidate_id=candidate_id,
+        )
 
     async def submit(self, page: Page) -> bool:
         if self._one_click_done:
             return True
+        return await super().submit(page)
 
-        # Scope to the modal/form so we never re-click the page-level Apply.
-        try:
-            modal = page.locator(_MODAL_SELECTOR).first
-            scope = modal if (await modal.count() > 0 and await modal.is_visible()) else page
-        except Exception:
-            scope = page
-        for sel in _SUBMIT_SELECTORS:
-            try:
-                btn = scope.locator(sel).first
-                if await btn.count() == 0 or not await btn.is_visible():
-                    continue
-                await btn.scroll_into_view_if_needed()
-                await btn.click(timeout=_FIELD_TIMEOUT_MS)
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=15_000)
-                except Exception:
-                    pass
-                await self.human_delay(1.0, 2.0)
-                logger.info(f"[ZipRecruiter] Submitted via {sel!r}")
-                return True
-            except Exception as exc:
-                logger.debug(f"[ZipRecruiter] submit selector {sel!r} failed: {exc}")
-        logger.error("[ZipRecruiter] No submit button matched")
-        return False
-
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        content = (await self._safe_content(page)).lower()
-        for pattern in _SUCCESS_TEXT_PATTERNS:
-            if pattern in content:
-                logger.info(f"[ZipRecruiter] Success verified via text {pattern!r}")
-                return (True, pattern)
-        # A completed 1-click whose confirmation toast already disappeared.
+    async def verify_success(self, page: Page):
         if self._one_click_done:
-            logger.info("[ZipRecruiter] Success assumed via completed 1-click apply")
-            return (True, "1-click apply confirmed")
-        return (False, None)
-
-    async def refresh_frame(self, page: Page) -> None:
-        # No persistent iframe on ZipRecruiter.
-        return None
+            return True, "1-click apply confirmed"
+        return await super().verify_success(page)
 
     # ──────────────────────────────────────────────────────────────────────
     # Low-level helpers

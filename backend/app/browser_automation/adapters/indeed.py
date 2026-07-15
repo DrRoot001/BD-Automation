@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 
 from playwright.async_api import Page
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -109,19 +109,16 @@ def _is_smartapply_host(url: str) -> bool:
     return host == "smartapply.indeed.com" or host.endswith(".smartapply.indeed.com")
 
 
-class IndeedAdapter(BasePlatformAdapter):
+class IndeedAdapter(AutonomousAdapter):
     platform_name = "indeed"
+    hints_key = "indeed"
     container_selector = None
+    login_gated = True
 
-    def __init__(self) -> None:
-        self._inner: Optional[BasePlatformAdapter] = None
+    def __init__(self, agent=None) -> None:
+        super().__init__(agent=agent)
+        self._inner = None
         self._branch: Optional[str] = None
-        self._resolved_url: Optional[str] = None
-        # Mirrored from inner adapter so executor's getattr() works
-        # (executor.py:249, 335).
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Branch classification
@@ -455,49 +452,29 @@ class IndeedAdapter(BasePlatformAdapter):
         self._frame_locator = getattr(self._inner, "_frame_locator", None)
         self._frame = getattr(self._inner, "_frame", None)
 
-    async def detect_application_type(self, page: Page) -> str:
-        # For the AgentLoop's prompt: 'smartapply' on Easy Apply (so the
-        # smartapply hints get injected), the inner adapter's name on
-        # External, and 'indeed' otherwise.
-        if self._branch == BRANCH_EASY_APPLY:
-            return "smartapply"
-        if self._inner and self._branch == BRANCH_EXTERNAL_APPLY:
-            try:
-                return await self._inner.detect_application_type(page)
-            except NotImplementedError:
-                return self._inner.platform_name
-        return self.platform_name
+    # Blocked / login-required branches must NOT run the loop; the smartapply
+    # (Easy Apply) and external-apply branches let the shared loop drive.
+    _NO_RUN_BRANCHES = (BRANCH_BLOCKED, BRANCH_UNAVAILABLE, BRANCH_LOGIN_REQUIRED)
 
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
-        if self._branch in (BRANCH_BLOCKED, BRANCH_UNAVAILABLE, BRANCH_LOGIN_REQUIRED):
-            logger.info(f"[Indeed] fill_application skipped — branch={self._branch!r}")
+    async def fill_application(self, page, profile, resume_path, cover_letter_path,
+                               screening_answers, pre_detected_form=None, candidate_id=None) -> bool:
+        if self._branch in self._NO_RUN_BRANCHES:
+            logger.info(f"[Indeed] fill skipped — branch={self._branch!r}")
             return False
-        if not self._inner:
-            return False
-        return await self._inner.fill_application(
-            page, profile, resume_path, cover_letter_path,
-            screening_answers, pre_detected_form=pre_detected_form,
-            candidate_id=candidate_id,
+        return await super().fill_application(
+            page, profile, resume_path, cover_letter_path, screening_answers,
+            pre_detected_form=pre_detected_form, candidate_id=candidate_id,
         )
 
     async def submit(self, page: Page) -> bool:
-        if self._branch in (BRANCH_BLOCKED, BRANCH_UNAVAILABLE, BRANCH_LOGIN_REQUIRED) or not self._inner:
+        if self._branch in self._NO_RUN_BRANCHES:
             return False
-        return await self._inner.submit(page)
+        return await super().submit(page)
 
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        if self._branch in (BRANCH_BLOCKED, BRANCH_UNAVAILABLE, BRANCH_LOGIN_REQUIRED) or not self._inner:
-            return (False, self._branch)
-        return await self._inner.verify_success(page)
+    async def verify_success(self, page: Page):
+        if self._branch in self._NO_RUN_BRANCHES:
+            return False, self._branch
+        return await super().verify_success(page)
 
     async def refresh_frame(self, page: Page) -> None:
         if self._inner and hasattr(self._inner, "refresh_frame"):

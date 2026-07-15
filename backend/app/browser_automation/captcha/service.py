@@ -717,6 +717,30 @@ class CaptchaService:
         Returns success only when the page actually leaves the challenge.
         """
         start = time.monotonic()
+
+        # GUARD: this solver RELOADS the page repeatedly to trigger the Turnstile
+        # render hook. That only belongs on a genuine Cloudflare managed-challenge
+        # INTERSTITIAL. On an application form merely FRONTED by Cloudflare — whose
+        # real gate is reCAPTCHA/hCaptcha, and which was misclassified as
+        # "turnstile" because a challenges.cloudflare.com script is present — those
+        # reloads capture no widget ("no widget rendered") AND can navigate/close
+        # the page mid-apply (the observed "Target page has been closed" ERROR that
+        # killed CareerPlug + Lever applies). Bail cleanly BEFORE reloading so the
+        # page survives and the run resolves to a clean terminal instead of a crash.
+        try:
+            if not await self._is_cloudflare_interstitial(page):
+                logger.info(
+                    "[CAPTCHA] solve_cloudflare_challenge: not a Cloudflare interstitial "
+                    "— skipping the reload-based Turnstile solve (real captcha, if any, "
+                    "is reCAPTCHA/hCaptcha; avoids the page-reload crash)."
+                )
+                return CaptchaSolution(
+                    captcha_type="turnstile", success=False,
+                    error="CAPTCHA_UNSUPPORTED: not a Cloudflare interstitial (no Turnstile challenge present)",
+                    solve_time_seconds=time.monotonic() - start, cost_usd=0)
+        except Exception as exc:
+            logger.debug(f"[CAPTCHA] interstitial pre-check skipped: {exc}")
+
         ac_key = self._resolve_anticaptcha_key()
         if not ac_key:
             return CaptchaSolution(

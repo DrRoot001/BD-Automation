@@ -496,6 +496,167 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
     },
 
+    # Careers Page — the hosted employer ATS powered by Manatal (careers-page.com).
+    # A single-page application form reached directly or via a job-board external
+    # redirect (e.g. Remote100K). Detect by HOST ONLY; never by job id/slug/query.
+    "careerspage": {
+        "container": "form",
+        "apply_selectors": [
+            # The .../apply URL usually renders the form directly; these only
+            # matter if a listing/description page loads first.
+            "a:has-text('Apply')",
+            "button:has-text('Apply')",
+            "a:has-text('Apply Now')",
+            "button:has-text('Apply Now')",
+        ],
+        "submit_selectors": [
+            # Real Manatal form's primary button is labelled 'Apply'.
+            "button:has-text('Apply')",
+            "button:has-text('Send Application')",
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit')",
+            "button[type='submit']",
+        ],
+        "success_patterns": [
+            "thank you for your application",
+            "application submitted",
+            "your application has been submitted",
+            "we have received your application",
+            "we've received your application",
+        ],
+        "url_hint": (
+            "Careers Page (Manatal ATS) form lives on careers-page.com "
+            "(path .../job/<id>/apply). Identify the platform by HOST ONLY — "
+            "NEVER rely on the job id, company slug, or query params. The whole "
+            "form is on ONE page (no wizard). Fields have NO <label> elements — "
+            "they are identified by PLACEHOLDER text. Order: Full Name, Phone, "
+            "Email, LinkedIn, then Professional Info (native <select>s), Resume "
+            "upload, a required terms checkbox, then the 'Apply' button."
+        ),
+        "quirks": [
+            # NOTE: verified against the real Manatal form 2026-07-14 — it differs
+            # from the generic spec (single Full Name field, native <select>s,
+            # placeholder-only labels, 'N+ year' / 'NN days' option sets).
+            "SINGLE-PAGE FORM (Manatal). All fields on one page; fill top-to-bottom, tick the terms checkbox, then click 'Apply' once.",
+            "Fields have NO <label> elements — identify them by PLACEHOLDER text: 'Full Name', 'Phone', 'Email', 'LinkedIn Profile', 'Current Company', 'Current Salary', 'Expected Salary', 'Resume'.",
+            "NAME: there is a SINGLE 'Full Name' field (placeholder 'Full Name') — NOT separate First/Last. Fill it with the candidate's full name.",
+            "CONTACT: Phone, Email, and LinkedIn Profile are text inputs. LinkedIn is optional — leave blank if the candidate has none; never invent one.",
+            "All dropdowns on this form are NATIVE <select> elements (NOT custom widgets) — set them with a normal select-by-visible-text; no click-open-then-click-option dance is needed.",
+            "YEARS OF EXPERIENCE (required <select>): options read 'No experience', '1+ year', '2+ year', '3+ year', … up to about '10+ year'. Pick the HIGHEST 'N+ year' whose N does not exceed the candidate's years of experience (e.g. 4 yrs -> '4+ year'); use 'No experience' only if the candidate truly has none.",
+            "CURRENT COMPANY (text): the candidate's current_company, or their most recent employer from the resume.",
+            "SALARY: Current Salary and Expected Salary each have an AMOUNT input plus a CURRENCY <select> and a FREQUENCY <select>. Enter digits only in the amount (strip '$' and commas). CURRENCY is a full currency-name list — pick the option matching 'US Dollar' (USD) by default. FREQUENCY options are Hourly/Daily/Weekly/Monthly/Yearly — default 'Yearly'. If only one salary figure is known, use it for BOTH Current and Expected (standard format fields, not fabricated facts).",
+            "NOTICE PERIOD (required <select>): options read 'Immediately', '10 days', '20 days', '30 days', '40 days', … Map the candidate's notice period to the nearest option; if unknown default to '30 days' (~1 month). Treat '2 weeks' as the closest of '10 days'/'20 days'.",
+            "RESUME UPLOAD is MANDATORY (file input, placeholder 'Resume'). Upload the candidate's resume via upload_file, then VERIFY the uploaded filename becomes visible.",
+            "TERMS/PRIVACY: a REQUIRED checkbox (name 'terms_and_condition', the terms-and-conditions/privacy agreement) MUST be checked before the form will submit. Check it and verify it is checked.",
+            "BEFORE SUBMIT: scan the page for validation text ('required', 'invalid', 'please complete') and fix any flagged field.",
+            "SUBMIT: click the primary button labelled 'Apply' (there is also a 'Company Website' link — do NOT click that). After clicking, wait for server validation. SUCCESS is confirmed ONLY by the post-submit page text 'Thank you for your application!' — a filled form is NOT success.",
+            "Do NOT toggle any marketing / newsletter opt-in checkboxes — only the required terms checkbox.",
+        ],
+    },
+
+    # CareerPlug (careerplug.com) — a Rails-based ATS. Verified against the real
+    # S-R-International D365 form 2026-07-15.
+    "careerplug": {
+        "apply_selectors": [
+            "a:has-text('Apply')",
+            "button:has-text('Apply')",
+            "a:has-text('Apply here')",
+            "a:has-text('apply here')",
+        ],
+        "submit_selectors": [
+            "input[type=submit][value='commit']",
+            "button:has-text('Submit Application')",
+            "button:has-text('Submit')",
+            "input[type=submit]",
+            "button[type=submit]",
+        ],
+        "success_patterns": [
+            "thank you for applying",
+            "application received",
+            "your application has been submitted",
+            "thanks for applying",
+            "we have received your application",
+            "we've received your application",
+        ],
+        "url_hint": (
+            "CareerPlug (careerplug.com) Rails ATS. The application form is at "
+            ".../jobs/<id>/apps/new (the job URL redirects there). ONE page: "
+            "personal info, address, resume/cover upload, free-text screening "
+            "questions, then a Google reCAPTCHA and Submit."
+        ),
+        "quirks": [
+            "SINGLE-PAGE Rails form: fill top-to-bottom, solve the reCAPTCHA, submit ONCE.",
+            "PERSONAL (required*): First Name, Last Name, Email, Phone — from the candidate profile. Address/City/ZIP and State (native <select>) are optional; fill City/State from the candidate's location when known.",
+            "'Current location (city, state)?*' is a REQUIRED free-text field — enter the candidate's city, state.",
+            "RESUME: there are file 'Upload File' inputs AND resume/cover-letter TEXTAREAS. Upload the candidate's resume PDF to the first file input (cover letter to the second if provided); you may leave the resume/cover TEXT areas blank once the files are uploaded.",
+            "SCREENING QUESTIONS are free-text TEXTAREAS about specific experience (e.g. 'Do you have Microsoft Dynamics 365 …', 'Experience with Power BI / SQL Server / Power Apps …'). Answer each CONCISELY and truthfully from the candidate's resume/profile — one or two sentences with years/context when they have it. Do not leave a REQUIRED* one blank.",
+            "STATE is a native <select> whose first option 'State' is the placeholder — pick the candidate's US state.",
+            "CAPTCHA: this form uses a Google reCAPTCHA (a .g-recaptcha / #g-recaptcha-response). Solve it with solve_captcha captcha_type=\"recaptcha_v2\" BEFORE submitting. It is NOT a Cloudflare Turnstile — do not classify it as turnstile.",
+            "SUBMIT: the primary button submits the Rails form (its value is 'commit'; visible text is usually 'Submit Application' or 'Apply'). Click it once. SUCCESS = a post-submit 'Thank you for applying' / 'Application received' page.",
+        ],
+    },
+
+    # TeamTailor — a hosted ATS (teamtailor.com) white-labelled onto employer
+    # career domains (e.g. careers.westerncomputer.com). Verified against the
+    # real Western Computer D365 form 2026-07-15. NOTE: the handoff called this
+    # "Recruitee" — it is actually TeamTailor (teamtailor-cdn.com assets,
+    # teamtailor-na S3 upload bucket, "Powered by TeamTailor"). Recruitee is
+    # kept as a registry alias since both are Rails ATSes with near-identical
+    # candidate[...] markup.
+    "teamtailor": {
+        "container": "form",
+        "apply_selectors": [
+            "a:has-text('Apply for this job')",
+            "button:has-text('Apply for this job')",
+            "a:has-text('Apply for this position')",
+            "a:has-text('Apply')",
+            "button:has-text('Apply')",
+        ],
+        "submit_selectors": [
+            # The real form's primary control is <input type=submit name='commit'
+            # value='Submit application'>.
+            "input[type=submit][name='commit']",
+            "button:has-text('Submit application')",
+            "button:has-text('Send application')",
+            "button:has-text('Submit')",
+            "input[type=submit]",
+            "button[type=submit]",
+        ],
+        "success_patterns": [
+            "thank you for your application",
+            "thank you for applying",
+            "application received",
+            "your application has been submitted",
+            "we have received your application",
+            "we've received your application",
+            "we'll be in touch",
+        ],
+        "url_hint": (
+            "TeamTailor hosted ATS, white-labelled onto employer career domains "
+            "(careers.<company>.com; also *.teamtailor.com). Identify it by the "
+            "DOM (teamtailor-cdn.com assets + Rails candidate[...] field names), "
+            "NEVER by URL/job-id/slug. The application form is on the job page "
+            "(path /jobs/<id>-<slug>), usually revealed by an 'Apply for this "
+            "job' CTA. Single page — no wizard."
+        ),
+        "quirks": [
+            "SINGLE-PAGE form (TeamTailor). If a form isn't visible, click 'Apply for this job' to reveal it, then fill top-to-bottom and submit ONCE.",
+            "PERSONAL (all *Required): First name (#candidate_first_name), Last name (#candidate_last_name), Email (#candidate_email), Phone (#candidate_phone / a tel input). Fill from the candidate profile.",
+            "RESUME is MANDATORY and uses a DROPZONE.JS file input: <input type=file id='candidate_resume_remote_url' class='dz-hidden-input'> (its name looks like a URL field but it IS the real file input). Upload the resume PDF via upload_file. CRITICAL: the file uploads to storage (S3) in the BACKGROUND after you attach it — WAIT until a filename preview with a success tick appears (Dropzone '.dz-success') BEFORE clicking Submit. Submitting while it is still uploading makes the server SILENTLY reject the application as 'resume required' with no on-page error. (The deterministic uploader already waits for this — do not re-trigger the file input.)",
+            "There is a SECOND optional file input 'Additional files' (#candidate_file_remote_url) — leave it empty; only the resume is needed.",
+            "CONSENT: a REQUIRED privacy checkbox #candidate_consent_given (name 'candidate[consent_given]', label starts 'By submitting this application, I agree…') MUST be checked or the form will not submit. There is also an OPTIONAL 'future job opportunities' checkbox (#candidate_consent_given_future_jobs) — leave it UNCHECKED.",
+            "MANDATORY questions are marked by data-question-mandatory=\"true\" on the enclosing .question div (NOT by the input's `required` attr and NOT always by a '*' in a <label>). EVERY mandatory question must be answered or the server SILENTLY rejects the submit (200 → bounce back to a blank form, no visible error). Typical mandatory set: work-authorization radio, sponsorship radio, 'Your Current Location' choice radio, 'LinkedIn profile URL' text, and the years-of-experience RANGE.",
+            "PHONE (#candidate_phone) is an international-telephone widget (intl-tel-input). Fill it with the candidate's number; it auto-formats. It is *Required — never leave it blank.",
+            "EXPERIENCE SLIDER: the 'How many years of experience…' question is an <input type=range> (id candidate_answers_attributes_N_range, min 0 / max ~20) paired with a visible number box (name 'range-custom_number'). It DEFAULTS to 0, which counts as UNANSWERED and gets rejected. You MUST set it to the candidate's real years of experience (>0): focus the slider and press ArrowRight to the right value, or type the number into the companion number box. Verify the value is non-zero before submit.",
+            "SCREENING QUESTIONS use name='candidate[answers_attributes][N][...]'. Types: Yes/No boolean RADIOS ([N][boolean] value true/false — click the option's <label>), single-CHOICE radios ([N][choice], e.g. country US/Canada/Other), *Required TEXT ([N][text], e.g. 'LinkedIn profile URL'), a DATE ([N][date]), and the RANGE slider above. Answer EACH mandatory one truthfully from the resume/profile.",
+            "The form starts DISABLED (greyed, cursor-not-allowed) until it becomes 'ready'; the adapter un-gates it so your clicks land. If a radio/slider click seems to do nothing, the option's <label> is the reliable click target.",
+            "The 'LinkedIn profile URL*Required' text field is REQUIRED — fill it with the candidate's real LinkedIn URL from their profile; do not invent one.",
+            "CAPTCHA: this form usually has NO visible captcha. TeamTailor may run an INVISIBLE reCAPTCHA at submit; if a reCAPTCHA/hCaptcha appears, solve it with solve_captcha (recaptcha_v2 / hcaptcha). A bare challenges.cloudflare.com iframe here is NOT a Turnstile — do not classify it as turnstile or reload the page.",
+            "SUBMIT: click the primary control once (input name='commit', text 'Submit application'). Do NOT click 'Apply with LinkedIn'. SUCCESS is confirmed ONLY by a post-submit 'Thank you for your application' / 'Application received' page — a filled form is NOT success.",
+            "NEVER reload the page mid-fill — TeamTailor keeps form state in JS and a reload wipes every entered field and the uploaded resume.",
+        ],
+    },
+
     "talent": {
         "container": "main",
         "apply_selectors": [

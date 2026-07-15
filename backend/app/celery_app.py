@@ -172,6 +172,15 @@ celery_app.conf.redis_socket_keepalive = True
 celery_app.conf.redis_retry_on_timeout = True
 celery_app.conf.redis_backend_health_check_interval = 25
 celery_app.conf.broker_pool_limit = 10
+# RESULT-BACKEND resilience: a transient Upstash DNS/connection blip during
+# store_result (mark_as_done) used to raise `network:ConnectionError` OUT of
+# trace_task and fail a task whose work had already SUCCEEDED (seen as
+# "getaddrinfo failed" bursts when many tasks — 11 email scans + matching +
+# apply — open fresh Redis connections at once). always_retry makes the backend
+# retry recoverable connection errors instead of propagating them, so a DNS
+# hiccup no longer kills a completed task.
+celery_app.conf.result_backend_always_retry = True
+celery_app.conf.result_backend_max_retries = 10
 # Setting this explicitly silences the Celery-6 CPendingDeprecationWarning and,
 # at False, means a transient connection blip does NOT cancel an in-flight
 # browser run — it is allowed to finish.

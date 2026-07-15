@@ -1,6 +1,8 @@
 from .ashby import AshbyAdapter
 from .base import BasePlatformAdapter
 from .builtin import BuiltInAdapter
+from .careerplug import CareerPlugAdapter
+from .careerspage import CareersPageAdapter
 from .dice import DiceAdapter
 from .generic import GenericFormAdapter
 from .glassdoor import GlassdoorAdapter
@@ -11,9 +13,11 @@ from .indeed import IndeedAdapter
 from .jobvite import JobviteAdapter
 from .lever import LeverAdapter
 from .linkedin import LinkedInEasyApplyAdapter
+from .remote100k import Remote100KAdapter
 from .remoterocketship import RemoteRocketshipAdapter
 from .smartrecruiters import SmartRecruitersAdapter
 from .talent import TalentAdapter
+from .teamtailor import TeamTailorAdapter
 from .workday import WorkdayAdapter
 from .ziprecruiter import ZipRecruiterAdapter
 
@@ -25,7 +29,19 @@ ADAPTER_REGISTRY: dict[str, type[BasePlatformAdapter]] = {
     "workday": WorkdayAdapter,
     "linkedin": LinkedInEasyApplyAdapter,
     "remoterocketship": RemoteRocketshipAdapter,
-    "remote100k": RemoteRocketshipAdapter,
+    "remote100k": Remote100KAdapter,
+    # Careers Page — hosted employer ATS (Manatal). Reached directly or via an
+    # aggregator external-apply redirect.
+    "careerspage": CareersPageAdapter,
+    "careers-page": CareersPageAdapter,
+    "manatal": CareersPageAdapter,
+    "careerplug": CareerPlugAdapter,
+    # TeamTailor — hosted ATS white-labelled onto employer career domains.
+    # "recruitee" is an alias: handoff v7 mislabelled this ATS as Recruitee, and
+    # both are Rails ATSes with near-identical candidate[...] markup, so any
+    # upstream source='recruitee' still routes here.
+    "teamtailor": TeamTailorAdapter,
+    "recruitee": TeamTailorAdapter,
     "icims": ICIMSAdapter,
     "indeed": IndeedAdapter,
     "smartrecruiters": SmartRecruitersAdapter,
@@ -56,8 +72,16 @@ def get_adapter(platform: str) -> BasePlatformAdapter:
     # Detect ATS from URL substring when caller only has the URL
     cls = ADAPTER_REGISTRY.get(key)
     if cls is None and key:
-        if "remoterocketship" in normalized or "remote100k" in normalized:
+        if "remote100k" in normalized:
+            cls = Remote100KAdapter
+        elif "remoterocketship" in normalized:
             cls = RemoteRocketshipAdapter
+        elif "careers-page.com" in key or "careerspage" in normalized or "manatal" in normalized:
+            cls = CareersPageAdapter
+        elif "careerplug.com" in key or "careerplug" in normalized:
+            cls = CareerPlugAdapter
+        elif "teamtailor" in normalized or "recruitee" in normalized:
+            cls = TeamTailorAdapter
         elif "myworkdayjobs" in key:
             cls = WorkdayAdapter
         elif "lever.co" in key:

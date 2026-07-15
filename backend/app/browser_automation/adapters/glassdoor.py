@@ -38,7 +38,7 @@ from urllib.parse import urlparse
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 from .remoterocketship import _detect_ats_from_url
 
 logger = logging.getLogger(__name__)
@@ -131,20 +131,17 @@ def _sessions_path(name: str) -> Path:
     return backend_dir / "data" / "sessions" / name
 
 
-class GlassdoorAdapter(BasePlatformAdapter):
+class GlassdoorAdapter(AutonomousAdapter):
     platform_name = "glassdoor"
+    hints_key = "glassdoor"
     container_selector = ".modal-content, [data-test='JobApplicationModal']"
+    login_gated = True
 
-    def __init__(self) -> None:
-        # Set when the posting redirects to an external ATS — all methods
-        # then delegate (RemoteRocketship passthrough pattern).
-        self._inner: Optional[BasePlatformAdapter] = None
-        self._resolved_url: Optional[str] = None
+    def __init__(self, agent=None) -> None:
+        super().__init__(agent=agent)
+        # Set when the posting redirects to an external ATS.
+        self._inner = None
         self._native_modal: bool = False
-        # Executor reads these via getattr — mirrored from the inner adapter.
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Navigation
@@ -209,16 +206,6 @@ class GlassdoorAdapter(BasePlatformAdapter):
         logger.warning(f"[Glassdoor] No Easy Apply modal or external ATS link found on {job_url!r}")
         self._inner = self._spawn_delegate("generic")
         self._mirror_inner_attrs()
-
-    async def detect_application_type(self, page: Page) -> str:
-        if self._native_modal:
-            return "EASY_APPLY"
-        if self._inner:
-            try:
-                return await self._inner.detect_application_type(page)
-            except NotImplementedError:
-                pass
-        return "EXTERNAL"
 
     # ──────────────────────────────────────────────────────────────────────
     # Authentication
@@ -481,63 +468,6 @@ class GlassdoorAdapter(BasePlatformAdapter):
     # ──────────────────────────────────────────────────────────────────────
     # Fill / submit / verify — native modal or delegation.
     # ──────────────────────────────────────────────────────────────────────
-
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
-        if self._inner:
-            return await self._inner.fill_application(
-                page, profile, resume_path, cover_letter_path,
-                screening_answers, pre_detected_form=pre_detected_form,
-                candidate_id=candidate_id,
-            )
-        from ..forms import detect_form, fill_form
-
-        form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
-        return await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
-
-    async def submit(self, page: Page) -> bool:
-        if self._inner:
-            return await self._inner.submit(page)
-
-        # Scope submit to the modal so we never hit the page-level Apply CTA.
-        modal = page.locator(_MODAL_SELECTOR).first
-        scope = modal if await self._safe_count(modal) > 0 else page
-        for sel in _SUBMIT_SELECTORS:
-            try:
-                btn = scope.locator(sel).first
-                if await btn.count() == 0 or not await btn.is_visible():
-                    continue
-                await btn.scroll_into_view_if_needed()
-                await btn.click(timeout=_FIELD_TIMEOUT_MS)
-                try:
-                    await page.wait_for_load_state("networkidle", timeout=15_000)
-                except Exception:
-                    pass
-                await self.human_delay(1.0, 2.0)
-                logger.info(f"[Glassdoor] Submitted via {sel!r}")
-                return True
-            except Exception as exc:
-                logger.debug(f"[Glassdoor] submit selector {sel!r} failed: {exc}")
-        logger.error("[Glassdoor] No submit button matched")
-        return False
-
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        if self._inner:
-            return await self._inner.verify_success(page)
-        content = (await self._safe_content(page)).lower()
-        for pattern in _SUCCESS_TEXT_PATTERNS:
-            if pattern in content:
-                logger.info(f"[Glassdoor] Success verified via text {pattern!r}")
-                return (True, pattern)
-        return (False, None)
 
     async def refresh_frame(self, page: Page) -> None:
         if self._inner and hasattr(self._inner, "refresh_frame"):

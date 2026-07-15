@@ -179,12 +179,23 @@ class BrowserContextManager:
             self._redis = redis.from_url(self.redis_url, **kwargs)
         return self._redis
 
-    async def get_context(self, candidate_id: str, platform: str) -> BrowserContext:
+    async def get_context(self, candidate_id: str, platform: str, target_url: str = "") -> BrowserContext:
         config: StealthConfig = get_stealth_config(candidate_id)
 
         redis_client = await self._get_redis()
         session_key = f"session:{candidate_id}:{platform}"
-        session_data = await redis_client.get(session_key)
+        # The persisted browser session is a CACHE (reuse a logged-in session
+        # across runs), NOT a hard dependency. If Redis is unreachable/slow, we
+        # must DEGRADE to a fresh context — never crash the whole application
+        # run on a broker blip (matches the state-machine/DB fail-open policy).
+        session_data = None
+        try:
+            session_data = await redis_client.get(session_key)
+        except Exception as exc:
+            logger.warning(
+                f"[Browser] session cache unavailable ({type(exc).__name__}: "
+                f"{str(exc)[:80]}) — starting a fresh browser context (no session reuse)"
+            )
         if session_data:
             # Refresh the TTL the moment we restore: any active use resets the
             # 7-day clock, so a long-running batch (or a candidate whose runs
@@ -328,11 +339,37 @@ class BrowserContextManager:
         proxy_config = None
         if proxy_url:
             _plat = (platform or "").lower()
+            # Key the proxy decision on the HOST WE ACTUALLY NAVIGATE TO, not the
+            # aggregator source label. An aggregator like RemoteRocketship is
+            # bot-walled (so a RAW remoterocketship.com URL still gets proxied to
+            # scrape it), but its listings resolve to inner ATS sites that are
+            # usually NOT bot-walled (careers.westerncomputer.com, jobs.lever.co,
+            # …). Forcing the slow residential proxy on those inner sites made the
+            # full browser page-load (JS+fonts+assets) time out — net::ERR_TIMED_OUT
+            # — even though the site loads fine directly. So when we know the
+            # target URL, decide from its host; the aggregator label is only the
+            # fallback (e.g. no URL yet).
+            _target_host = ""
+            if target_url:
+                try:
+                    _target_host = (urlparse(target_url if "//" in target_url else "//" + target_url).hostname or "").lower()
+                except Exception:
+                    _target_host = ""
+            _subject = _target_host or _plat
             _all = os.getenv("PROXY_ALL_HOSTS", "false").strip().lower() in ("1", "true", "yes", "on")
             _hosts_env = os.getenv("PROXY_HOSTS", "").strip()
-            _default_hosts = "himalayas,talent,linkedin,glassdoor,ziprecruiter,indeed,monks,workday"
-            _proxy_hosts = [h.strip().lower() for h in (_hosts_env or _default_hosts).split(",") if h.strip()]
-            _needs_proxy = _all or any(h in _plat for h in _proxy_hosts)
+            if _hosts_env:
+                # Operator override — proxy exactly these host substrings.
+                _proxy_hosts = [h.strip().lower() for h in _hosts_env.split(",") if h.strip()]
+                _needs_proxy = _all or any(h in _subject for h in _proxy_hosts)
+            else:
+                # Default: the shared bot-walled host set (WAF hosts that block
+                # datacenter IPs — Cloudflare/PerimeterX/Akamai). Includes
+                # simplyhired etc. so their Cloudflare wall is proxied (a
+                # residential IP usually passes silently, and Anti-Captcha's
+                # proxied Cloudflare solve runs through the SAME IP).
+                from ..hosts import is_bot_walled
+                _needs_proxy = _all or is_bot_walled(_subject)
             if not _needs_proxy:
                 logger.info(
                     f"[Browser] Proxy configured but SKIPPED for '{platform}' "
@@ -519,8 +556,16 @@ class BrowserContextManager:
             logger.warning(f"[Browser] storage_state() unavailable for {platform} ({exc}); saving cookies only")
             state = {"cookies": await context.cookies()}
         session_key = f"session:{candidate_id}:{platform}"
-        redis_client = await self._get_redis()
-        await redis_client.set(session_key, json.dumps(state), ex=_session_ttl_s())
+        # Persisting the session is best-effort — a Redis outage must not fail an
+        # otherwise-successful application (worst case: next run logs in again).
+        try:
+            redis_client = await self._get_redis()
+            await redis_client.set(session_key, json.dumps(state), ex=_session_ttl_s())
+        except Exception as exc:
+            logger.warning(
+                f"[Browser] could not persist session for {platform} "
+                f"({type(exc).__name__}: {str(exc)[:80]}) — skipping (next run re-auths)"
+            )
 
     async def destroy_context(self, context: BrowserContext) -> None:
         # Idempotent + exception-safe. A context may already be closed (the

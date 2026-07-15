@@ -1,110 +1,77 @@
-"""Remote Rocketship adapter.
+"""Remote Rocketship (+ RemoteOK / Adzuna / hiring.cafe / Remote100k) adapter.
 
-remoterocketship.com is a job-aggregator wrapper, not an ATS. Each listing has
-an "Apply" button whose href points at the underlying ATS form (Greenhouse,
-Lever, Ashby, Workable, etc.). The listing page itself has NO form to fill.
+These are job-aggregator wrappers, not ATSes: each listing's Apply link points
+at an underlying ATS form (Greenhouse, Lever, Ashby, Workable, …). The listing
+page itself has no form.
 
-Strategy (per operator decision): pre-resolve the underlying ATS URL by
-loading RR in the existing Playwright page, scraping the Apply anchor from
-the rendered DOM, then `goto` the resolved URL directly — no click, no
-new-tab dance. Once the resolved URL loads, ALL adapter behaviour delegates
-to the matching ATS adapter (Greenhouse / Lever / Ashby / …).
-
-We use Playwright instead of plain httpx because RR is fronted by a bot wall
-that 403s headless HTTP requests. Playwright is already running a real
-browser context with stealth applied, so the page loads normally.
+Migration note: the passthrough no longer instantiates an inner ATS *adapter* to
+drive the form — the shared perception + reasoning loop drives ANY ATS. The
+adapter's only job is to RESOLVE the underlying ATS URL (scrape the Apply anchor
+in the real browser, since the CDN 403s plain httpx) and hand it to the shared
+loop. We still detect the inner ATS from the URL so the reasoner gets that ATS's
+hints instead of the aggregator's.
 """
 from __future__ import annotations
 
 import logging
-import re
-from typing import Optional, Tuple
+from typing import Optional
 from urllib.parse import urlparse
 
 from playwright.async_api import Page
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 
 logger = logging.getLogger(__name__)
 
-# ATS host → (required-path-substring, registry-key). Path substring filters
-# out company/social pages on hosts that ALSO serve non-application content
-# (e.g. linkedin.com/company/X is a social page, NOT an application — only
-# linkedin.com/jobs/view/<id> is). Empty string means "host alone is enough".
-# Order matters only for prefix-substring fallback (job-boards before boards).
+# ATS host → (required-path-substring, hints/registry key).
 _ATS_HOSTS: tuple[tuple[str, str, str], ...] = (
-    ("job-boards.greenhouse.io", "/jobs/",        "greenhouse"),
-    ("boards.greenhouse.io",      "/jobs/",        "greenhouse"),
-    ("greenhouse.io",             "/jobs/",        "greenhouse"),
-    ("jobs.lever.co",             "",              "lever"),
-    ("lever.co",                  "",              "lever"),
-    ("jobs.ashbyhq.com",          "",              "ashby"),
-    ("ashbyhq.com",               "",              "ashby"),
-    ("myworkdayjobs.com",         "",              "workday"),
-    ("workday.com",               "",              "workday"),
-    # ATSes without a dedicated adapter yet — route to "generic" so the
-    # AgentLoop drives the form. Hosts that also serve marketing/company
-    # content get a required-path filter (apply.workable.com/<co>/j/<id>,
-    # jobs.smartrecruiters.com/<Co>/<id>); pure-ATS hosts
-    # (ats.rippling.com, <co>.pinpointhq.com) match on host alone.
-    ("apply.workable.com",        "/j/",           "generic"),
-    ("workable.com",              "/j/",           "generic"),
-    ("ats.rippling.com",          "",              "generic"),
-    # Dedicated adapters (2026-07-11): talent.com external applies frequently
-    # land on SmartRecruiters/Jobvite; routing them to their real slugs makes
-    # the passthrough delegate the dedicated adapter AND lets the AgentLoop's
-    # mid-run reclassify pull their hints when a new tab opens on these hosts.
-    ("jobs.smartrecruiters.com",  "",              "smartrecruiters"),
-    ("jobs.jobvite.com",          "/job/",         "jobvite"),
-    ("jobvite.com",               "/job/",         "jobvite"),
-    ("pinpointhq.com",            "",              "generic"),
-    ("linkedin.com",              "/jobs/view/",   "linkedin"),
+    ("job-boards.greenhouse.io", "/jobs/", "greenhouse"),
+    ("boards.greenhouse.io",      "/jobs/", "greenhouse"),
+    ("greenhouse.io",             "/jobs/", "greenhouse"),
+    ("jobs.lever.co",             "",       "lever"),
+    ("lever.co",                  "",       "lever"),
+    ("jobs.ashbyhq.com",          "",       "ashby"),
+    ("ashbyhq.com",               "",       "ashby"),
+    ("myworkdayjobs.com",         "",       "workday"),
+    ("workday.com",               "",       "workday"),
+    ("apply.workable.com",        "/j/",    "generic"),
+    ("workable.com",              "/j/",    "generic"),
+    ("ats.rippling.com",          "",       "generic"),
+    ("jobs.smartrecruiters.com",  "",       "smartrecruiters"),
+    ("jobs.jobvite.com",          "/job/",  "jobvite"),
+    ("jobvite.com",               "/job/",  "jobvite"),
+    ("pinpointhq.com",            "",       "generic"),
+    # Careers Page — the hosted employer ATS powered by Manatal. Detect by host
+    # only (spec: never rely on job id/slug/query). Enables aggregator handoff
+    # AND the AgentLoop's mid-run reclassify to swap in the careerspage hints.
+    ("careers-page.com",          "",       "careerspage"),
+    # CareerPlug — Rails ATS. Job path is /jobs/<id> (redirects to /apps/new).
+    ("careerplug.com",            "/jobs/", "careerplug"),
+    # TeamTailor — hosted ATS. Catches its own *.teamtailor.com sites; the far
+    # more common WHITE-LABEL career domains (careers.<company>.com) carry no
+    # URL token and are detected by DOM signature (AgentLoop._detect_ats_from_dom).
+    ("teamtailor.com",            "",       "teamtailor"),
+    ("linkedin.com",              "/jobs/view/", "linkedin"),
 )
 
-# Hard-exclude patterns. Any URL whose path matches one of these is rejected
-# even if its host is in _ATS_HOSTS. These are the noisy footer/social links
-# that show up on RR (and many career-listing aggregators) and would
-# otherwise capture the resolver before the real Apply link is reached.
 _NON_APPLICATION_PATH_PATTERNS: tuple[str, ...] = (
-    "/company/",   # linkedin.com/company/X
-    "/in/",        # linkedin.com/in/X (person profile)
-    "/school/",    # linkedin.com/school/X
-    "/about",      # */about, */about-us
-    "/login",
-    "/signup",
-    "/sign-in",
-    "/contact",
-    "/privacy",
-    "/terms",
+    "/company/", "/in/", "/school/", "/about", "/login", "/signup",
+    "/sign-in", "/contact", "/privacy", "/terms",
 )
 
 
 def _detect_ats_from_url(url: str) -> Optional[str]:
-    """Map a URL to an ATS registry key, or None if it isn't a job application.
-
-    Two-stage filter:
-      1. Reject anything whose path is clearly NOT an application (company
-         pages, profiles, login, etc.).
-      2. Among the remainder, the host must be a known ATS AND, if that host
-         is multi-purpose (linkedin.com, greenhouse.io), the path must also
-         contain the host-specific job marker.
-    """
+    """Map a URL to an ATS hints key, or None if it isn't a job application."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     path = (parsed.path or "").lower()
     if not host:
         return None
-    # SmartRecruiters' application form URL is
-    # jobs.smartrecruiters.com/oneclick-ui/company/<Co>/publication/<uuid> —
-    # its "/company/" segment would false-trip the non-application blocklist
-    # below, so allow it explicitly before stage 1.
     if "jobs.smartrecruiters.com" in host and "/oneclick-ui/" in path:
         return "smartrecruiters"
-    # Stage 1 — kill obvious non-application URLs early.
     for bad in _NON_APPLICATION_PATH_PATTERNS:
         if bad in path:
             return None
-    # Stage 2 — host-matched + required path substring.
     for needle, required_path, key in _ATS_HOSTS:
         if needle in host:
             if required_path and required_path not in path:
@@ -113,41 +80,19 @@ def _detect_ats_from_url(url: str) -> Optional[str]:
     return None
 
 
-class RemoteRocketshipAdapter(BasePlatformAdapter):
+class RemoteRocketshipAdapter(AutonomousAdapter):
     platform_name = "remoterocketship"
-    container_selector = None
-
-    def __init__(self) -> None:
-        self._inner: Optional[BasePlatformAdapter] = None
-        self._resolved_url: Optional[str] = None
-        # Mirror attributes the executor reads via getattr on the adapter.
-        # These get populated from self._inner after navigation.
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
-
-    # ──────────────────────────────────────────────────────────────────────
-    # URL resolution
-    # ──────────────────────────────────────────────────────────────────────
+    hints_key = "remoterocketship"
 
     @staticmethod
     async def _scrape_apply_url(page: Page, rr_url: str) -> Optional[str]:
-        """Load the RR listing in the page and extract the ATS application URL.
-
-        We use the existing Playwright page (already has stealth, cookies, the
-        real Chromium UA) because RR's CDN 403s plain httpx requests. The
-        Apply CTA on RR is rendered as ``<button aria-label="Apply">`` with no
-        href — the actual ATS link lives in another anchor on the page (e.g.
-        a "View on company site" / "Apply on company website" link, or an
-        ``<a target="_top">`` wrapping the Apply button). We collect every
-        external anchor and pick the first one pointing at a known ATS host.
-        """
+        """Load the RR listing in the real (stealth) browser and extract the ATS
+        application URL from its anchors."""
         try:
             await page.goto(rr_url, wait_until="domcontentloaded", timeout=20_000)
         except Exception as exc:
             logger.warning(f"[RR] page.goto {rr_url!r} failed: {exc}")
             return None
-
         try:
             hrefs = await page.evaluate(
                 "() => Array.from(document.querySelectorAll('a[href]'))"
@@ -156,111 +101,56 @@ class RemoteRocketshipAdapter(BasePlatformAdapter):
         except Exception as exc:
             logger.warning(f"[RR] DOM scrape failed: {exc}")
             hrefs = []
-
         for href in hrefs or []:
             if _detect_ats_from_url(href):
                 logger.info(f"[RR] Resolved {rr_url!r} → {href!r}")
                 return href
-
-        logger.warning(
-            f"[RR] No ATS URL found in {rr_url!r} (scanned {len(hrefs or [])} anchors)"
-        )
+        logger.warning(f"[RR] No ATS URL found in {rr_url!r} (scanned {len(hrefs or [])} anchors)")
         return None
 
-    # ──────────────────────────────────────────────────────────────────────
-    # BasePlatformAdapter
-    # ──────────────────────────────────────────────────────────────────────
-
-    async def navigate_to_application(self, page: Page, job_url: str) -> None:
-        # Lazy import to avoid a circular import with adapters/__init__.py.
-        from .registry import get_adapter
-
-        # 0. The pipeline sometimes stores the ALREADY-RESOLVED inner-ATS URL as
-        # jobs.source_url while still tagging jobs.source='www.remoterocketship.com'
-        # (so it routes here). If the URL we were handed is itself a known ATS
-        # (not a remoterocketship.com listing), skip the RR scrape and delegate
-        # straight to that ATS adapter — otherwise we'd try to scrape an
-        # Ashby/Greenhouse page as if it were an RR listing and fail.
-        direct_key = _detect_ats_from_url(job_url)
+    async def _resolve_target_url(self, page: Page, job_url: str) -> Optional[str]:
+        # Already a resolved inner ATS URL (pipeline sometimes stores it).
         hostname = (urlparse(job_url).hostname or "").lower()
+        direct_key = _detect_ats_from_url(job_url)
         if direct_key and "remoterocketship" not in hostname and "remote100k" not in hostname:
-            self._inner = self._spawn_delegate(direct_key)
-            self._resolved_url = job_url
-            logger.info(f"[RR] URL is already a resolved {direct_key!r} ATS — delegating directly")
-            await self._inner.navigate_to_application(page, job_url)
-            self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
-            self._frame_locator = getattr(self._inner, "_frame_locator", None)
-            self._frame = getattr(self._inner, "_frame", None)
-            return
+            self.hints_key = direct_key
+            logger.info(f"[RR] URL is already a resolved {direct_key!r} ATS")
+            return self._normalize_inner_url(direct_key, job_url)
 
-        # 1. Load RR in the real browser, scrape the underlying ATS link.
         resolved = await self._scrape_apply_url(page, job_url)
-
         if resolved:
-            ats_key = _detect_ats_from_url(resolved) or "generic"
-            self._inner = self._spawn_delegate(ats_key)
-            self._resolved_url = resolved
-            logger.info(f"[RR] Delegating to {ats_key!r} adapter for {resolved!r}")
-            await self._inner.navigate_to_application(page, resolved)
-        else:
-            # 2. Fallback — no recognizable ATS link. Hand the CURRENT page to
-            # the generic adapter and run its navigate step: that clicks the
-            # page's Apply button when no form is visible yet, which unknown
-            # ATSes (e.g. Jobvite) need before any form exists to fill. Without
-            # it the pipeline "fills" the job-description page and dies at
-            # submit ("no submit button found").
-            logger.info(f"[RR] No ATS link found on {job_url!r}; delegating current page to generic adapter")
-            self._inner = self._spawn_delegate("generic")
+            self.hints_key = _detect_ats_from_url(resolved) or "generic"
+            resolved = self._normalize_inner_url(self.hints_key, resolved)
+            logger.info(f"[RR] Using inner ATS hints={self.hints_key!r} for {resolved!r}")
+            return resolved
+
+        # No recognizable ATS link — stay on the current page and let the loop
+        # click Apply (it re-observes; returning None skips the base goto).
+        logger.info(f"[RR] No ATS link on {job_url!r}; letting the loop drive the current page")
+        return None
+
+    @staticmethod
+    def _normalize_inner_url(ats_key: Optional[str], url: str) -> str:
+        """Per-inner-ATS URL normalization. Currently: point a Manatal listing
+        straight at its ``/apply`` form so the salary-format fixup + the loop see
+        the form immediately (no separate Apply click)."""
+        if ats_key == "careerspage":
+            from .careerspage import careerspage_apply_url
+            return careerspage_apply_url(url)
+        return url
+
+    async def prepare(self, page: Page) -> None:
+        """When a listing redirected into careers-page.com (Manatal), fix its
+        salary currency/frequency selects deterministically — same as the
+        dedicated CareersPageAdapter — since the passthrough drives the shared
+        loop directly on that form."""
+        try:
+            host = (urlparse(page.url or "").hostname or "").lower()
+        except Exception:
+            host = ""
+        if "careers-page.com" in host:
             try:
-                await self._inner.navigate_to_application(page, page.url)
+                from .careerspage import apply_manatal_salary_format
+                await apply_manatal_salary_format(page)
             except Exception as exc:
-                logger.warning(f"[RR] generic fallback navigation failed: {exc}")
-
-        # Mirror the inner adapter's iframe state onto self so the executor's
-        # getattr() reads (executor.py:249, 335) see the right values.
-        self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
-        self._frame_locator = getattr(self._inner, "_frame_locator", None)
-        self._frame = getattr(self._inner, "_frame", None)
-
-    async def detect_application_type(self, page: Page) -> str:
-        if self._inner:
-            try:
-                return await self._inner.detect_application_type(page)
-            except NotImplementedError:
-                pass
-        return self.platform_name
-
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
-        if not self._inner:
-            return False
-        return await self._inner.fill_application(
-            page, profile, resume_path, cover_letter_path,
-            screening_answers, pre_detected_form=pre_detected_form,
-            candidate_id=candidate_id,
-        )
-
-    async def submit(self, page: Page) -> bool:
-        if not self._inner:
-            return False
-        return await self._inner.submit(page)
-
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        if not self._inner:
-            return (False, None)
-        return await self._inner.verify_success(page)
-
-    async def refresh_frame(self, page: Page) -> None:
-        if self._inner and hasattr(self._inner, "refresh_frame"):
-            await self._inner.refresh_frame(page)
-            self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
-            self._frame_locator = getattr(self._inner, "_frame_locator", None)
-            self._frame = getattr(self._inner, "_frame", None)
+                logger.debug(f"[RR] manatal salary format skipped: {exc}")

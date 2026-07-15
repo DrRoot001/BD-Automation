@@ -25,7 +25,7 @@ from urllib.parse import urlparse
 
 from playwright.async_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 from .session_utils import invalidate_session_file, session_file_path
 
 logger = logging.getLogger(__name__)
@@ -81,17 +81,15 @@ def _detect_ats_from_url(url: str) -> Optional[str]:
     return None
 
 
-class BuiltInAdapter(BasePlatformAdapter):
+class BuiltInAdapter(AutonomousAdapter):
     platform_name = "builtin"
+    hints_key = "builtin"
     container_selector = None
+    login_gated = True
 
-    def __init__(self) -> None:
-        self._inner: Optional[BasePlatformAdapter] = None
-        self._resolved_url: Optional[str] = None
-        # Executor reads these via getattr — mirror from the inner adapter.
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
+    def __init__(self, agent=None) -> None:
+        super().__init__(agent=agent)
+        self._inner = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Candidate login (passwordless one-time email link — never Google SSO)
@@ -513,42 +511,6 @@ class BuiltInAdapter(BasePlatformAdapter):
         self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
         self._frame_locator = getattr(self._inner, "_frame_locator", None)
         self._frame = getattr(self._inner, "_frame", None)
-
-    async def detect_application_type(self, page: Page) -> str:
-        if self._inner:
-            try:
-                return await self._inner.detect_application_type(page)
-            except NotImplementedError:
-                pass
-        return "EXTERNAL_FORM"
-
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
-        if not self._inner:
-            return False
-        return await self._inner.fill_application(
-            page, profile, resume_path, cover_letter_path,
-            screening_answers, pre_detected_form=pre_detected_form,
-            candidate_id=candidate_id,
-        )
-
-    async def submit(self, page: Page) -> bool:
-        if not self._inner:
-            return False
-        return await self._inner.submit(page)
-
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        if not self._inner:
-            return (False, None)
-        return await self._inner.verify_success(page)
 
     async def refresh_frame(self, page: Page) -> None:
         if self._inner and hasattr(self._inner, "refresh_frame"):

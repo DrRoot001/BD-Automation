@@ -15,15 +15,16 @@ if not DATABASE_URL.startswith("postgresql+asyncpg://"):
 
 import os as _os
 
-# Supabase's session-mode pooler caps TOTAL clients at 15. The backend AND the
-# Celery worker each create this engine in their own process, so the SUM of both
-# pools' max connections must stay under 15 — otherwise the pooler rejects with
-# "(EMAXCONNSESSION) max clients reached in session mode". The OLD config
-# (pool_size=5 + max_overflow=10 = 15 PER PROCESS) blew past that the moment the
-# dashboard fired its parallel queries while the worker held a connection.
-# pool_size=4 + max_overflow=2 = 6 max/process → backend(6) + worker(6) = 12 < 15,
-# leaving headroom for the NullPool task_session bursts. Override via env if your
-# Supabase plan allows more clients.
+# DATABASE_URL MUST point at Supabase's TRANSACTION-mode pooler (port 6543), not
+# the session-mode pooler (port 5432). Session mode caps TOTAL clients at 15
+# across ALL processes — with the full stack (backend + main worker + browser
+# worker + beat, each importing this engine) the dashboard's parallel queries
+# blew straight past it: "(EMAXCONNSESSION) max clients reached in session mode".
+# Transaction mode multiplexes many client connections over a small server pool,
+# so the 15-client cap does not apply. It requires prepared statements OFF —
+# handled by statement_cache_size=0 / prepared_statement_cache_size=0 below.
+# The pool sizes are now just for per-process efficiency, not a hard cap.
+# Override via env if needed.
 _DB_POOL_SIZE = int(_os.getenv("DB_POOL_SIZE", "4"))
 _DB_MAX_OVERFLOW = int(_os.getenv("DB_MAX_OVERFLOW", "2"))
 
