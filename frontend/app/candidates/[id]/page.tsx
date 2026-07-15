@@ -14,6 +14,10 @@ import { api } from '@/lib/api'
 import { Mail, Check, Loader2, AlertTriangle, Activity, FileText, ExternalLink, ArrowLeft, UserCheck, OctagonPause, Play } from 'lucide-react'
 import { useWebSocket } from '@/hooks/useWebSocket'
 
+// Steps published by backend/app/tasks/dynamic_apply.py that end the run —
+// no further pipeline.progress events follow one of these.
+const TERMINAL_STEPS = new Set(['no_jobs', 'no_matches', 'limit_reached', 'done', 'error'])
+
 function ViewResumeButton({ resumeId }: { resumeId: string; fileUrl?: string }) {
   const [loading, setLoading] = useState(false)
 
@@ -97,6 +101,12 @@ export default function CandidateDetailPage() {
           message,
         },
       ])
+
+      // Any terminal step means the pipeline run has finished (successfully,
+      // emptily, or with an error) — stop showing the "Applying..." spinner
+      // even if it somehow outlasted the trigger request's own response.
+      const step = evt.data?.step as string
+      if (TERMINAL_STEPS.has(step)) setIsApplying(false)
     }
   })
 

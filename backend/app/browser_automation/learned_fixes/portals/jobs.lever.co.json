@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "host": "jobs.lever.co",
+    "updated": 1784128690,
+    "runs": 1,
+    "successes": 0
+  },
+  "ats": "lever",
+  "notes": [
+    "wall-clock timeout after 1500s"
+  ],
+  "last_outcome": "MAX_STEPS"
+}

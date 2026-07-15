@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "host": "sigital-llc.breezy.hr",
+    "updated": 1784125190,
+    "runs": 1,
+    "successes": 0
+  },
+  "ats": "generic",
+  "notes": [
+    "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed"
+  ],
+  "last_outcome": "ERROR"
+}

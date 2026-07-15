@@ -1,0 +1,15 @@
+{
+  "_meta": {
+    "host": "ovationhealthcare.wd5.myworkdayjobs.com",
+    "updated": 1783968521,
+    "runs": 7,
+    "successes": 0
+  },
+  "ats": "workday",
+  "notes": [
+    "Looped on click('button:has-text(\"Sign In\")') 5x",
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 1000",
+    "DOM unchanged for 4 consecutive steps"
+  ],
+  "last_outcome": "STUCK"
+}

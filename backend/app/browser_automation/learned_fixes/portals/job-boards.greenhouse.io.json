@@ -1,0 +1,57 @@
+{
+  "_meta": {
+    "host": "job-boards.greenhouse.io",
+    "updated": 1783966932,
+    "runs": 2,
+    "successes": 1
+  },
+  "ats": "greenhouse",
+  "notes": [
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per minute (TPM): Limit 1"
+  ],
+  "last_outcome": "SUBMITTED",
+  "working_selectors": {
+    "upload_file": [
+      "#resume"
+    ],
+    "fill_field": [
+      "#email",
+      "#country",
+      "#phone",
+      "#question_16917277008",
+      "#question_16917282008",
+      "#gender",
+      "#veteran_status",
+      "#disability_status"
+    ],
+    "click": [
+      "button:has-text(\"Submit application\")"
+    ]
+  },
+  "flow": [
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click"
+  ]
+}
