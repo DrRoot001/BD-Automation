@@ -8,6 +8,8 @@ import { StatusBadge } from '@/components/shared/StatusBadge'
 import { formatDistanceToNow } from '@/lib/utils'
 import { formatJobUrl } from '@/components/utils'
 import { FAILURE_INFO } from '@/lib/failureReasons'
+import { applyManuallyClick } from '@/lib/extension'
+import { useToast } from '@/components/ui/Toast'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -57,6 +59,7 @@ interface ApplicationDrawerProps {
 export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: ApplicationDrawerProps) {
   const { data: history, isLoading: historyLoading } = useApplicationHistory(application?.application_id || null)
   const { data: job, isLoading: jobLoading } = useJob(application?.job_id || null)
+  const toast = useToast()
 
   // Prevent background scroll and support Escape key when open
   useEffect(() => {
@@ -124,6 +127,22 @@ export function ApplicationDrawer({ application, isOpen, onClose, onRetry }: App
                       href={formatJobUrl(application.job_url)}
                       target="_blank"
                       rel="noreferrer"
+                      onClick={(e) => {
+                        e.preventDefault()
+                        applyManuallyClick(
+                          {
+                            candidateId: application.candidate_id || '',
+                            jobUrl: formatJobUrl(application.job_url) || '',
+                            applicationId: application.application_id,
+                            jobId: application.job_id,
+                            resumeId: application.resume_id ?? null,
+                            title: application.job_title ?? null,
+                            company: application.company ?? null,
+                          },
+                          formatJobUrl(application.job_url) || '',
+                          toast,
+                        )
+                      }}
                       className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-danger hover:bg-danger/90 px-3 py-1.5 rounded-lg w-max transition-colors mt-1 shadow-sm"
                     >
                       <ExternalLink className="w-3.5 h-3.5" />

@@ -1,9 +1,10 @@
 {
   "_meta": {
     "ats": "www.talent.com",
-    "last_updated": 1783694606
+    "last_updated": 1784127938
   },
   "apply_button": [
-    "a:has-text(\"Apply Now\")"
+    "a:has-text(\"Apply Now\")",
+    "a:has-text(\"Apply Now\"):first-of-type"
   ]
 }

@@ -1,0 +1,67 @@
+{
+  "_meta": {
+    "host": "jobs.jobvite.com",
+    "updated": 1784127721,
+    "runs": 13,
+    "successes": 5
+  },
+  "ats": "jobvite",
+  "notes": [
+    "Page unavailable; job listings are currently unavailable.",
+    "Gemini HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap.",
+    "DOM unchanged for 4 consecutive steps",
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day",
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 1000",
+    "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per min"
+  ],
+  "last_outcome": "SUBMITTED",
+  "working_selectors": {
+    "upload_file": [
+      "#file-input-0",
+      "#file-input-1"
+    ],
+    "fill_field": [
+      "#jv-field-yANc0fwj",
+      "#jv-field-yDNc0fwm",
+      "#jv-field-ydP4ZfwP",
+      "#jv-field-yeP4ZfwQ",
+      "#jv-edit-resume-textarea0",
+      "#jv-field-yfP4ZfwR",
+      "#jv-field-ygP4ZfwS",
+      "#jv-field-yzNc0fwi"
+    ],
+    "click": [
+      "button:has-text(\"Next →\")",
+      "a:has-text('View Full Application Form')",
+      "#jv-field-yOUVXfwk-0",
+      "button:has-text(\"Send Application\")",
+      "#jv-field-f3-0"
+    ]
+  },
+  "flow": [
+    "upload_file",
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field"
+  ]
+}

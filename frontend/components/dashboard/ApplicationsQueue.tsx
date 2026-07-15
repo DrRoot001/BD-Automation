@@ -14,6 +14,7 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import { StatusBadge } from '../shared/StatusBadge'
 import { useConfirm } from '../ui/ConfirmDialog'
 import { useToast } from '../ui/Toast'
+import { applyManuallyClick } from '@/lib/extension'
 
 const COMPLETED_STATUSES = [
   'SUBMITTED',
@@ -92,6 +93,7 @@ interface ApplicationsQueueProps {
 }
 
 export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: ApplicationsQueueProps = {}) {
+  const toast = useToast()
   const router = useRouter()
   const queryClient = useQueryClient()
   const [page, setPage] = useState(0)
@@ -306,19 +308,31 @@ export function ApplicationsQueue({ candidateId, statusFilter, emptyMessage }: A
                     )}
                   </td>
 
-                  {/* JD link */}
+                  {/* JD link — FAILED/BLOCKED → co-pilot handoff; others → plain link */}
                   <td className="px-3 py-3 hidden lg:table-cell" onClick={(e) => e.stopPropagation()}>
-                    {!isCompleted(app.status) && !isInFlight(app.status) && app.job_url ? (
-                      <a
-                        href={formatJobUrl(app.job_url)}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-danger font-semibold hover:underline"
-                        title="Apply manually to this job"
+                    {(app.status === 'FAILED' || app.status === 'BLOCKED') && app.job_url ? (
+                      <button
+                        onClick={() =>
+                          applyManuallyClick(
+                            {
+                              candidateId: app.candidate_id || '',
+                              jobUrl: formatJobUrl(app.job_url) || app.job_url || '',
+                              applicationId: app.application_id,
+                              jobId: app.job_id,
+                              resumeId: app.resume_id ?? null,
+                              title: app.job_title ?? null,
+                              company: app.company ?? null,
+                            },
+                            formatJobUrl(app.job_url) || app.job_url || '',
+                            toast,
+                          )
+                        }
+                        className="inline-flex items-center gap-1 text-xs text-danger font-semibold hover:underline cursor-pointer bg-transparent border-0 p-0"
+                        title="Apply manually via co-pilot extension"
                       >
                         <ExternalLink className="w-3.5 h-3.5" />
                         Apply Manually ↗
-                      </a>
+                      </button>
                     ) : app.job_url ? (
                       <a
                         href={formatJobUrl(app.job_url)}
