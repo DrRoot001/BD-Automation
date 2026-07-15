@@ -34,7 +34,7 @@ from typing import Optional, Tuple
 
 from playwright.async_api import Page
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -137,26 +137,17 @@ _AUTH_WALL_HINTS = (
 )
 
 
-class DiceAdapter(BasePlatformAdapter):
+class DiceAdapter(AutonomousAdapter):
     platform_name = "dice"
-    # The wizard form is a plain (non-iframe) page. Left unscoped (None) so the
-    # scripted-fallback detect_form scans the whole page — the AgentLoop is the
-    # primary path and does its own DOM scoping, so a brittle container selector
-    # would only risk the fallback.
+    hints_key = "dice"
     container_selector = None
+    login_gated = True
 
-    def __init__(self) -> None:
-        # Mirror the iframe attributes other adapters expose so the executor's
-        # getattr() reads return None cleanly (Dice has no form iframe).
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
-        # External-apply passthrough (talent.py pattern): when the posting has
-        # no Easy Apply, we follow the employer redirect and delegate to the
-        # inner ATS adapter; the executor picks up hints via `_inner` and the
-        # expired-check via `_resolved_url`.
+    def __init__(self, agent=None) -> None:
+        super().__init__(agent=agent)
+        # External-apply passthrough: when the posting has no Easy Apply we
+        # follow the employer redirect; _resolved_url drives the expired-check.
         self._inner = None
-        self._resolved_url: Optional[str] = None
 
     # ──────────────────────────────────────────────────────────────────────
     # Navigation (auth + Easy Apply entry)
@@ -415,11 +406,6 @@ class DiceAdapter(BasePlatformAdapter):
                     logger.info(f"[Dice] work authorization already correct ({desired!r})")
             except Exception as exc:
                 logger.warning(f"[Dice] work-authorization fix failed (non-fatal): {exc}")
-
-    async def detect_application_type(self, page: Page) -> str:
-        if self._inner:
-            return await self._inner.detect_application_type(page)
-        return "EASY_APPLY"
 
     async def refresh_frame(self, page: Page) -> None:
         if self._inner:
@@ -789,86 +775,6 @@ class DiceAdapter(BasePlatformAdapter):
         self._iframe_mode = getattr(self._inner, "_iframe_mode", False)
         self._frame_locator = getattr(self._inner, "_frame_locator", None)
         self._frame = getattr(self._inner, "_frame", None)
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Submit / verify — fallback only (AgentLoop normally handles these).
-    # ──────────────────────────────────────────────────────────────────────
-
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
-        if self._inner:
-            return await self._inner.fill_application(
-                page, profile, resume_path, cover_letter_path,
-                screening_answers, pre_detected_form=pre_detected_form,
-                candidate_id=candidate_id,
-            )
-        from ..forms import detect_form, fill_form
-
-        form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
-        return await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
-
-    async def submit(self, page: Page) -> bool:
-        if self._inner:
-            return await self._inner.submit(page)
-        # Priority 1 — role=button with a submit-y name.
-        try:
-            btn = page.get_by_role("button", name=_SUBMIT_NAME_RE).first
-            if await btn.count() > 0 and await btn.is_visible() and await btn.is_enabled():
-                await btn.scroll_into_view_if_needed()
-                await btn.click(timeout=_FIELD_TIMEOUT_MS)
-                await self._settle_after_submit(page)
-                logger.info("[Dice] Submitted via role=button[name~='submit']")
-                return True
-        except Exception as exc:
-            logger.debug(f"[Dice] role-based submit failed: {exc}")
-
-        for sel in _SUBMIT_FALLBACK_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                if await btn.count() == 0 or not await btn.is_visible():
-                    continue
-                await btn.scroll_into_view_if_needed()
-                await btn.click(timeout=_FIELD_TIMEOUT_MS)
-                await self._settle_after_submit(page)
-                logger.info(f"[Dice] Submitted via {sel!r}")
-                return True
-            except Exception as exc:
-                logger.debug(f"[Dice] submit selector {sel!r} failed: {exc}")
-        logger.error("[Dice] No submit button matched")
-        return False
-
-    async def _settle_after_submit(self, page: Page) -> None:
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15_000)
-        except Exception:
-            pass
-        await self.human_delay(1.0, 2.0)
-
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        if self._inner:
-            return await self._inner.verify_success(page)
-        # Primary — success URL pattern.
-        try:
-            if _SUCCESS_URL_RE.search(page.url or ""):
-                logger.info(f"[Dice] Success verified via URL {page.url!r}")
-                return (True, "wizard/success")
-        except Exception:
-            pass
-        # Secondary — page text.
-        content = (await self._safe_content(page)).lower()
-        for pattern in _SUCCESS_TEXT_PATTERNS:
-            if pattern in content:
-                logger.info(f"[Dice] Success verified via text {pattern!r}")
-                return (True, pattern)
-        return (False, None)
 
     # ──────────────────────────────────────────────────────────────────────
     # Low-level helpers

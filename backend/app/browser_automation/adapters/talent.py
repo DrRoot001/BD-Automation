@@ -37,7 +37,7 @@ from typing import Optional, Tuple
 
 from playwright.async_api import Page
 
-from .base import BasePlatformAdapter
+from .autonomous_base import AutonomousAdapter
 
 logger = logging.getLogger(__name__)
 
@@ -85,18 +85,15 @@ _SUCCESS_TEXT_PATTERNS = (
 )
 
 
-class TalentAdapter(BasePlatformAdapter):
+class TalentAdapter(AutonomousAdapter):
     platform_name = "talent"
-    # Apply flow is a plain (non-iframe) SPA. Left unscoped so the scripted
-    # fallback can scan the whole page; the AgentLoop does its own scoping.
+    hints_key = "talent"
     container_selector = None
 
-    def __init__(self) -> None:
-        # Mirror the iframe attributes other adapters expose so executor
-        # getattr() reads return None cleanly (Talent has no form iframe).
-        self._iframe_mode: bool = False
-        self._frame_locator = None
-        self._frame = None
+    def __init__(self, agent=None) -> None:
+        super().__init__(agent=agent)
+        # Set when an external-apply redirect delegates to an inner ATS.
+        self._inner = None
         # Set by the executor before navigate() so the adapter can fill the
         # email gate deterministically (avoids the AI mis-clicking the
         # "Continue with Google" SSO button). Optional — falls back to the
@@ -193,14 +190,6 @@ class TalentAdapter(BasePlatformAdapter):
         await self._wait_for_apply_surface(page)
         await self._enter_email_gate(page)
         await self.human_delay(0.6, 1.2)
-
-    async def detect_application_type(self, page: Page) -> str:
-        if self._inner:
-            try:
-                return await self._inner.detect_application_type(page)
-            except NotImplementedError:
-                pass
-        return "EASY_APPLY"
 
     async def refresh_frame(self, page: Page) -> None:
         if self._inner and hasattr(self._inner, "refresh_frame"):
@@ -549,77 +538,6 @@ class TalentAdapter(BasePlatformAdapter):
             await asyncio.sleep(3.0)
         else:
             logger.warning("[Talent] Could not submit email gate — AgentLoop will attempt it")
-
-    # ──────────────────────────────────────────────────────────────────────
-    # Submit / verify — fallback only (AgentLoop normally handles these).
-    # ──────────────────────────────────────────────────────────────────────
-
-    async def fill_application(
-        self,
-        page: Page,
-        profile: dict,
-        resume_path: str,
-        cover_letter_path: Optional[str],
-        screening_answers: Optional[dict],
-        pre_detected_form=None,
-        candidate_id: Optional[str] = None,
-    ) -> bool:
-        if self._inner:
-            return await self._inner.fill_application(
-                page, profile, resume_path, cover_letter_path,
-                screening_answers, pre_detected_form=pre_detected_form,
-                candidate_id=candidate_id,
-            )
-        from ..forms import detect_form, fill_form
-
-        form = pre_detected_form or await detect_form(page, container_selector=self.container_selector)
-        return await fill_form(page, form, profile, screening_answers, candidate_id=candidate_id)
-
-    async def submit(self, page: Page) -> bool:
-        if self._inner:
-            return await self._inner.submit(page)
-        try:
-            btn = page.get_by_role("button", name=_SUBMIT_NAME_RE).first
-            if await btn.count() > 0 and await btn.is_visible() and await btn.is_enabled():
-                await btn.scroll_into_view_if_needed()
-                await btn.click(timeout=_FIELD_TIMEOUT_MS)
-                await self._settle_after_submit(page)
-                logger.info("[Talent] Submitted via role=button[name~='send application']")
-                return True
-        except Exception as exc:
-            logger.debug(f"[Talent] role-based submit failed: {exc}")
-
-        for sel in _SUBMIT_FALLBACK_SELECTORS:
-            try:
-                btn = page.locator(sel).first
-                if await btn.count() == 0 or not await btn.is_visible():
-                    continue
-                await btn.scroll_into_view_if_needed()
-                await btn.click(timeout=_FIELD_TIMEOUT_MS)
-                await self._settle_after_submit(page)
-                logger.info(f"[Talent] Submitted via {sel!r}")
-                return True
-            except Exception as exc:
-                logger.debug(f"[Talent] submit selector {sel!r} failed: {exc}")
-        logger.error("[Talent] No submit button matched")
-        return False
-
-    async def _settle_after_submit(self, page: Page) -> None:
-        try:
-            await page.wait_for_load_state("networkidle", timeout=15_000)
-        except Exception:
-            pass
-        await self.human_delay(1.0, 2.0)
-
-    async def verify_success(self, page: Page) -> Tuple[bool, Optional[str]]:
-        if self._inner:
-            return await self._inner.verify_success(page)
-        content = (await self._safe_content(page)).lower()
-        for pattern in _SUCCESS_TEXT_PATTERNS:
-            if pattern in content:
-                logger.info(f"[Talent] Success verified via text {pattern!r}")
-                return (True, pattern)
-        return (False, None)
 
     # ──────────────────────────────────────────────────────────────────────
     # Low-level helpers

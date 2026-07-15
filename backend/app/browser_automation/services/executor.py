@@ -30,36 +30,12 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 
-# Hosts that sit behind a bot wall (Cloudflare / PerimeterX / login gate) and
-# will return 403 / a challenge / a redirect-to-login to a plain httpx GET — even
-# when the listing is perfectly live. For these hosts the lightweight pre-flight
-# check produces FALSE POSITIVES ("JOB_EXPIRED"), so we skip it and let the
-# real Playwright session (which has stealth + cookies) decide via
-# check_page_indicates_expired(). RR is the canonical case the user hit: a live
-# listing URL was being killed at pre-flight because httpx got bounced.
-# Built In / Glassdoor / ZipRecruiter sit behind Cloudflare or PerimeterX;
-# Himalayas / Adzuna / RemoteOK / hiring.cafe are aggregators whose listing
-# pages 403 or bounce plain httpx GETs the same way — all false-kill at
-# pre-flight, so they belong on this skip list too.
-_PREFLIGHT_SKIP_HOSTS = (
-    "remoterocketship.com",
-    "remote100k",
-    "myworkdayjobs.com",
-    "workday.com",
-    "linkedin.com",
-    "indeed.com",
-    "dice.com",
-    "talent.com",
-    "icims.com",
-    "smartrecruiters.com",
-    "builtin.com",
-    "glassdoor.com",
-    "ziprecruiter.com",
-    "himalayas.app",
-    "adzuna.com",
-    "remoteok.com",
-    "hiring.cafe",
-)
+# Hosts behind a bot wall / login gate that 403 / challenge / redirect a plain
+# httpx GET even when the listing is live — the lightweight pre-flight would
+# false-kill them as "JOB_EXPIRED", so we skip it and let the real Playwright
+# session decide. Single source of truth in ``..hosts`` (shared with the browser
+# proxy scoping) so the two lists can never drift out of sync again.
+from ..hosts import PREFLIGHT_SKIP_HOSTS as _PREFLIGHT_SKIP_HOSTS  # noqa: E402
 
 
 # Per-platform AgentLoop step budgets. Multi-step wizard ATSes (login →
@@ -726,8 +702,14 @@ class ApplicationExecutor:
             adapter: BasePlatformAdapter = get_adapter(package.platform)
 
             # ── STEP 3: Browser context ──
+            # Pass the job URL so the proxy decision keys on the host we actually
+            # navigate to (an inner ATS resolved from an aggregator is usually NOT
+            # bot-walled and must NOT be forced through the slow residential proxy,
+            # which timed out the full browser page-load — net::ERR_TIMED_OUT).
             context_mgr = BrowserContextManager()
-            context = await context_mgr.get_context(package.candidate_id, package.platform)
+            context = await context_mgr.get_context(
+                package.candidate_id, package.platform, target_url=package.job_url,
+            )
             page = await context.new_page()
 
             # Apply playwright-stealth to mask automation signals before any navigation
@@ -1301,6 +1283,23 @@ class ApplicationExecutor:
                 # LLM failure we fall back to the deterministic adapter path so the
                 # pipeline never blocks on the AI.
                 use_llm_fill = os.getenv("USE_LLM_FILLER", "true").lower() == "true"
+                # ── Engine selector ──────────────────────────────────────────
+                # USE_AGENT_LOOP is the single engine switch:
+                #   true  (default) → legacy vision AgentLoop (step 5.7, above).
+                #   false           → the NEW perception framework
+                #                     (adapter.fill_application → AutonomousAgent).
+                # When the legacy loop is OFF we must ALSO bypass the deterministic
+                # fill_form_with_llm here, otherwise that third engine would run
+                # first and the new framework would only ever be a fallback. This
+                # makes the flag do exactly what it says: false = new framework.
+                if not use_agent_loop:
+                    if use_llm_fill:
+                        logger.info(
+                            "[M4] USE_AGENT_LOOP=false → routing fill through the new "
+                            "perception framework (adapter.fill_application); "
+                            "bypassing fill_form_with_llm."
+                        )
+                    use_llm_fill = False
                 fill_ctx = getattr(adapter, "_frame_locator", None) or getattr(adapter, "_frame", None) if getattr(adapter, "_iframe_mode", False) else page
                 fill_success = False
                 if use_llm_fill:

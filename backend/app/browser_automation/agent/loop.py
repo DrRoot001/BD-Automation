@@ -1195,7 +1195,8 @@ _DOM_SNAPSHOT_JS = """() => {
             || (el.closest('[class*="required"]') !== null)
             || isDemographic
             || /\\*/.test(fsLabel)
-            || containerRequired_fs;
+            || containerRequired_fs
+            || el.closest('.question[data-question-mandatory="true"]') !== null;
         if (!isRequired) return;
         // Mirror the pre-submit gate's phantom-field filter — these
         // computations MUST agree, otherwise the AI sees "NOT READY"
@@ -1301,6 +1302,15 @@ _DOM_SNAPSHOT_JS = """() => {
         // reCAPTCHA v2 and hCaptcha containers carry it too — so require an
         // explicit turnstile marker (class/id on the element or an ancestor)
         // or the challenges.cloudflare.com iframe before classifying.
+        // Is the REAL gate a reCAPTCHA/hCaptcha? Cloudflare loads a
+        // challenges.cloudflare.com iframe as infrastructure on many pages whose
+        // ACTUAL captcha is reCAPTCHA/hCaptcha — so a bare CF iframe must NOT be
+        // reported as Turnstile when one of those is present (that phantom
+        // Turnstile made the AI run the page-reloading Cloudflare solve, which
+        // captured no widget and closed the page). An EXPLICIT .cf-turnstile /
+        // turnstile-marked widget is still a real Turnstile and wins regardless.
+        const hasRc = !!document.querySelector('.g-recaptcha, iframe[src*="recaptcha"]');
+        const hasHc = !!document.querySelector('.h-captcha, iframe[src*="hcaptcha"]');
         let tsSitekey = null;
         let tsFound = false;
         document.querySelectorAll('.cf-turnstile, [data-sitekey]').forEach(el => {
@@ -1312,7 +1322,8 @@ _DOM_SNAPSHOT_JS = """() => {
             if (!tsSitekey) tsSitekey = el.getAttribute('data-sitekey') || null;
         });
         let tsSel = '.cf-turnstile';
-        if (!tsFound && document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
+        if (!tsFound && !hasRc && !hasHc
+                && document.querySelector('iframe[src*="challenges.cloudflare.com"]')) {
             tsFound = true;   // embedded widget rendered without the .cf-turnstile host div
             tsSel = 'iframe[src*="challenges.cloudflare.com"]';  // no .cf-turnstile host exists here
         }
@@ -1836,6 +1847,133 @@ async def _maybe_login_password(
         sel_l = (selector or "").lower()
         is_pw = "password" in lbl or "password" in sel_l
     return pw if is_pw else None
+
+
+async def _commit_radio_group(ctx, loc, value: str) -> bool:
+    """Commit the option matching ``value`` inside the radio GROUP ``loc`` belongs
+    to. Handles the two custom-radio patterns that a plain ``.check()`` / fill
+    can't commit (they left required fields unanswered → submit rejected → STUCK):
+
+      • Ashby "labeled-radio": visually-hidden ``<input value="on">`` (every
+        option shares value="on") + a sibling ``<label for=id>`` carrying the
+        option text. Match by LABEL TEXT, click ``label[for]`` so React onChange
+        fires.
+      • Lever "card" radios: ``<label><input value="Yes" (no id)><span>Yes</span>
+        </label>`` — the input has NO id and a DISTINCT value. Match by VALUE or
+        the wrapping-label text, and click the WRAPPING ``<label>``.
+
+    One unified JS pass matches by TEXT **or** VALUE, clicks the right label
+    (``label[for]`` → wrapping ``<label>`` → the input), and dispatches
+    input/change as a belt-and-suspenders for frameworks that ignore a label
+    click. Returns True only when an option ends up ``checked``.
+    """
+    try:
+        name = await loc.get_attribute("name")
+    except Exception:
+        name = None
+    if not name:
+        return False
+    try:
+        res = await ctx.evaluate(
+            """(args) => {
+                const {name, target} = args;
+                const norm = s => (s || '').trim().toLowerCase();
+                const t = norm(target);
+                const inputs = Array.from(document.querySelectorAll('input[type=radio]'))
+                    .filter(i => i.name === name);
+                if (!inputs.length) return {ok: false};
+                const labelFor = (id) => {
+                    if (!id) return '';
+                    const l = Array.from(document.querySelectorAll('label[for]'))
+                        .find(x => x.getAttribute('for') === id);
+                    return l ? (l.textContent || '').trim() : '';
+                };
+                const optText = (inp) => {
+                    let s = inp.id ? labelFor(inp.id) : '';
+                    if (!s) { const w = inp.closest('label'); if (w) s = (w.textContent || '').trim(); }
+                    if (!s) s = (inp.getAttribute('aria-label') || '').trim();
+                    return s;
+                };
+                const opts = inputs.map(inp => ({ inp, text: optText(inp), value: (inp.value || '').trim() }));
+                // Priority: exact text > exact value > text-contains-target >
+                // value-contains-target > target-contains-option-text.
+                let chosen = opts.find(o => norm(o.text) === t)
+                    || opts.find(o => norm(o.value) === t)
+                    || (t && opts.find(o => norm(o.text) && norm(o.text).includes(t)))
+                    || (t && opts.find(o => norm(o.value) && norm(o.value).includes(t)))
+                    || (t && opts.find(o => norm(o.text).length >= 2 && t.includes(norm(o.text))));
+                if (!chosen) return {ok: false, options: opts.map(o => o.text || o.value)};
+                const inp = chosen.inp;
+                const clickTarget = (inp.id && Array.from(document.querySelectorAll('label[for]'))
+                        .find(x => x.getAttribute('for') === inp.id))
+                    || inp.closest('label') || inp;
+                try { clickTarget.click(); } catch (e) {}
+                try {
+                    if (!inp.checked) {
+                        inp.checked = true;
+                        inp.dispatchEvent(new Event('input', { bubbles: true }));
+                        inp.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
+                } catch (e) {}
+                return { ok: true, picked: (chosen.text || chosen.value), checked: !!inp.checked };
+            }""",
+            {"name": name, "target": value},
+        )
+    except Exception:
+        return False
+    if not res or not res.get("ok"):
+        return False
+    picked = res.get("picked") or ""
+    if picked.strip().lower() != (value or "").strip().lower():
+        logger.info(f"[AgentLoop] radio group: {value!r} -> closest option {picked!r}")
+    logger.info(f"[AgentLoop] radio group committed {picked!r} (checked={res.get('checked')})")
+    return bool(res.get("checked", True))
+
+
+async def _commit_checkbox(ctx, loc, want_checked: bool) -> bool:
+    """Set a checkbox to ``want_checked`` and make it STICK. Styled consent
+    checkboxes (Recruitee ``#candidate_consent_given``, and similar) don't commit
+    from a bare ``.check()`` — the framework's validation only updates on a real
+    LABEL click / change event, so a required consent box stayed unchecked and the
+    submit was rejected (the observed Western Computer STUCK loop). Strategy:
+    Playwright ``.check()/.uncheck()`` (trusted event) first, then a JS fallback —
+    click the ``label[for]`` (toggles + fires native change) and, if still wrong,
+    force the property + dispatch input/change. Returns the final checked state.
+    """
+    if want_checked:
+        try:
+            await loc.check(force=True, timeout=4000)
+        except Exception:
+            pass
+    else:
+        try:
+            await loc.uncheck(force=True, timeout=4000)
+        except Exception:
+            pass
+    try:
+        res = await loc.evaluate(
+            """(el, want) => {
+                if (!!el.checked === want) return { checked: el.checked };
+                let lbl = el.id
+                    ? Array.from(document.querySelectorAll('label[for]'))
+                        .find(x => x.getAttribute('for') === el.id)
+                    : null;
+                if (!lbl) lbl = el.closest('label');
+                try { (lbl || el).click(); } catch (e) {}
+                if (!!el.checked !== want) {
+                    el.checked = want;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+                return { checked: el.checked };
+            }""",
+            want_checked,
+        )
+    except Exception:
+        return False
+    ok = bool(isinstance(res, dict) and res.get("checked") == want_checked)
+    logger.info(f"[AgentLoop] checkbox commit -> checked={res.get('checked') if isinstance(res, dict) else '?'} (wanted {want_checked})")
+    return ok
 
 
 async def _execute_action(
@@ -2373,17 +2511,15 @@ async def _execute_action(
                 v = (value or "").strip()
                 vl = v.lower()
                 if vl in ("no", "false", "0", "off", "unchecked", "decline"):
-                    # Explicit negative — ensure UNchecked (idempotent).
-                    try:
-                        await loc.uncheck(force=True, timeout=5000)
-                    except Exception:
-                        pass
+                    # Explicit negative — ensure UNchecked (label-click aware).
+                    await _commit_checkbox(ctx, loc, False)
                     return True
                 if vl in ("yes", "true", "1", "on", "agree", "checked", ""):
-                    # Boolean/consent checkbox — ensure checked (idempotent;
-                    # .check() is a no-op if already checked, so re-issuing the
-                    # same fill_field never toggles it back off).
-                    await loc.check(force=True, timeout=5000)
+                    # Boolean/consent checkbox — ensure checked. Styled consent
+                    # boxes need a real label-click/change (not a bare .check()),
+                    # else a required consent stays unchecked and submit is
+                    # rejected (the Western Computer / Recruitee STUCK loop).
+                    await _commit_checkbox(ctx, loc, True)
                     return True
                 # Otherwise the value names a SPECIFIC option in a checkbox
                 # GROUP that shares one `name` — Lever "multiple-select" cards
@@ -2407,6 +2543,13 @@ async def _execute_action(
                 return True
 
             if field_type == "radio":
+                # Resolve the RIGHT option in the group by matching label text to
+                # `value`, then click its <label> so React commits (fixes the
+                # Ashby labeled-radio STUCK loop: hidden opacity:0 inputs that all
+                # share value="on", where .check() left onChange unfired). Only
+                # fall back to the raw .check() if group resolution failed.
+                if await _commit_radio_group(ctx, loc, value):
+                    return True
                 await loc.check(force=True, timeout=5000)
                 return True
 
@@ -3007,6 +3150,16 @@ class AgentLoop:
         except Exception as exc:
             logger.debug(f"[AgentLoop] platform re-detect mapping failed (non-fatal): {exc}")
             return
+        # White-label ATSes carry NO stable URL token — TeamTailor career sites
+        # live on arbitrary employer domains (careers.<company>.com). When URL
+        # mapping finds nothing, fall back to a cheap DOM-signature check so the
+        # loop still gets the right per-ATS playbook. Runs at most once per host
+        # (guarded by _last_classified_host above).
+        if not new_key or new_key == "generic":
+            try:
+                new_key = await self._detect_ats_from_dom(page) or new_key
+            except Exception as exc:
+                logger.debug(f"[AgentLoop] DOM ATS detection skipped: {exc}")
         # Never downgrade to generic/unknown; only switch to a KNOWN platform
         # that actually carries a hints entry, and only if it differs.
         if not new_key or new_key == "generic":
@@ -3037,6 +3190,18 @@ class AgentLoop:
             # leave the loop in a half-swapped state.
             self._platform = old
             logger.debug(f"[AgentLoop] platform re-detect swap failed (non-fatal): {exc}")
+
+    async def _detect_ats_from_dom(self, page: "Page") -> Optional[str]:
+        """DOM-signature ATS detection for white-labelled hosts that carry no
+        stable URL token (currently TeamTailor career sites on employer
+        domains). Cheap; returns a hints key or None. Never raises."""
+        try:
+            from ..adapters.teamtailor import is_teamtailor_dom
+            if await is_teamtailor_dom(page):
+                return "teamtailor"
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] _detect_ats_from_dom skipped: {exc}")
+        return None
 
     async def _classify_submit_visual(self, page: "Page") -> Optional[str]:
         """Phase 5.2 — one LLM VISION classification used ONLY as a post-submit
@@ -4330,6 +4495,86 @@ class AgentLoop:
         # `entries` above (priority over the generic acknowledge rule).
         return entries
 
+    async def _await_async_upload(self, page: Page, ctx: Any, per_try_s: float = 15.0) -> str:
+        """After attaching a resume file, WAIT for any async background upload to
+        COMMIT before letting the run proceed. Returns one of:
+        ``"committed"`` | ``"error"`` | ``"stalled"`` | ``"idle"`` | ``"not_dropzone"``.
+
+        Critical for Dropzone.js-based ATSes (TeamTailor, Recruitee, Workable):
+        setting the file input only *starts* an upload — Dropzone POSTs for a
+        presigned URL then PUTs the file to storage (S3) in the background, and
+        the form binds the real attachment token ONLY when that finishes
+        (marked by a ``.dz-success`` / ``.dz-complete`` preview). Submitting
+        before then makes the server silently reject the application as
+        "resume required" with NO visible DOM error — this was the true cause of
+        the TeamTailor/"Recruitee" submit rejection. Also covers Lever's async
+        resume-parse.
+
+        Distinguishes a still-uploading widget (``stalled`` — activity seen but
+        not done, keep waiting) from one where the upload never fired at all
+        (``idle`` — no processing/progress/preview, so the change event was
+        likely lost → the caller should RE-ATTACH). Never raises.
+        """
+        try:
+            is_dropzone = await ctx.evaluate(
+                "() => !!document.querySelector("
+                "'.dz-hidden-input, .dropzone, .dz-preview, [class*=\"dz-processing\"]')"
+            )
+        except Exception:
+            is_dropzone = False
+
+        if not is_dropzone:
+            # Non-Dropzone widget: settle network (covers Lever's resume-parse).
+            try:
+                await page.wait_for_load_state("networkidle", timeout=6000)
+            except Exception:
+                await asyncio.sleep(3.0)
+            return "not_dropzone"
+
+        import time as _time
+        deadline = _time.monotonic() + max(3.0, per_try_s)
+        activity_seen = False
+        while _time.monotonic() < deadline:
+            try:
+                st = await ctx.evaluate(r"""() => {
+                    const q = s => document.querySelectorAll(s).length;
+                    const prog = [...document.querySelectorAll('[data-dz-uploadprogress], .dz-upload')]
+                        .some(e => e.style && e.style.width && e.style.width !== '0%');
+                    return {
+                        done: q('.dz-success, .dz-complete'),
+                        error: q('.dz-error'),
+                        errMsg: [...document.querySelectorAll('.dz-error-message')]
+                            .map(e => (e.textContent || '').trim()).filter(Boolean).slice(0, 2),
+                        active: q('.dz-processing, .dz-uploading') || q('.dz-preview') || (prog ? 1 : 0),
+                    };
+                }""")
+            except Exception:
+                break
+            if st.get("done"):
+                logger.info("[AgentLoop] async resume upload committed (dz-success)")
+                return "committed"
+            if st.get("error"):
+                logger.warning(
+                    "[AgentLoop] resume upload reported an error "
+                    f"(dz-error): {st.get('errMsg')} — letting the loop recover"
+                )
+                return "error"
+            if st.get("active"):
+                activity_seen = True
+            await asyncio.sleep(0.4)
+
+        if activity_seen:
+            logger.warning(
+                f"[AgentLoop] resume upload still in progress after {per_try_s:.0f}s "
+                "(activity seen, not yet committed) — proceeding; submit gate re-checks"
+            )
+            return "stalled"
+        logger.warning(
+            f"[AgentLoop] resume upload showed NO activity in {per_try_s:.0f}s "
+            "(change event likely lost) — caller will re-attach"
+        )
+        return "idle"
+
     async def _deterministic_file_upload(
         self,
         page: Page,
@@ -4467,10 +4712,22 @@ class AgentLoop:
                     # change event) and leave the upload widget in a
                     # confused state that shows a stale/wrong error. Give it
                     # a real window to finish before moving on.
-                    try:
-                        await page.wait_for_load_state("networkidle", timeout=6000)
-                    except Exception:
-                        await asyncio.sleep(3.0)
+                    status = await self._await_async_upload(page, ctx)
+                    # SELF-HEAL: if a Dropzone upload never fired (change event
+                    # lost — 'idle'), RE-ATTACH the file once. This is the
+                    # decisive guard against a résumé-less submit (the silent
+                    # server-side reject). A 'stalled' upload is still in flight,
+                    # so don't disturb it; the pre-submit gate re-checks it.
+                    if status == "idle":
+                        try:
+                            logger.warning(
+                                f"[AgentLoop] re-attaching resume to {sel!r} "
+                                "(first attach did not start an upload)"
+                            )
+                            await loc.set_input_files(path, timeout=8000)
+                            await self._await_async_upload(page, ctx)
+                        except Exception as exc:
+                            logger.debug(f"[AgentLoop] resume re-attach failed: {exc}")
                 actions.append(AgentAction(
                     kind="upload_file", selector=sel, value=kind,
                     field_label=info.get("groupLabel") or info.get("id") or "",
@@ -6104,6 +6361,20 @@ class AgentLoop:
                     # _SYSTEM_PROMPT_BASE, so the AI handles them through its
                     # normal sequential fill flow.
 
+                    # ★ TEAMTAILOR DE-GATE — the form renders under a
+                    # pointer-events-none / opacity-50 wrapper until its realtime
+                    # controller marks it "ready" (often never, in automation),
+                    # which blocks EVERY click (radios, the experience slider,
+                    # submit). Strip that gating each step so real clicks land.
+                    # Cheap no-op on every other ATS.
+                    if (self._platform or "").lower() == "teamtailor":
+                        try:
+                            from ..adapters.teamtailor import activate_teamtailor_form
+                            if await activate_teamtailor_form(page):
+                                logger.info("[AgentLoop] de-gated TeamTailor form (pointer-events enabled)")
+                        except Exception as exc:
+                            logger.debug(f"[AgentLoop] teamtailor de-gate skipped: {exc}")
+
                     # ★ DETERMINISTIC FILE UPLOAD — runs BEFORE field prefill.
                     # The FORM STATUS check intentionally skips file inputs
                     # (.value is unreliable after set_input_files), so an
@@ -6540,7 +6811,8 @@ class AgentLoop:
                                         || (el.closest('[class*="required"]') !== null && !el.value)
                                         || isDemographic
                                         || /\\*/.test(gLabel)
-                                        || containerRequired_gate;
+                                        || containerRequired_gate
+                                        || el.closest('.question[data-question-mandatory="true"]') !== null;
                                     if (!isRequired) return;
                                     const style = window.getComputedStyle(el);
                                     // Ashby's Yes/No toggle widget keeps the real, form-bound
@@ -6609,6 +6881,14 @@ class AgentLoop:
                                         }
                                     } else {
                                         val = (el.value || '').trim();
+                                        // A range/slider (TeamTailor 'years of
+                                        // experience') always carries a value, so
+                                        // its DEFAULT (min, usually 0) reads as
+                                        // "filled" and sails through the gate —
+                                        // but the server treats an untouched
+                                        // slider as unanswered. Count min/0 as
+                                        // empty so the loop is forced to set it.
+                                        if (el.type === 'range' && (val === (el.min || '0') || val === '0')) val = '';
                                     }
                                     // Custom react-select widgets — read both
                                     // single-value and multi-value (mark all
@@ -6655,6 +6935,52 @@ class AgentLoop:
                                 return out;
                             }""")
                             await asyncio.sleep(1.0)
+                            # SAFETY (Dropzone ATSes — TeamTailor/Recruitee/Workable):
+                            # the required-field scan above skips file inputs, so a
+                            # resume whose async background upload (presigned → S3 PUT)
+                            # hasn't COMMITTED yet would sail through the gate and get
+                            # rejected server-side with no visible error. If a Dropzone
+                            # resume is still uploading, WAIT for it (bounded) rather
+                            # than block+refill (which would deadlock — the uploader is
+                            # idempotent and won't re-fire). Fast no-op once committed.
+                            try:
+                                dz_state = await page.evaluate(r"""() => {
+                                    if (!document.querySelector('.dz-hidden-input, .dropzone, .dz-preview')) return 'none';
+                                    const done = document.querySelectorAll('.dz-success, .dz-complete').length;
+                                    const error = document.querySelectorAll('.dz-error').length;
+                                    const previews = document.querySelectorAll('.dz-preview').length;
+                                    if (done) return 'ok';
+                                    if (error) return 'error';
+                                    if (previews > 0) return 'pending';     // uploading, not yet done
+                                    // A REQUIRED resume dropzone with nothing uploaded at all:
+                                    if (document.querySelector('input[type=file].dz-hidden-input[required], #candidate_resume_remote_url')) return 'missing';
+                                    return 'ok';
+                                }""")
+                            except Exception:
+                                dz_state = "none"
+                            if dz_state == "pending":
+                                logger.info(
+                                    "[AgentLoop] PRE-SUBMIT: Dropzone resume still uploading "
+                                    "— waiting for it to commit before allowing submit"
+                                )
+                                await self._await_async_upload(page, page)
+                            elif dz_state == "missing" and getattr(self, "resume_path", None):
+                                # Last line of defense: a required resume dropzone with
+                                # NO upload means submit would be silently rejected.
+                                # Re-attach the resume here, then wait for it to commit.
+                                logger.warning(
+                                    "[AgentLoop] PRE-SUBMIT: required resume NOT attached "
+                                    "(no Dropzone upload) — re-attaching before submit"
+                                )
+                                try:
+                                    ri = page.locator(
+                                        "input[type=file].dz-hidden-input[required], #candidate_resume_remote_url"
+                                    ).first
+                                    if await ri.count():
+                                        await ri.set_input_files(self.resume_path, timeout=8000)
+                                        await self._await_async_upload(page, page)
+                                except Exception as exc:
+                                    logger.debug(f"[AgentLoop] gate resume re-attach failed: {exc}")
                             # Also pull visible validation-error messages. If
                             # the previous submit was rejected with a visible
                             # error, the form-state needs fixing BEFORE we
@@ -8053,6 +8379,34 @@ class AgentLoop:
                                 target_val = str(action.value).strip()
                                 loc = (frame or page).locator(action.selector).first
                                 if await loc.count() > 0:
+                                    # Radio/checkbox groups never carry the chosen
+                                    # option TEXT as their .value (labeled-radios
+                                    # all read value="on"), so the value-based
+                                    # match below is meaningless and .fill() is
+                                    # invalid on them. Commit the correct option by
+                                    # label click instead, then move on.
+                                    _rg_type = ""
+                                    try:
+                                        _rg_type = (await loc.evaluate("el => el.type || ''") or "").lower()
+                                    except Exception:
+                                        _rg_type = ""
+                                    if _rg_type == "radio":
+                                        if await _commit_radio_group((frame or page), loc, target_val):
+                                            logger.warning(
+                                                f"[AgentLoop] step={step} REPETITION GUARD rescue: "
+                                                f"committed radio option {target_val[:40]!r} by label click."
+                                            )
+                                            same_action_run = []
+                                            actions.append(action)
+                                            continue
+                                    elif _rg_type == "checkbox":
+                                        try:
+                                            await loc.check(force=True, timeout=3000)
+                                            same_action_run = []
+                                            actions.append(action)
+                                            continue
+                                        except Exception:
+                                            pass
                                     current_val = await loc.evaluate("el => el.value || el.innerText || el.getAttribute('value') || ''")
                                     current_clean = current_val.strip()
                                     target_clean = target_val.lower()

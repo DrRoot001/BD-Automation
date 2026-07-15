@@ -564,6 +564,26 @@ def execute_application(self, package_dict: dict):
             ))
             return {"status": "BLOCKED", "error": err_msg}
 
+        # Submit was clicked repeatedly but the form never advanced — the ATS
+        # silently rejects/bounces the submission (e.g. TeamTailor's realtime
+        # anti-automation gate returns 200 → redirect back to a blank form).
+        # Retrying just re-opens and re-fills the form and re-hammers the same
+        # wall (the "fills halfway, vanishes, reopens" retry-storm), and risks
+        # tripping anti-abuse. TERMINAL — fail fast with a distinct reason.
+        _lower = err_msg.lower()
+        if ("submit clicked" in _lower and "without success" in _lower) or "ATS_SUBMIT_WALL" in err_msg:
+            logger.error(
+                f"[M4] ATS submit wall for {package_dict.get('application_id')} — "
+                "form never accepted the submit; NOT retrying (avoids re-hammering)."
+            )
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="ATS_SUBMIT_WALL",
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
         if self.request.retries >= self.max_retries:
             # Determine appropriate failure reason
             failure_reason = "INFRA_ERROR"

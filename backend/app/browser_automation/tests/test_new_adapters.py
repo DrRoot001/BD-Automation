@@ -113,22 +113,23 @@ def test_dice_has_external_passthrough_plumbing():
     assert "only drives Dice Easy Apply postings" not in src
 
 
-def test_dice_delegates_to_inner():
+def test_dice_uses_shared_decision_loop():
+    # Post-migration: Dice no longer delegates fill/submit/verify to an inner
+    # adapter — the shared AutonomousAdapter loop drives whatever ATS page the
+    # external-apply redirect lands on. Dice keeps _inner only for navigation /
+    # frame-mirroring, and inherits the shared decision methods.
+    from backend.app.browser_automation.adapters.autonomous_base import AutonomousAdapter
+
     d = DiceAdapter()
-
-    class _Inner:
-        platform_name = "smartrecruiters"
-
-        async def verify_success(self, page):
-            return True, "delegated"
-
-        async def submit(self, page):
-            return True
-
-    d._inner = _Inner()
+    assert isinstance(d, AutonomousAdapter)
+    # decision methods come from the shared base, not Dice
+    assert "verify_success" not in DiceAdapter.__dict__
+    assert "fill_application" not in DiceAdapter.__dict__
+    assert "submit" not in DiceAdapter.__dict__
+    # with no run yet, the shared verify_success reports "not submitted"
     import asyncio
-    assert asyncio.run(d.verify_success(page=None)) == (True, "delegated")
-    assert asyncio.run(d.submit(page=None)) is True
+    verified, _ = asyncio.run(d.verify_success(page=None))
+    assert verified is False
 
 
 # ── Gemini client fixes ─────────────────────────────────────────────────────

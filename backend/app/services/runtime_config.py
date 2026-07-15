@@ -49,7 +49,11 @@ SPEC: Dict[str, Dict[str, Any]] = {
         "label": "Primary AI provider",
         "help": "Which LLM leads the apply/tailoring pipeline; the other is the fallback.",
         "options": ["openai", "gemini"],
-        "cast": str, "env": None, "default": "openai",
+        # Gemini-primary by default: it's the project's designated primary LLM
+        # (see CLAUDE.md — "Gemini is the default for all AI tasks") and OpenAI's
+        # 30k-TPM rate limit crawls the vision agent loop. Flip via the admin
+        # panel (Redis override) when OpenAI credits are preferred.
+        "cast": str, "env": None, "default": "gemini",
     },
 }
 
