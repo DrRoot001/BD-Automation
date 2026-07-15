@@ -2010,6 +2010,19 @@ async def _execute_action(
         if not target_url:
             logger.warning("[AgentLoop] navigate_url: no url provided")
             return False
+        # HARD POLICY GUARD: never let the agent navigate to a social/SSO/OAuth
+        # page (accounts.google.com, appleid.apple.com, …). Manual email+password
+        # login ONLY — the click guard blocks the button, this blocks the same
+        # move done as a raw navigation.
+        if _is_sso_href(target_url) or _is_sso_text(target_url):
+            logger.warning(
+                f"[AgentLoop] navigate_url REFUSED — SSO/OAuth destination is "
+                f"disabled by policy (url={target_url[:80]!r}). Use the site's "
+                "own email + password form."
+            )
+            action.reason = ("SSO/OAuth navigation is disabled — log in with the "
+                             "email + password form on the site instead.")
+            return False
         try:
             await page.goto(target_url, wait_until="domcontentloaded", timeout=20_000)
             await asyncio.sleep(2.0)
