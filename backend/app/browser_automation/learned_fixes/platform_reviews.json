@@ -537,6 +537,30 @@
       {
         "timestamp": "2026-07-11T11:44:58.240773",
         "error": "AgentLoop aborted: no form visible after multiple scrolls and waits"
+      },
+      {
+        "timestamp": "2026-07-13T14:05:07.399874",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T14:08:33.334666",
+        "error": "Job posting no longer exists or has been removed (navigation landed on a search/listing page \u2014 1 field(s): ['job title or keyword'])"
+      },
+      {
+        "timestamp": "2026-07-13T18:37:55.928077",
+        "error": "AgentLoop failed to complete (STUCK): Submit clicked 3x without success. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-15T14:54:34.028199",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-15T15:00:03.192036",
+        "error": "AgentLoop failed to complete (STUCK): Submit clicked 3x without success. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-15T15:03:28.001743",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
       }
     ]
   },
@@ -639,6 +663,10 @@
       {
         "timestamp": "2026-07-10T06:41:06.148799",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-13T14:07:41.093255",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per minute (TPM): Limit 12000, Used 4279, Requested 9485. Please try again in 8.82s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n. Failing application to prevent deterministic fallback conflict."
       }
     ]
   },
@@ -733,6 +761,10 @@
       },
       {
         "timestamp": "2026-07-10T15:31:04.636375",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-13T15:13:24.418694",
         "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
       }
     ]
@@ -1029,6 +1061,38 @@
       {
         "timestamp": "2026-07-11T11:18:47.102987",
         "error": "AgentLoop aborted: Agent did not verify page within 20 steps"
+      },
+      {
+        "timestamp": "2026-07-13T14:05:18.967481",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T14:12:03.418869",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 92589, Requested 8892. Please try again in 21m19.584s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T14:16:50.874896",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T18:23:40.215911",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T18:35:58.975923",
+        "error": "AgentLoop failed to complete (STUCK): Looped on click('button:has-text(\"Sign In\")') 5x. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T18:42:40.719171",
+        "error": "AgentLoop failed to complete (STUCK): Looped on click('button:has-text(\"Sign In\")') 5x. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T18:48:41.936246",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-15T15:16:57.413387",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
       }
     ]
   },
@@ -1074,6 +1138,18 @@
       {
         "timestamp": "2026-07-11T10:41:15.190952",
         "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=627627917177138440&pid=6c16c38ca32c&action'"
+      },
+      {
+        "timestamp": "2026-07-15T14:14:15.101412",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=619111310679678660&pid=6c16c38ca32c&action=f-link'"
+      },
+      {
+        "timestamp": "2026-07-15T15:08:20.832332",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=628156987058695432&pid=6c16c38ca32c&action=f-link'"
+      },
+      {
+        "timestamp": "2026-07-15T15:12:21.996345",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/jobs?l=Bennettsville&id=618145521732159943'"
       }
     ]
   },
@@ -1103,6 +1179,10 @@
       {
         "timestamp": "2026-07-10T01:18:41.865417",
         "error": "Form fill incomplete \u2014 one or more required fields could not be filled"
+      },
+      {
+        "timestamp": "2026-07-15T15:18:10.956097",
+        "error": "AgentLoop failed to complete (MAX_STEPS): wall-clock timeout after 1500s. Failing application to prevent deterministic fallback conflict."
       }
     ]
   },
@@ -1150,6 +1230,18 @@
       {
         "timestamp": "2026-07-11T11:04:39.708110",
         "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
+      },
+      {
+        "timestamp": "2026-07-13T15:15:12.596957",
+        "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-13T15:28:38.659194",
+        "error": "BLOCKED: BuiltIn one-time login link never arrived in the candidate's Gmail (james12william893@gmail.com). Passwordless login is the only non-SSO path \u2014 check the account exists on builtin.com, the google_refresh_token is valid, and the message isn't in spam."
+      },
+      {
+        "timestamp": "2026-07-13T18:47:33.326550",
+        "error": "BLOCKED: BuiltIn one-time login link did not complete verification (stuck at 'https://accounts.builtin.com/Token/Verify') \u2014 token expired/consumed, or Token/Verify rejected this browser context."
       }
     ]
   },
@@ -1159,6 +1251,43 @@
       {
         "timestamp": "2026-07-10T19:52:05.951836",
         "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      }
+    ]
+  },
+  "jobvite": {
+    "needs_review": true,
+    "failures": [
+      {
+        "timestamp": "2026-07-13T14:01:48.706503",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per minute (TPM): Limit 30000, Used 17738, Requested 12279. Please try again in 34ms. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T14:08:34.123511",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `llama-3.3-70b-versatile` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 100000, Used 92834, Requested 9459. Please try again in 33m1.151999999s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_exceeded\"}}\n. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T14:16:32.795589",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 500000, Used 497968, Requested 12635. Please try again in 30m32.1984s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_excee. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T15:18:56.152236",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T15:31:45.446319",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Gemini HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap. Learn more at https://ai.google.dev/gemini-api/docs/billing#project-spend-caps. \",\n    \"status\": \"RESOURCE_EXHAUSTED\"\n  }\n}\n. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T15:35:46.309922",
+        "error": "AgentLoop failed to complete (LLM_UNAVAILABLE): Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per day (TPD): Limit 500000, Used 492148, Requested 12213. Please try again in 12m33.5808s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing\",\"type\":\"tokens\",\"code\":\"rate_limit_excee. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-13T15:40:23.114618",
+        "error": "AgentLoop aborted: Page unavailable; job listings are currently unavailable."
+      },
+      {
+        "timestamp": "2026-07-13T18:20:03.475341",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
       }
     ]
   }

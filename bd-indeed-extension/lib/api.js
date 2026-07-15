@@ -130,6 +130,16 @@ export async function logout() {
   await chrome.storage.local.remove('auth');
 }
 
+/**
+ * Store a session token handed off from the web app (MANUAL_APPLY flow).
+ * Writes to the same `auth` key that getToken() reads, so all subsequent
+ * apiFetch() calls will use it. No email/password stored — tryRelogin()
+ * gracefully skips re-auth when those are absent.
+ */
+export async function storeToken(token) {
+  await chrome.storage.local.set({ auth: { token, at: Date.now() } });
+}
+
 export async function isAuthed() {
   return !!(await getToken());
 }

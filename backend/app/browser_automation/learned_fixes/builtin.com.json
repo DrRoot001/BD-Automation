@@ -1,9 +1,12 @@
 {
   "_meta": {
     "ats": "builtin.com",
-    "last_updated": 1783644149
+    "last_updated": 1783967182
   },
   "submit": [
     "button:has-text(\"Click to reveal\")"
+  ],
+  "apply_button": [
+    "a:has-text(\"Apply Now\")"
   ]
 }

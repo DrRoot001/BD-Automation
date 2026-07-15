@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "host": "careers.servicenow.com",
+    "updated": 1783967875,
+    "runs": 1,
+    "successes": 0
+  },
+  "ats": "generic",
+  "notes": [
+    "Submit clicked 3x without success"
+  ],
+  "last_outcome": "STUCK"
+}

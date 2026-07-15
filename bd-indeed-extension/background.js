@@ -862,8 +862,14 @@ async function startManualApply(msg) {
   if (!msg.candidateId || !msg.jobUrl) {
     return { ok: false, error: 'bad_request', detail: 'candidateId and jobUrl are required' };
   }
+  // The web app passes its own session token on handoff so the extension
+  // doesn't need a prior popup login for this flow. Store it before the
+  // auth check so apiFetch() can use it immediately.
+  if (msg.token) {
+    await api.storeToken(msg.token);
+  }
   if (!(await api.isAuthed())) {
-    return { ok: false, error: 'not_authed', detail: 'Log in from the extension popup first.' };
+    return { ok: false, error: 'not_authed', detail: 'No auth token available. Log in from the extension popup or ensure the web app is passing a token.' };
   }
   const run = await getRun();
   if (run && ['running', 'awaiting_human'].includes(run.status)) {

@@ -1,16 +1,41 @@
 {
   "_meta": {
     "host": "icf.wd5.myworkdayjobs.com",
-    "updated": 1783768726,
-    "runs": 4,
-    "successes": 0
+    "updated": 1784128617,
+    "runs": 7,
+    "successes": 1
   },
   "ats": "workday",
   "notes": [
+    "DOM unchanged for 4 consecutive steps",
     "Agent did not verify page within 20 steps",
     "OpenAI HTTP 429: {\n    \"error\": {\n        \"message\": \"Rate limit reached for gpt-4o in organization org-nvlgU4zV6lleDOByYsMxF7Cf on tokens per min (TPM): Limit 30000, Used 19844, Requested 10169. Plea",
     "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed",
     "Groq HTTP 429: {\"error\":{\"message\":\"Rate limit reached for model `meta-llama/llama-4-scout-17b-16e-instruct` in organization `org_01kvx9js0se2bs72jxvk2jhddv` service tier `on_demand` on tokens per min"
   ],
-  "last_outcome": "WRONG_PAGE"
+  "last_outcome": "STUCK",
+  "working_selectors": {
+    "fill_field": [
+      "#input-4",
+      "#input-9",
+      "#input-5",
+      "#input-6",
+      "#input-10",
+      "#input-11"
+    ],
+    "click": [
+      "button:has-text(\"Sign In\")",
+      "button[data-automation-id='signInSubmitButton'], button:has-text(\"Sign In\")"
+    ]
+  },
+  "flow": [
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
+    "fill_field",
+    "fill_field",
+    "click"
+  ]
 }

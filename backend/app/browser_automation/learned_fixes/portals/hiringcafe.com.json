@@ -1,0 +1,37 @@
+{
+  "_meta": {
+    "host": "hiringcafe.com",
+    "updated": 1784128099,
+    "runs": 3,
+    "successes": 1
+  },
+  "ats": "generic",
+  "notes": [
+    "DOM unchanged for 4 consecutive steps"
+  ],
+  "last_outcome": "SUBMITTED",
+  "working_selectors": {
+    "upload_file": [
+      "#main-attachment"
+    ],
+    "fill_field": [
+      "input[name=\"cName\"]",
+      "input[name=\"cEmail\"]",
+      "input[name=\"cPhoneNumber\"]",
+      "#fullAddress",
+      "input[name=\"cSalary\"]"
+    ]
+  },
+  "flow": [
+    "click_apply",
+    "click_apply",
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
+    "done"
+  ]
+}
