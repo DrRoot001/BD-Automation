@@ -52,6 +52,7 @@ _lock = threading.Lock()
 
 # Caps to keep a flaky/high-traffic host's file bounded.
 _MAX_SELECTORS_PER_KIND = 8
+_MAX_AVOID_PER_KIND = 10
 _MAX_FLOW_STEPS = 24
 _MAX_NOTES = 12
 
@@ -148,6 +149,38 @@ def extract_working_selectors(actions: Optional[List[Any]]) -> Dict[str, List[st
     return by_kind
 
 
+def extract_failed_selectors(actions: Optional[List[Any]]) -> Dict[str, List[str]]:
+    """Pull the selectors the agent TRIED that FAILED — the dead-ends worth
+    avoiding next time.
+
+    A selector is only reported as an avoid-target if it failed (``ok`` falsy)
+    AND never succeeded anywhere else in the SAME run (a selector that failed
+    once then worked on retry is a transient, not a mistake). This is the
+    signal that stops the agent repeating the same wrong move on every visit.
+    """
+    ok_selectors: set[str] = set()
+    failed_by_kind: Dict[str, set] = {}
+    for a in actions or []:
+        try:
+            kind = str(_attr(a, "kind", "") or "").strip()
+            sel = _attr(a, "selector")
+            if kind not in _SELECTOR_KINDS or not isinstance(sel, str) or not sel.strip():
+                continue
+            sel = sel.strip()
+            if _attr(a, "ok", True):
+                ok_selectors.add(sel)
+            else:
+                failed_by_kind.setdefault(kind, set()).add(sel)
+        except Exception:  # noqa: BLE001 - never let one bad action break recall
+            continue
+    out: Dict[str, List[str]] = {}
+    for kind, sels in failed_by_kind.items():
+        keep = [s for s in sels if s not in ok_selectors]
+        if keep:
+            out[kind] = keep
+    return out
+
+
 def flow_of(actions: Optional[List[Any]]) -> List[str]:
     """Compact ordered list of action kinds that a run took."""
     flow: List[str] = []
@@ -228,6 +261,31 @@ def record(
                 pb["working_selectors"] = merged
                 pb["flow"] = flow_of(actions)
 
+            # Merge AVOID selectors (the dead-ends the agent tried that failed) —
+            # recorded on EVERY run (success or not), because a run that
+            # ultimately submitted still wasted steps on wrong moves we want the
+            # next visit to skip. Also PRUNE anything now proven to work, so a
+            # selector that failed once but later succeeds stops being avoided.
+            if actions:
+                avoid_new = extract_failed_selectors(actions)
+                ok_now = extract_working_selectors(actions)
+                ok_flat = {s for sels in ok_now.values() for s in sels}
+                merged_avoid = pb.get("avoid_selectors") or {}
+                for kind, sels in avoid_new.items():
+                    merged_avoid[kind] = _dedup_prepend(
+                        merged_avoid.get(kind, []), sels, _MAX_AVOID_PER_KIND
+                    )
+                # Prune proven-good selectors out of every avoid list.
+                pruned = {
+                    kind: [s for s in sels if s not in ok_flat]
+                    for kind, sels in merged_avoid.items()
+                }
+                merged_avoid = {kind: sels for kind, sels in pruned.items() if sels}
+                if merged_avoid:
+                    pb["avoid_selectors"] = merged_avoid
+                elif "avoid_selectors" in pb:
+                    del pb["avoid_selectors"]
+
             if captcha_types:
                 seen = pb.get("captcha_types") or []
                 for c in captcha_types:
@@ -281,12 +339,19 @@ def format_for_prompt(url_or_host: str) -> str:
         lines.append(f"  • Captcha seen here: {', '.join(pb['captcha_types'])}.")
     sels = pb.get("working_selectors") or {}
     if sels:
-        lines.append("  • Selectors that WORKED here before:")
+        lines.append("  • USE-FIRST — selectors that WORKED here before (try these before hunting):")
         for kind, lst in sels.items():
             if lst:
                 lines.append(f"      - {kind}: {lst[0]}")
     if pb.get("flow"):
         lines.append("  • Flow that worked: " + " → ".join(pb["flow"][:12]))
+    avoid = pb.get("avoid_selectors") or {}
+    if avoid:
+        lines.append("  ❌ DO NOT REPEAT — these were tried here before and FAILED "
+                     "(pick a different element/approach):")
+        for kind, lst in avoid.items():
+            for s in lst[:2]:
+                lines.append(f"      - {kind}: {s}")
     if pb.get("success_signal"):
         lines.append(f"  • Success looked like: {pb['success_signal']}")
     if pb.get("last_outcome"):

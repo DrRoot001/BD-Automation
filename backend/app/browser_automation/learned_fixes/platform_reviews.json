@@ -717,7 +717,7 @@
     ]
   },
   "www.remoterocketship.com": {
-    "needs_review": false,
+    "needs_review": true,
     "failures": [
       {
         "timestamp": "2026-06-29T13:48:19.402095",
@@ -766,6 +766,42 @@
       {
         "timestamp": "2026-07-13T15:13:24.418694",
         "error": "Error 8 connecting to happy-chigger-109021.upstash.io:6379. nodename nor servname provided, or not known."
+      },
+      {
+        "timestamp": "2026-07-16T17:04:14.526106",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T17:07:22.488438",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T19:12:30.247465",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T19:17:47.614392",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T19:22:38.451413",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T19:29:43.206990",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T20:10:19.062218",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T20:13:52.065043",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-16T20:17:32.027685",
+        "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
       }
     ]
   },
@@ -1150,6 +1186,10 @@
       {
         "timestamp": "2026-07-15T15:12:21.996345",
         "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/jobs?l=Bennettsville&id=618145521732159943'"
+      },
+      {
+        "timestamp": "2026-07-15T18:07:38.660950",
+        "error": "BLOCKED: Talent.com external apply did not leave talent.com (reCAPTCHA likely not passed on this untrusted session). url='https://www.talent.com/redirect?id=628297299706710828&pid=6c16c38ca32c&action=f-link'"
       }
     ]
   },
@@ -1288,6 +1328,15 @@
       {
         "timestamp": "2026-07-13T18:20:03.475341",
         "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      }
+    ]
+  },
+  "www.glassdoor.com": {
+    "needs_review": false,
+    "failures": [
+      {
+        "timestamp": "2026-07-15T17:56:17.579377",
+        "error": "BLOCKED: Glassdoor login email field not found"
       }
     ]
   }

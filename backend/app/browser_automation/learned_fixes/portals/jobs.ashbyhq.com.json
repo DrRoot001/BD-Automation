@@ -1,0 +1,65 @@
+{
+  "_meta": {
+    "host": "jobs.ashbyhq.com",
+    "updated": 1784041885,
+    "runs": 3,
+    "successes": 1
+  },
+  "ats": "jobs.ashbyhq.com",
+  "notes": [
+    "Gemini HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap.",
+    "Looped on fill_field('#ba9472cf-68e4-4742-b1d6-533fa22f7cb3_17482597-c180-4b67-b653-785a37650de8-labeled-radio-0') 5x"
+  ],
+  "last_outcome": "SUBMITTED",
+  "working_selectors": {
+    "upload_file": [
+      "#_systemfield_resume"
+    ],
+    "fill_field": [
+      "#_systemfield_name",
+      "#_systemfield_email",
+      "#phone",
+      "#question_7049234007",
+      "#\\38 640c6dd-0d26-4fc4-9b9f-cd1025657953__systemfield_eeoc_veteran_status-labeled-radio-0",
+      "#\\38 640c6dd-0d26-4fc4-9b9f-cd1025657953__systemfield_eeoc_veteran_status-labeled-radio-1",
+      "#\\38 640c6dd-0d26-4fc4-9b9f-cd1025657953__systemfield_eeoc_veteran_status-labeled-radio-2",
+      "#question_7049229007"
+    ],
+    "click": [
+      "[data-field-path=\"question_7049230007\"] button:has-text(\"Yes\")",
+      "[data-field-path=\"question_7049231007\"] button:has-text(\"Yes\")",
+      "#e26f638c-6ec8-4299-96da-23a8bbb14375_8e9897cf-750d-4714-a5b2-3926e541fc1e-labeled-radio-0",
+      "#e26f638c-6ec8-4299-96da-23a8bbb14375_f40b5bd6-a881-4f9a-8e7a-5b6369ab2e2e-labeled-radio-0",
+      "#e26f638c-6ec8-4299-96da-23a8bbb14375_83cc3ca2-b7e5-4405-ac48-33a648e6946e-labeled-radio-0",
+      "#e26f638c-6ec8-4299-96da-23a8bbb14375_17482597-c180-4b67-b653-785a37650de8-labeled-radio-2",
+      "#e26f638c-6ec8-4299-96da-23a8bbb14375_4f210393-70b9-4ad9-87c1-6705e970e3e6-labeled-radio-2",
+      "#e26f638c-6ec8-4299-96da-23a8bbb14375_f07dd7de-6a57-411a-969b-04fe74f893f3-labeled-radio-2"
+    ]
+  },
+  "flow": [
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click",
+    "click"
+  ]
+}

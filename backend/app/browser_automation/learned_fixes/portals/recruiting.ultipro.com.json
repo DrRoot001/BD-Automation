@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "host": "recruiting.ultipro.com",
+    "updated": 1783959142,
+    "runs": 3,
+    "successes": 0
+  },
+  "ats": "generic",
+  "notes": [
+    "wall-clock timeout after 1230s",
+    "DOM unchanged for 4 consecutive steps"
+  ],
+  "last_outcome": "MAX_STEPS"
+}

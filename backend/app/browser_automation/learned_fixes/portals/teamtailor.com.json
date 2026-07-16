@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "host": "teamtailor.com",
+    "updated": 1784124319,
+    "runs": 1,
+    "successes": 0
+  },
+  "ats": "www.remoterocketship.com",
+  "notes": [
+    "DOM unchanged for 4 consecutive steps"
+  ],
+  "last_outcome": "STUCK"
+}

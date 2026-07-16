@@ -90,6 +90,18 @@ async def update_candidate(candidate_id: str, candidate_update: CandidateUpdate,
 
     update_data = candidate_update.model_dump(exclude_unset=True)
 
+    # Credential-wipe guard: the API never RETURNS the stored portal credentials
+    # (password is response-excluded for security), so a frontend edit form
+    # starts BLANK for them. Saving that form re-sends password="" / gmail="",
+    # and via exclude_unset those empties would overwrite the real values —
+    # silently wiping the login used for every account-walled apply (Dice,
+    # Glassdoor, iCIMS, Workday, …) and making them fail with "requires
+    # credentials". Treat an empty/whitespace credential as "leave unchanged";
+    # only a real, non-empty value is allowed to overwrite the stored one.
+    for _cred in ("password", "gmail"):
+        if _cred in update_data and not (str(update_data.get(_cred) or "")).strip():
+            update_data.pop(_cred, None)
+
     if "email" in update_data and update_data["email"]:
         new_email = update_data["email"].strip()
         update_data["email"] = new_email

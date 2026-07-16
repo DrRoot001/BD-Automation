@@ -73,6 +73,18 @@ class ActionExecutor:
         return ActionResult(ok=True, note=f"scroll {a.direction or 'down'}")
 
     async def _click_selector(self, ctx, selector: str, text: Optional[str]) -> ActionResult:
+        # HARD POLICY GUARD: manual email+password login ONLY — never a social/
+        # SSO sign-in control (Continue with Google/Apple/…). Refuse by the
+        # selector/text up front, and again on the resolved element below.
+        try:
+            from ..agent.loop import _is_sso_text, _is_sso_href
+        except Exception:  # pragma: no cover - defensive
+            _is_sso_text = _is_sso_href = lambda _s: False
+        if _is_sso_text(f"{selector or ''} {text or ''}"):
+            return ActionResult(
+                ok=False,
+                note="SSO/social login disabled by policy — use the email+password form",
+            )
         loc = None
         if selector:
             loc = ctx.locator(selector).first
@@ -80,6 +92,21 @@ class ActionExecutor:
             loc = ctx.get_by_text(text, exact=False).first
         if loc is None:
             return ActionResult(ok=False, note="no selector/text to click")
+        # Re-check the RESOLVED element — a generic selector may resolve to a
+        # Google/Apple button or an OAuth link.
+        try:
+            _el_text = await loc.inner_text(timeout=1_500)
+        except Exception:
+            _el_text = ""
+        try:
+            _el_href = await loc.get_attribute("href")
+        except Exception:
+            _el_href = ""
+        if _is_sso_text(_el_text) or _is_sso_href(_el_href):
+            return ActionResult(
+                ok=False,
+                note="SSO/social login disabled by policy — use the email+password form",
+            )
         # Resolving the locator can RAISE on a malformed selector the reasoner
         # emitted (bad CSS/xpath) — that propagated as a hard "CLICK raised" and
         # stalled the run. Guard it so a bad selector is a clean ok=False the

@@ -14,6 +14,10 @@ from ..autonomous import AutonomousAgent
 
 class GenericFormAdapter(AutonomousAdapter):
     platform_name = "generic"
+    # The unknown-portal case: there is no prepare() to reveal the form and no
+    # iframe_selector to scope to, so without discovery a portal that renders its
+    # form in an iframe is invisible to the loop. See agent/form_discoverer.py.
+    allow_form_discovery = True
 
     def __init__(self, agent: Optional[AutonomousAgent] = None):
         super().__init__(agent=agent)

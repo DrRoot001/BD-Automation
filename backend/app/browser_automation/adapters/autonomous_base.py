@@ -51,6 +51,13 @@ class AutonomousAdapter(BasePlatformAdapter):
     iframe_selector: Optional[str] = None  # if set, the loop is scoped to this iframe
     login_gated: bool = False              # advertises that prepare() may sign in
     enable_captcha_handler: bool = True
+    # Opt-in universal form discovery (agent/form_discoverer.py). OFF by default:
+    # an adapter with its own prepare() already knows how to reveal its form, and
+    # letting the discoverer also hunt for an Apply CTA there would add a click to
+    # a battle-tested flow (these adapters land real SUBMITTEDs today). Turned ON
+    # for GenericFormAdapter — the unknown-portal case, which has no prepare() and
+    # is exactly where "find the form yourself" is the whole point.
+    allow_form_discovery: bool = False
 
     def __init__(self, agent: Optional[AutonomousAgent] = None):
         self._agent = agent
@@ -61,6 +68,9 @@ class AutonomousAdapter(BasePlatformAdapter):
         self._frame = None
         self._frame_locator = None
         self._iframe_mode = False
+        # Last FormDiscoverer result (unknown portals only) — kept for logging
+        # and so callers can see WHY a page was judged form-less.
+        self._discovered_form = None
 
     # ── agent (lazy, per-adapter-instance) ────────────────────────────────────
     def _get_agent(self) -> AutonomousAgent:
@@ -162,12 +172,21 @@ class AutonomousAdapter(BasePlatformAdapter):
         return None
 
     async def _resolve_frame(self, page: Page) -> None:
-        """Scope the loop to a form iframe when ``iframe_selector`` is set."""
+        """Scope the loop to the form's iframe.
+
+        A declared ``iframe_selector`` (a known ATS) is authoritative and used
+        as-is. When there ISN'T one — the unknown-portal case, including
+        ``GenericFormAdapter`` — we DISCOVER it instead of giving up: without
+        this, a never-seen portal that renders its form in an iframe is
+        invisible to the loop, which scopes to the page, sees no fields and
+        fails. Discovery is deterministic and LLM-free (see
+        ``agent/form_discoverer.py``).
+        """
         if not self.iframe_selector:
-            self._frame = None
-            self._frame_locator = None
-            self._iframe_mode = False
-            return
+            if self._form_discovery_enabled():
+                await self._discover_frame(page)
+            if not self.iframe_selector:
+                return
         try:
             loc = page.frame_locator(self.iframe_selector)
             # touch it so a missing iframe degrades to page-level rather than hanging
@@ -187,6 +206,54 @@ class AutonomousAdapter(BasePlatformAdapter):
             self._frame = None
             self._frame_locator = None
             self._iframe_mode = False
+
+    def _form_discovery_enabled(self) -> bool:
+        """Whether to run universal form discovery for this adapter.
+
+        ``FORM_DISCOVERY_ALL_ADAPTERS=true`` forces it on everywhere — for
+        deliberate testing only, since it changes proven adapters' behaviour.
+        """
+        import os
+
+        if os.getenv("FORM_DISCOVERY_ALL_ADAPTERS", "false").lower() == "true":
+            return True
+        return self.allow_form_discovery
+
+    async def _discover_frame(self, page: Page) -> None:
+        """Find the application form on a portal we have no adapter knowledge for.
+
+        Sets ``self.iframe_selector`` (instance attribute, so the class default
+        is untouched) when the form turns out to live in an iframe. Leaves it
+        unset when the form is page-level or nothing was found — both mean
+        "run page-scoped", which is the existing behaviour.
+
+        Best-effort by construction: any failure leaves the adapter exactly as
+        it was, so this can only add reach, never take it away.
+        """
+        self._frame = None
+        self._frame_locator = None
+        self._iframe_mode = False
+        try:
+            from ..agent.form_discoverer import FormDiscoverer
+
+            loc = await FormDiscoverer.discover(page)
+        except Exception as exc:
+            logger.debug(f"[{self.platform_name}] form discovery skipped (non-fatal): {exc}")
+            return
+
+        self._discovered_form = loc
+        logger.info(f"[{self.platform_name}] form discovery: {loc.summary()}")
+        if not loc.found:
+            logger.warning(
+                f"[{self.platform_name}] no application form found on this page — "
+                f"evidence: {', '.join(loc.evidence) or '(none)'}"
+            )
+            return
+        if loc.where == "iframe" and loc.iframe_selector:
+            # Instance-level only: never mutate the class attribute, or one run
+            # would leak its discovered selector into every later adapter of the
+            # same type in this worker process.
+            self.iframe_selector = loc.iframe_selector
 
     # ─────────────────────────────────────────────────────────────────────────
     # Shared helpers

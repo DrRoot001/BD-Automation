@@ -25,6 +25,55 @@ def _first_non_blank(*values) -> str:
             return str(value).strip()
     return ""
 
+
+# Location values that are technically non-blank but carry no usable address.
+# A candidates row very often holds just "US", which _first_non_blank happily
+# accepts — that is why a plain fallback chain is not enough here.
+# Compared after stripping dots/spaces, so "U.S.A." and "usa" collapse together.
+_GENERIC_LOCATIONS = {
+    "us", "usa", "unitedstates", "unitedstatesofamerica", "america",
+    "remote", "na", "none", "-", "uk", "gb", "unitedkingdom",
+}
+
+
+def _is_generic_location(value) -> bool:
+    """True when a location is too coarse to answer a form's location question."""
+    raw = (str(value or "")).strip().lower()
+    if not raw:
+        return True
+    # Normalise punctuation/spacing: "U.S.", "u.s.a.", "N/A" -> "us", "usa", "na".
+    v = raw.replace(".", "").replace("/", "").replace(" ", "").replace(",", "")
+    if not v:
+        return True
+    if v in _GENERIC_LOCATIONS:
+        return True
+    # A bare country code / 2-char token ("US", "CA") tells a form nothing.
+    return len(v) <= 2
+
+
+def _best_location(db_value, resume_value) -> str:
+    """Pick the RICHER of the DB profile location and the resume's own header.
+
+    Ordinary fields take the DB first and fall back when it is blank, but
+    location needs more than that: the DB commonly stores "US", which is
+    non-blank yet useless. The resume header is the candidate's own statement of
+    where they live and is usually the only place the real city/state/ZIP exists.
+
+    This is load-bearing beyond the PDF: the browser agent reads the TAILORED
+    resume to enrich a thin profile, so a coarse value here is self-fulfilling —
+    it overwrites the real location, the enricher then finds no city/state in the
+    PDF it generated, and live forms get answered "not provided".
+
+    Preserves whatever it picks VERBATIM (ZIP and country included) — no
+    normalising, so "Austin, Texas 78701" reaches the form intact.
+    """
+    db, res = (str(db_value or "").strip(), str(resume_value or "").strip())
+    if not _is_generic_location(db):
+        return db          # DB has a real address — it is the source of truth.
+    if not _is_generic_location(res):
+        return res         # DB is coarse ("US") but the resume knows the city.
+    return db or res       # Both coarse: keep whatever we have.
+
 class TailoredResume(BaseModel):
     candidate_id: str
     job_id: str
@@ -51,7 +100,7 @@ You MUST follow these STRICT GUARDRAILS. Violating them is FORBIDDEN:
 
 2. HEADLINE & CONTACT INFO:
    - HEADLINE: Under `basics.headline`, use a clean, professional, single job title (such as the target job title or the candidate's original headline). DO NOT append multiple buzzwords, technology names, or list skills with pipes (e.g., do NOT output 'Title | Skill1 | Skill2'). Keep it as a single, standard professional title.
-   - LOCATION: You MUST ensure the location reflects a USA residence. If it is outside the USA, change it to a suitable US tech hub.
+   - LOCATION: Copy `basics.location` through EXACTLY as provided — character for character, including city, state/province, ZIP/postal code and country. Do NOT reformat it, do NOT abbreviate or expand it, do NOT drop the ZIP, and NEVER invent, relocate, or substitute a city. This is the candidate's real home address: it is checked against their application and a fabricated one misrepresents them to the employer. If the value looks incomplete, still copy it as-is — someone downstream fills the gap from a verified source; you must not guess it.
    - LINKS: You MUST keep all original links (LinkedIn, GitHub, Portfolio) EXACTLY as they are.
 
 3. SUMMARY & SKILLS:
@@ -117,7 +166,13 @@ async def tailor_resume(
             "headline": getattr(resume.sections, "current_title", "") or "",
             "email": _first_non_blank(candidate_profile.get("email"), getattr(resume.sections, "email", None)),
             "phone": _first_non_blank(candidate_profile.get("phone"), getattr(resume.sections, "phone", None)),
-            "location": _first_non_blank(candidate_profile.get("location")),
+            # NOT _first_non_blank: a DB location of "US" is non-blank, so it
+            # would win and silently overwrite the real city/state/ZIP that the
+            # resume header carries. See _best_location.
+            "location": _best_location(
+                candidate_profile.get("location"),
+                getattr(resume.sections, "location", None),
+            ),
             "linkedin": _first_non_blank(
                 candidate_profile.get("linkedin_url"),
                 getattr(resume.sections, "linkedin_url", None),

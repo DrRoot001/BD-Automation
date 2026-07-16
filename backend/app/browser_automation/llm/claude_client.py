@@ -27,7 +27,7 @@ import asyncio
 import os
 import re
 import weakref
-from typing import Any, List, Optional
+from typing import Any, List, Literal, Optional
 
 import httpx
 
@@ -75,6 +75,7 @@ _OPENROUTER_BASE = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v
 _GEMINI_BASE = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
 _GEMINI_TEXT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 _GEMINI_VISION_MODEL = os.getenv("GEMINI_VISION_MODEL", "gemini-3.5-flash")
+_GEMINI_PRO_MODEL = os.getenv("GEMINI_PRO_MODEL", "gemini-2.5-pro")
 
 
 def _resolve_api_keys() -> list[str]:
@@ -593,8 +594,12 @@ class ClaudeClient:
         timeout_s: float,
         system: Optional[str],
         expect_json: bool = True,
+        reasoning_tier: Literal["fast", "deep"] = "fast",
     ) -> str:
-        model = _GEMINI_VISION_MODEL if image_bytes else _GEMINI_TEXT_MODEL
+        if reasoning_tier == "deep":
+            model = _GEMINI_PRO_MODEL
+        else:
+            model = _GEMINI_VISION_MODEL if image_bytes else _GEMINI_TEXT_MODEL
         parts: list = []
         if image_bytes:
             mime = "image/jpeg" if image_bytes[:3] == b"\xff\xd8\xff" else "image/png"
@@ -618,7 +623,7 @@ class ClaudeClient:
                 # gemini-3.5-flash is a hybrid thinking model whose thought
                 # tokens draw from maxOutputTokens. Unbounded (default) thinking
                 # consumed the whole budget and returned truncated fragments.
-                "thinkingConfig": {"thinkingBudget": _GEMINI_THINKING_BUDGET},
+                "thinkingConfig": {"thinkingBudget": max(1024, _GEMINI_THINKING_BUDGET) if reasoning_tier == "deep" else _GEMINI_THINKING_BUDGET},
             },
         }
         if system:
@@ -676,6 +681,7 @@ class ClaudeClient:
         timeout_s: float,
         system: Optional[str] = None,
         expect_json: bool = True,
+        reasoning_tier: Literal["fast", "deep"] = "fast",
     ) -> str:
         self._ensure()
         last_exc: Exception = LLMUnavailable("No keys to try")
@@ -711,7 +717,7 @@ class ClaudeClient:
                     try:
                         return await self._call_gemini(
                             prompt, image_bytes, temperature, timeout_s, system,
-                            expect_json=expect_json,
+                            expect_json=expect_json, reasoning_tier=reasoning_tier,
                         )
                     finally:
                         self.api_key = orig_key
@@ -781,6 +787,7 @@ class ClaudeClient:
         temperature: float = 0.1,
         timeout_s: float = 25.0,
         system: Optional[str] = None,
+        reasoning_tier: Literal["fast", "deep"] = "fast",
     ) -> Any:
         if system is None:
             system = (
@@ -788,7 +795,10 @@ class ClaudeClient:
                 "matching the schema implied by the user prompt. Do not include "
                 "prose, markdown fences, or explanations."
             )
-        text = await self._call(prompt, image_bytes, temperature, timeout_s, system=system)
+        text = await self._call(
+            prompt, image_bytes, temperature, timeout_s, 
+            system=system, reasoning_tier=reasoning_tier
+        )
         cleaned = self._strip_json_fences(text)
         try:
             return json.loads(cleaned)
@@ -883,9 +893,11 @@ class ClaudeClient:
         image_bytes: Optional[bytes] = None,
         temperature: float = 0.2,
         timeout_s: float = 30.0,
+        reasoning_tier: Literal["fast", "deep"] = "fast",
     ) -> str:
         return await self._call(
-            prompt, image_bytes, temperature, timeout_s, expect_json=False
+            prompt, image_bytes, temperature, timeout_s, 
+            expect_json=False, reasoning_tier=reasoning_tier
         )
 
 
