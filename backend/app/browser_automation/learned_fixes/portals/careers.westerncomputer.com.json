@@ -1,0 +1,56 @@
+{
+  "_meta": {
+    "host": "careers.westerncomputer.com",
+    "updated": 1784130061,
+    "runs": 9,
+    "successes": 3
+  },
+  "ats": "www.remoterocketship.com",
+  "notes": [
+    "DOM unchanged for 4 consecutive steps",
+    "screenshot/dom capture failed: Page.screenshot: Protocol error (Page.captureScreenshot): Unable to capture screenshot\nCall log:\n  - taking page screenshot\n  - waiting for fonts to load...\n  - fonts lo",
+    "Submit clicked 3x without success"
+  ],
+  "last_outcome": "SUBMITTED",
+  "working_selectors": {
+    "upload_file": [
+      "#candidate_resume_remote_url"
+    ],
+    "fill_field": [
+      "#candidate_answers_attributes_3_text",
+      "#candidate_consent_given",
+      "#candidate_first_name",
+      "#candidate_last_name",
+      "#boolean-5313608-true",
+      "#boolean-5313624-false",
+      "#candidate_answers_attributes_2_choice_1",
+      "#candidate_email"
+    ],
+    "click": [
+      "button:has-text(\"Submit application\")",
+      "button:has-text('Submit application')"
+    ]
+  },
+  "flow": [
+    "navigate_url",
+    "click_apply",
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
+    "click",
+    "done"
+  ]
+}

@@ -41,6 +41,9 @@ from playwright.async_api import Frame, Page
 
 from ..adapters.hints import format_hints_for_prompt, get_platform_hints
 from ..llm import LLMUnavailable, get_llm
+from .conversation_history import ConversationHistory, TurnRecord
+from .form_planner import FormPlanner
+from .dom_analyzer import DomAnalyzer
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +123,28 @@ _DEFAULT_WALL_TIMEOUT_S = float(__import__("os").getenv("AGENT_LOOP_WALL_TIMEOUT
 _POST_SUBMIT_GRACE_S = float(__import__("os").getenv("AGENT_LOOP_POST_SUBMIT_GRACE_S", "330"))
 STUCK_THRESHOLD = 4     # consecutive no-DOM-change steps before abort
 LLM_RETRY_LIMIT = 3     # consecutive LLM failures before abort
+# How many times a model may claim 'done' with no submit click before the run is
+# terminated as "filled but NOT submitted". Two gives it one nudge to actually
+# press submit; more would just burn steps insisting.
+_DONE_WITHOUT_SUBMIT_LIMIT = 2
+# How many times the résumé-commit gate may block a submit before the run is
+# terminated as "filled but résumé never committed". Each block costs a turn, and
+# past a few the upload is genuinely broken, not merely slow.
+_RESUME_GATE_BLOCK_LIMIT = 3
+
+# ── Deep (Pro-model) tier rationing ──────────────────────────────────────────
+# Deep reasoning is an EXCEPTION bought out of the per-application cap (see
+# llm/budget.py), never a mode. An unknown ATS earns a deep FIRST LOOK — not a
+# deep every-turn, which would spend the whole cap before the form is filled.
+_DEEP_TIER_FIRST_STEPS = int(
+    __import__("os").getenv("AGENT_LOOP_DEEP_FIRST_STEPS", "1")
+)
+# Rough cost of one deep turn (screenshot + prompt in, JSON action out), used
+# only to ask "can we afford this?" before committing. Real spend is metered
+# from provider-reported usage in llm/telemetry.py, not from this estimate.
+_DEEP_CALL_ESTIMATE_USD = float(
+    __import__("os").getenv("AGENT_LOOP_DEEP_CALL_ESTIMATE_USD", "0.02")
+)
 
 # Server-side rejection banners some ATSes (Ashby, Workday, Lever) render as a
 # normal 200 OK response instead of an HTTP error — the page just shows a red
@@ -205,7 +230,7 @@ class LoopResult:
     status: Literal[
         "SUBMITTED", "FORM_COMPLETED", "ABORTED", "MAX_STEPS",
         "STUCK", "LLM_UNAVAILABLE", "WRONG_PAGE", "ERROR",
-        "VERIFICATION_FAILED",
+        "VERIFICATION_FAILED", "BUDGET_EXHAUSTED",
     ]
     confirmation: Optional[str] = None
     error: Optional[str] = None
@@ -844,23 +869,48 @@ _DOM_SNAPSHOT_JS = """() => {
 
     // Resolve a human label from nearby DOM
     function labelFor(el) {
-        if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim().slice(0, 80);
+        if (el.getAttribute('aria-label')) return el.getAttribute('aria-label').trim().slice(0, 200);
         const id = el.id;
         if (id) {
-            // getRootNode() so a shadow-scoped <label for=...> is found (a
-            // shadow root's labels are NOT reachable from document).
             const scope = el.getRootNode ? el.getRootNode() : document;
             const lbl = (scope.querySelector ? scope.querySelector('label[for="' + id + '"]') : null)
                 || document.querySelector('label[for="' + id + '"]');
-            if (lbl) return lbl.textContent.trim().slice(0, 80);
+            if (lbl) return lbl.textContent.trim().slice(0, 200);
         }
         let p = el.parentElement;
         for (let i = 0; i < 5 && p; i++) {
             const lbl = p.querySelector(':scope > label, :scope > legend, :scope > span.label');
-            if (lbl && !lbl.contains(el)) return lbl.textContent.trim().slice(0, 80);
+            if (lbl && !lbl.contains(el)) return lbl.textContent.trim().slice(0, 200);
             p = p.parentElement;
         }
         return el.placeholder || el.name || el.id || '?';
+    }
+
+    // Resolve section/group name
+    function getSection(el) {
+        const sec = el.closest('fieldset, section, .form-section, [class*="section" i], [class*="step" i]');
+        if (!sec) return undefined;
+        const heading = sec.querySelector('legend, h1, h2, h3, h4, h5, h6, .section-title, [class*="heading" i]');
+        if (heading) {
+            const txt = (heading.textContent || '').trim();
+            if (txt.length > 0) return txt.slice(0, 80);
+        }
+        if (sec.id) return sec.id;
+        const cl = sec.className || '';
+        const match = cl.split(' ').find(c => c.toLowerCase().includes('section') || c.toLowerCase().includes('step'));
+        return match || undefined;
+    }
+
+    // Detect if field is conditionally shown
+    function isConditional(el) {
+        let p = el;
+        while(p && p !== document.body) {
+            if (p.hasAttribute('data-conditional') || (p.className || '').toLowerCase().includes('conditional') || p.hasAttribute('aria-expanded')) {
+                return true;
+            }
+            p = p.parentElement;
+        }
+        return false;
     }
 
     // Native inputs / selects / textareas (shadow-DOM piercing)
@@ -919,18 +969,20 @@ _DOM_SNAPSHOT_JS = """() => {
                 }
             }
         }
+        const section = getSection(el);
+        const cond = isConditional(el);
         const entry = { sel, type, label: entryLabel, required: entryRequired };
+        if (section) entry.section = section;
+        if (cond) entry.conditional = true;
         if (el.tagName === 'SELECT') {
             const allOpts = Array.from(el.options).filter(o => o.value).map(o => o.text.trim());
-            let opts = allOpts.slice(0, 15);
-            // Country dropdowns hold ~200 options; the first 15 alphabetically
-            // (Afghanistan, Albania, ...) never include "United States", so the
-            // AI couldn't see it was a valid choice and fell back to a wrong
-            // answer. If a "United States" option exists but isn't in the
-            // preview, force it in so the AI knows to pick it.
             const usOpt = allOpts.find(o => /^(united states( of america)?|usa)$/i.test(o));
-            if (usOpt && !opts.includes(usOpt)) {
-                opts = [usOpt, ...opts.slice(0, 14)];
+            let opts = allOpts;
+            if (allOpts.length > 20 && usOpt) {
+                // If it's huge (like a country dropdown), cap it but keep US
+                opts = [usOpt, ...allOpts.slice(0, 20)];
+            } else if (allOpts.length > 30) {
+                opts = allOpts.slice(0, 30);
             }
             if (allOpts.length > opts.length) {
                 entry.options = opts;
@@ -962,10 +1014,14 @@ _DOM_SNAPSHOT_JS = """() => {
         seen.add(sel);
         const reqContainer = el.closest('[data-field-path]');
         const containerRequired = !!(reqContainer && reqContainer.querySelector('[class*="required" i]'));
+        const section = getSection(el);
+        const cond = isConditional(el);
         const entry = {
             sel, type: 'combobox', label: labelFor(el),
             required: el.getAttribute('aria-required') === 'true' || containerRequired,
         };
+        if (section) entry.section = section;
+        if (cond) entry.conditional = true;
         // Surface the choosable options so the AI answers from them on the FIRST
         // turn instead of guessing from the question text (e.g. naming a state
         // for a "Do you live in one of these states?" Yes/No dropdown). Sources,
@@ -1388,6 +1444,9 @@ async def _dom_snapshot(page: Page, frame: Optional[Frame] = None, is_iframe_mod
             fields = (snap or {}).get("fields") or []
             errors = (snap or {}).get("errors") or []
             form_status = (snap or {}).get("formStatus") or None
+            
+        fields = DomAnalyzer.analyze(fields)
+        
         lines = []
         # Form status block — the explicit "ReAct planning" signal the AI uses
         # to decide whether the form is ready for submit. Renders as a tiny
@@ -1420,7 +1479,11 @@ async def _dom_snapshot(page: Page, frame: Optional[Frame] = None, is_iframe_mod
             # Surface the anchor destination so the AI can reason about where a
             # click leads before clicking (e.g. →/oneclick-ui/ = the real form).
             dest = f" →{f['href']}" if f.get("href") else ""
-            lines.append(f"  {f['sel']} | {f['type']} | {f.get('label','?')}{req}{opts}{note}{dest}")
+            sec = f" [Section: {f['section']}]" if f.get("section") else ""
+            cond = " [CONDITIONAL]" if f.get("conditional") else ""
+            sem = f" [Semantic: {f['semantic_type']}]" if f.get("semantic_type") else ""
+            dup = " [DUPLICATE]" if f.get("duplicate_of_previous") else ""
+            lines.append(f"  {f['sel']} | {f['type']} | {f.get('label','?')}{req}{cond}{sec}{sem}{dup}{opts}{note}{dest}")
         return "\n".join(lines) or "(no interactive elements found)"
     except Exception as exc:
         logger.warning(f"[AgentLoop] dom_snapshot failed: {exc}")
@@ -2239,7 +2302,30 @@ async def _execute_action(
 
     if kind == "upload_file":
         file_key = (action.value or "").lower()
-        path = resume_path if "cover" not in file_key else cover_letter_path
+        # Route on the TARGET, not just the model's own label. The model happily
+        # emits {"selector":"#cover_letter","value":"resume"}, and keying on
+        # `value` alone then drops the RÉSUMÉ into the COVER-LETTER slot — an
+        # observed live bug (CareerPlug/Softthink, 2026-07-17). The slot the file
+        # lands in is a fact about the page; the label is just the model's
+        # opinion, so the page wins.
+        target_hint = ((action.selector or "") + " " + (action.field_label or "")).lower()
+        target_is_cover = ("cover" in target_hint) or ("letter" in target_hint)
+
+        if target_is_cover:
+            if not cover_letter_path:
+                # The prompt already says "you have no cover letter, skip it" —
+                # but a prompt is a request, not a guarantee. Enforce it here so
+                # a duplicate résumé can never reach a cover-letter field.
+                logger.warning(
+                    f"[AgentLoop] upload_file: REFUSED — target {action.selector!r} is a "
+                    "cover-letter slot and this candidate has no cover letter. "
+                    "Not substituting the résumé."
+                )
+                return False
+            path = cover_letter_path
+        else:
+            path = resume_path if "cover" not in file_key else cover_letter_path
+
         if not path:
             logger.warning(f"[AgentLoop] upload_file: no path for key={file_key!r}")
             return False
@@ -3090,6 +3176,14 @@ class AgentLoop:
         # detect→fill→submit pipeline would risk a DOUBLE submission, so the
         # executor treats any post-submit outcome as terminal.
         self._submit_fired: bool = False
+        # Times the model claimed 'done' without any submit click having fired.
+        # Bounded so a model that keeps insisting can't spin the loop.
+        self._done_without_submit: int = 0
+        # host -> is-TeamTailor (DOM signature). Memoizes _is_teamtailor_page so
+        # the probe costs one evaluate per host, not one per step.
+        self._teamtailor_hosts: Dict[str, bool] = {}
+        # Times the résumé-commit gate has blocked a submit this run.
+        self._resume_gate_blocks: int = 0
         # Auto-populate hints from registry if not explicitly provided
         platform = str(job_context.get("platform") or "generic").lower()
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
@@ -3108,6 +3202,10 @@ class AgentLoop:
             self._last_classified_host = None
         self._visual_success_calls: int = 0
         self._llm = get_llm()
+        self.history = ConversationHistory()
+        self.planner = FormPlanner(self._llm)
+        self.plan = None
+        self._planner_run = False
         # Build the identity-anchored system prompt. Rebuilt if the effective
         # provider changes mid-session (e.g. Anthropic exhausts and Groq takes
         # over) so the resume-block size matches the live provider's caching.
@@ -3204,14 +3302,94 @@ class AgentLoop:
             self._platform = old
             logger.debug(f"[AgentLoop] platform re-detect swap failed (non-fatal): {exc}")
 
+    def _select_reasoning_tier(self, step: int, actions: List[AgentAction], stuck_count: int) -> str:
+        """Pick the LLM reasoning tier for this turn: "fast" (Flash) or "deep" (Pro).
+
+        Deep is an EXCEPTION, not a mode. It buys real reasoning for the few
+        moments that need it — the first look at an unfamiliar form, and being
+        stuck — and is paid for out of the same per-application cap as
+        everything else. An unknown ATS is NOT a licence to run every one of
+        up to MAX_STEPS turns on Pro; that is how a $0.10 run becomes a $2 run.
+
+        Every deep decision is gated on ``budget.allow_deep()``, which only says
+        yes while the run can still afford to finish on the fast tier. Once the
+        cap tightens the loop silently degrades to fast rather than overrunning.
+
+        This is a PURE predicate — it is called twice per step (once to size the
+        screenshot, once for the real call) and must return the same answer for
+        both without double-billing. The loop does the accounting exactly once,
+        at the LLM call site, via ``budget.note_deep_call()``.
+        """
+        from ..llm import budget as _budget
+
+        want_deep = False
+        why = ""
+
+        # Stuck: re-reasoning with a stronger model is exactly what's worth
+        # paying for — a fast-tier turn just repeats the move that didn't work.
+        if stuck_count > 0:
+            want_deep, why = True, f"stuck×{stuck_count}"
+        # First real look at an unrecognised ATS: one deep turn to understand
+        # the layout, then ride the fast tier with what it learned.
+        elif step <= _DEEP_TIER_FIRST_STEPS and (not self._platform or self._platform == "generic"):
+            want_deep, why = True, "unknown ATS (first look)"
+
+        if not want_deep:
+            return "fast"
+
+        if not _budget.allow_deep(estimated_usd=_DEEP_CALL_ESTIMATE_USD):
+            logger.debug(
+                f"[AgentLoop] step={step} deep tier wanted ({why}) but budget says no "
+                f"(${_budget.remaining_usd():.4f} left) — using fast"
+            )
+            return "fast"
+        return "deep"
+
+    async def _is_teamtailor_page(self, page: "Page") -> bool:
+        """Is the CURRENT page a TeamTailor form, by DOM signature?
+
+        Memoized per host — ``is_teamtailor_dom`` is one ``page.evaluate``, which
+        is cheap but not free at every step of every run on every ATS.
+
+        Why DOM and not ``self._platform``: TeamTailor white-labels onto employer
+        domains (``careers.<company>.com``) that carry NO URL token, and a job
+        routed via an aggregator keeps the aggregator's platform for the whole
+        run. ``_maybe_reclassify_platform`` only swaps prompt HINTS, and it never
+        re-runs the adapter's ``prepare()`` — so the de-gate must not depend on a
+        label that, for exactly the cases that need it, is never set.
+        """
+        if (self._platform or "").lower() == "teamtailor":
+            return True
+        try:
+            from urllib.parse import urlparse
+            host = (urlparse(page.url or "").hostname or "").lower()
+        except Exception:
+            return False
+        if not host:
+            return False
+        if host in self._teamtailor_hosts:
+            return self._teamtailor_hosts[host]
+        try:
+            from ..adapters.teamtailor import is_teamtailor_dom
+            hit = bool(await is_teamtailor_dom(page))
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] teamtailor DOM probe skipped: {exc}")
+            hit = False
+        self._teamtailor_hosts[host] = hit
+        if hit:
+            logger.info(
+                f"[AgentLoop] {host} identified as TeamTailor by DOM signature "
+                f"(platform label is {self._platform!r}) — enabling form de-gate"
+            )
+        return hit
+
     async def _detect_ats_from_dom(self, page: "Page") -> Optional[str]:
         """DOM-signature ATS detection for white-labelled hosts that carry no
         stable URL token (currently TeamTailor career sites on employer
         domains). Cheap; returns a hints key or None. Never raises."""
         try:
-            from ..adapters.teamtailor import is_teamtailor_dom
-            if await is_teamtailor_dom(page):
-                return "teamtailor"
+            from .ats_detector import ATSDetector
+            return await ATSDetector.detect(page)
         except Exception as exc:
             logger.debug(f"[AgentLoop] _detect_ats_from_dom skipped: {exc}")
         return None
@@ -4587,6 +4765,68 @@ class AgentLoop:
             "(change event likely lost) — caller will re-attach"
         )
         return "idle"
+
+    async def _resume_upload_state(self, ctx: Any) -> str:
+        """Is an attached résumé actually COMMITTED, right now?
+
+        Returns ``"committed"`` | ``"uploading"`` | ``"error"`` | ``"missing"``
+        | ``"none"`` (no file widget on this page — nothing to gate on).
+
+        This is the pre-submit half of :meth:`_await_async_upload`. Dropzone
+        ATSes (TeamTailor, Workable, Recruitee) render the FILENAME the instant
+        the input is set, while the real work — POST for a presigned URL, then a
+        background PUT to storage — finishes later, and the form only binds the
+        attachment token when it does. Submitting in that window is silently
+        rejected server-side as "résumé required", with NO DOM error: the page
+        just bounces back to a blank form. So a filename on screen is NOT
+        evidence of an upload, and must never be treated as such.
+
+        Never raises — an unknown widget returns ``"none"`` and does not gate.
+        """
+        try:
+            st = await ctx.evaluate(r"""() => {
+                const q = s => document.querySelectorAll(s).length;
+                const dzPresent = q('.dz-hidden-input, .dropzone, .dz-preview,'
+                                  + '[class*="dz-processing"]') > 0;
+                // Any file input that actually holds a file.
+                const fileInputs = [...document.querySelectorAll('input[type=file]')];
+                const attached = fileInputs.some(i => i.files && i.files.length > 0);
+                // TeamTailor binds the committed upload's token into a hidden
+                // remote-url field; a value there is positive proof of commit.
+                const remote = [...document.querySelectorAll(
+                    '#candidate_resume_remote_url, input[name*="remote_url"]')]
+                    .some(i => (i.value || '').trim().length > 0);
+                return {
+                    dzPresent,
+                    fileInputs: fileInputs.length,
+                    attached,
+                    remote,
+                    done: q('.dz-success, .dz-complete'),
+                    error: q('.dz-error'),
+                    active: q('.dz-processing, .dz-uploading'),
+                };
+            }""")
+        except Exception as exc:
+            logger.debug(f"[AgentLoop] resume upload probe skipped: {exc}")
+            return "none"
+        if not isinstance(st, dict):
+            return "none"
+
+        if st.get("remote"):
+            return "committed"
+        if st.get("dzPresent"):
+            if st.get("error"):
+                return "error"
+            if st.get("done"):
+                return "committed"
+            if st.get("active"):
+                return "uploading"
+            # A Dropzone with a file attached but no success marker is the exact
+            # silent-reject window described above.
+            return "uploading" if st.get("attached") else "missing"
+        if not st.get("fileInputs"):
+            return "none"          # no file widget at all — nothing to gate
+        return "committed" if st.get("attached") else "missing"
 
     async def _deterministic_file_upload(
         self,
@@ -6380,7 +6620,15 @@ class AgentLoop:
                     # which blocks EVERY click (radios, the experience slider,
                     # submit). Strip that gating each step so real clicks land.
                     # Cheap no-op on every other ATS.
-                    if (self._platform or "").lower() == "teamtailor":
+                    # Keyed on the DOM, NOT self._platform: a TeamTailor site
+                    # reached through an aggregator (RemoteRocketship →
+                    # careers.<employer>.com) keeps the AGGREGATOR's platform for
+                    # the whole run, so a label check silently never fires and
+                    # the form stays gated — every click (consent box, slider,
+                    # submit) is swallowed while fills still "work" (JS setters
+                    # bypass pointer-events). That combination is what produced a
+                    # fully-filled form that was never submitted.
+                    if await self._is_teamtailor_page(page):
                         try:
                             from ..adapters.teamtailor import activate_teamtailor_form
                             if await activate_teamtailor_form(page):
@@ -6465,24 +6713,43 @@ class AgentLoop:
                             "— sending text-only turn (no screenshot, saves ~1500 vision tokens)"
                         )
                     else:
-                        # Lever 3: 960x540 @ q35 is sufficient for Claude /
-                        # Gemini. For Groq Llama-4-Scout the vision-token
-                        # cost is higher per pixel and the TPM cap is tight
-                        # (30k); shrinking to 720x405 @ q28 keeps each turn
-                        # under ~2000 vision tokens.
                         try:
                             _eff = self._llm.effective_provider()
                         except Exception:
                             _eff = "anthropic"
-                        if _eff == "groq":
-                            sq = 28
+                        
+                        # Determine reasoning tier for quality adjustment
+                        _tier = self._select_reasoning_tier(step, actions, stuck_count)
+                        if _tier == "deep":
+                            sq = 60
                         else:
-                            sq = 35
+                            sq = 40
+                            if _eff == "groq":
+                                sq = 28
+                                
+                        # Only use full_page on step 1 or when deep reasoning is needed
+                        # otherwise use viewport to save tokens
+                        use_full_page = (step == 1 or _tier == "deep")
+                        
                         screenshot = await page.screenshot(
-                            full_page=True,
+                            full_page=use_full_page,
                             type="jpeg",
                             quality=sq,
                         )
+
+                    # --- FormPlanner Integration ---
+                    if page_verified and not getattr(self, "_planner_run", False):
+                        self._planner_run = True
+                        try:
+                            self.plan = await self.planner.plan(
+                                page=page,
+                                frame=live_frame or frame,
+                                dom_snapshot=dom,
+                                screenshot=screenshot,
+                                platform=self._platform
+                            )
+                        except Exception as e:
+                            logger.warning(f"[AgentLoop] Form planner failed: {e}")
                 except Exception as exc:
                     logger.error(f"[AgentLoop] step={step} capture failed: {exc}")
                     return LoopResult(
@@ -6553,11 +6820,14 @@ class AgentLoop:
                     step=step,
                     max_steps=self.max_steps,
                     platform=self._platform,
-                    filled_summary=_filled_summary(actions),
+                    filled_summary=self.history.format_filled_summary() if getattr(self, "history", None) else _filled_summary(actions),
                     n_actions=len(actions),
-                    history=_format_history(actions),
+                    history=self.history.format_for_prompt() if getattr(self, "history", None) else _format_history(actions),
                     dom_snapshot=dom,
                 )
+
+                if getattr(self, "plan", None) and self.plan.is_valid:
+                    user_msg += "\n\n" + self.plan.format_for_prompt()
 
                 # ── LLM call ────────────────────────────────────────────────────
                 from ..llm import telemetry as _tele
@@ -6576,6 +6846,34 @@ class AgentLoop:
                         self._system_prompt = self._build_system_prompt()
                 except Exception:
                     pass
+                # Budget gate. The cap is per-application, so once it is spent
+                # the honest move is to stop reasoning and let the completeness
+                # gate decide whether what we've already filled is submittable —
+                # not to keep buying turns past the ceiling the operator set.
+                from ..llm import budget as _budget
+
+                if _budget.exhausted():
+                    logger.warning(
+                        f"[AgentLoop] step={step} LLM budget exhausted "
+                        f"({_budget.get_run().summary() if _budget.get_run() else '?'}) "
+                        "— stopping AI turns"
+                    )
+                    return LoopResult(
+                        success=False,
+                        status="BUDGET_EXHAUSTED",
+                        error=(
+                            "per-application LLM budget exhausted "
+                            f"(cap ${_budget.get_run().limit_usd:.2f})"
+                            if _budget.get_run() else "per-application LLM budget exhausted"
+                        ),
+                        steps_taken=step,
+                        actions=actions,
+                    )
+
+                _step_tier = self._select_reasoning_tier(step, actions, stuck_count)
+                if _step_tier == "deep":
+                    _budget.note_deep_call()
+                    logger.info(f"[AgentLoop] step={step} using DEEP (Pro) tier")
                 try:
                     raw = await self._llm.generate_json(
                         prompt=user_msg,
@@ -6583,6 +6881,7 @@ class AgentLoop:
                         temperature=0.0,
                         timeout_s=STEP_TIMEOUT_S,
                         system=self._system_prompt,
+                        reasoning_tier=_step_tier,
                     )
                     llm_error_count = 0
                 except LLMUnavailable as exc:
@@ -6683,6 +6982,62 @@ class AgentLoop:
                             )
                     except Exception as _li_exc:
                         logger.debug(f"[AgentLoop] pre-submit LinkedIn scan skipped: {_li_exc}")
+
+                    # ── RÉSUMÉ-COMMIT GATE ────────────────────────────────────
+                    # Block the submit until an attached résumé has actually
+                    # COMMITTED. On Dropzone ATSes the filename appears instantly
+                    # while the upload finishes in the background; submitting in
+                    # that window is silently rejected server-side ("résumé
+                    # required") with no DOM error — the form just bounces back.
+                    # Waiting a few seconds is always cheaper than a phantom
+                    # application, so this gate holds the click rather than
+                    # failing the run.
+                    if self.resume_path:
+                        _up_ctx = live_frame or page
+                        _up_state = await self._resume_upload_state(_up_ctx)
+                        if _up_state in ("uploading", "missing", "error"):
+                            logger.warning(
+                                f"[AgentLoop] step={step} SUBMIT HELD — résumé upload "
+                                f"state={_up_state!r}; waiting for it to commit before "
+                                "submitting (a filename on screen is not an upload)."
+                            )
+                            if _up_state == "missing":
+                                try:
+                                    await self._deterministic_file_upload(page, live_frame, actions)
+                                except Exception as _re_exc:
+                                    logger.debug(f"[AgentLoop] résumé re-attach failed: {_re_exc}")
+                            else:
+                                await self._await_async_upload(page, _up_ctx)
+                            _up_state = await self._resume_upload_state(_up_ctx)
+                            if _up_state in ("uploading", "missing", "error"):
+                                self._resume_gate_blocks += 1
+                                logger.error(
+                                    f"[AgentLoop] step={step} résumé still not committed "
+                                    f"(state={_up_state!r}) after re-check — refusing to "
+                                    f"submit (block {self._resume_gate_blocks}/"
+                                    f"{_RESUME_GATE_BLOCK_LIMIT})."
+                                )
+                                if self._resume_gate_blocks >= _RESUME_GATE_BLOCK_LIMIT:
+                                    return LoopResult(
+                                        success=False,
+                                        status="FORM_COMPLETED",
+                                        error=(
+                                            "Résumé upload never committed "
+                                            f"(state={_up_state!r}); refused to submit a "
+                                            "form the ATS would silently reject as "
+                                            "'résumé required'."
+                                        ),
+                                        steps_taken=step,
+                                        actions=actions,
+                                    )
+                                action.ok = False
+                                action.reason = (
+                                    f"BLOCKED: résumé upload not committed ({_up_state}). "
+                                    "Wait for the upload to finish, then submit."
+                                )
+                                actions.append(action)
+                                continue
+                            logger.info("[AgentLoop] résumé committed — submit released")
 
                     prior_submits = sum(1 for a in actions if _is_submit_click(a))
                     # Hard cap: 3 submit attempts total. Past that, the server
@@ -7308,6 +7663,42 @@ class AgentLoop:
 
                 if action.kind == "done":
                     actions.append(action)
+                    # ── HARD GATE: no submit click => cannot be SUBMITTED ──────
+                    # A form that was never submitted is not an application, no
+                    # matter how confidently the model says "done". This is a
+                    # structural fact, so it is checked FIRST and cannot be
+                    # talked past by any downstream signal.
+                    #
+                    # The soft checks below (rejection banner + visual classifier)
+                    # are necessary but NOT sufficient on their own: the visual
+                    # classifier returns None whenever it is disabled, has spent
+                    # its 2-call budget, or simply errors — and None falls through
+                    # every `in ("error", "still_on_form")` test. That hole let a
+                    # filled-but-unsubmitted TeamTailor form get recorded
+                    # SUBMITTED with the submit button never clicked.
+                    if not submit_fired:
+                        self._done_without_submit += 1
+                        logger.error(
+                            f"[AgentLoop] step={step} model claimed 'done' but NO submit "
+                            f"click has fired this run — refusing to report SUBMITTED "
+                            f"(strike {self._done_without_submit}/{_DONE_WITHOUT_SUBMIT_LIMIT})."
+                        )
+                        if self._done_without_submit >= _DONE_WITHOUT_SUBMIT_LIMIT:
+                            return LoopResult(
+                                success=False,
+                                status="FORM_COMPLETED",
+                                error=(
+                                    "Model reported 'done' but never clicked submit — the "
+                                    "form was filled and NOT submitted. Reporting honestly "
+                                    "rather than recording a phantom application."
+                                ),
+                                steps_taken=step,
+                                actions=actions,
+                            )
+                        # Give it another turn to actually press submit.
+                        await asyncio.sleep(1.0)
+                        continue
+
                     # Never trust the model's 'done' verbatim — a hallucinated
                     # confirmation (or a misread spam/error banner) would file a
                     # phantom application. Require the SAME safeguards the
@@ -7487,6 +7878,22 @@ class AgentLoop:
                     profile=self.profile,
                 )
                 action.ok = ok
+
+                try:
+                    import time
+                    if getattr(self, "history", None):
+                        self.history.record(TurnRecord(
+                            step=step,
+                            action_kind=action.kind,
+                            selector=action.selector,
+                            field_label=action.field_label,
+                            value_summary=str(action.value)[:50] if action.value else None,
+                            result="ok" if action.ok else "failed",
+                            failure_reason=action.reason,
+                            timestamp=time.time()
+                        ))
+                except Exception as exc:
+                    logger.debug(f"[AgentLoop] failed to record history: {exc}")
 
                 # ── Captcha genuinely unsolvable → clean terminal ────────────
                 # _execute_action flags CAPTCHA_UNSUPPORTED (a provider verdict

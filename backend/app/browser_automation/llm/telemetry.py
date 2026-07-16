@@ -13,6 +13,7 @@ back to a coarse char-length estimate (≈4 chars/token).
 """
 from __future__ import annotations
 
+import contextvars
 import logging
 import threading
 from dataclasses import dataclass, field
@@ -29,6 +30,7 @@ class CallRecord:
     input_tokens: int
     output_tokens: int
     has_image: bool
+    cost_usd: float = 0.0
 
     @property
     def total(self) -> int:
@@ -55,6 +57,10 @@ class SessionTotals:
         return self.total_input + self.total_output
 
     @property
+    def total_cost_usd(self) -> float:
+        return sum(c.cost_usd for c in self.calls)
+
+    @property
     def by_label(self) -> Dict[str, int]:
         out: Dict[str, int] = {}
         for c in self.calls:
@@ -66,27 +72,43 @@ class SessionTotals:
         by_lbl = ", ".join(f"{k}={v}" for k, v in sorted(self.by_label.items()))
         return (
             f"calls={n} input={self.total_input} output={self.total_output} "
-            f"total={self.total} | by_label: {by_lbl or '(none)'}"
+            f"total={self.total} cost=${self.total_cost_usd:.4f} "
+            f"| by_label: {by_lbl or '(none)'}"
         )
 
 
+# Per-run state is held in ContextVars, NOT module globals. The browser worker
+# runs --pool=threads --concurrency=2, so two applications share this process:
+# with a global, one apply's reset_session() would wipe the other's counters and
+# its set_label() would mislabel the other's calls. Each Celery task thread gets
+# a fresh context, and the value propagates into the asyncio tasks it spawns.
+# Mirrors the isolation in llm/budget.py — see that module's "Isolation" note.
 _lock = threading.Lock()
-_session = SessionTotals()
-_current_label = "uncategorized"
+_session_var: contextvars.ContextVar[Optional[SessionTotals]] = contextvars.ContextVar(
+    "llm_telemetry_session", default=None
+)
+_label_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "llm_telemetry_label", default="uncategorized"
+)
+
+
+def _session_for_thread() -> SessionTotals:
+    s = _session_var.get()
+    if s is None:
+        s = SessionTotals()
+        _session_var.set(s)
+    return s
 
 
 def reset_session() -> None:
-    global _session, _current_label
-    with _lock:
-        _session = SessionTotals()
-        _current_label = "uncategorized"
+    """Start a fresh token ledger for THIS run/thread only."""
+    _session_var.set(SessionTotals())
+    _label_var.set("uncategorized")
 
 
 def set_label(label: str) -> None:
-    """Tag all subsequent LLM calls with this label until changed."""
-    global _current_label
-    with _lock:
-        _current_label = label or "uncategorized"
+    """Tag all subsequent LLM calls on this run with this label until changed."""
+    _label_var.set(label or "uncategorized")
 
 
 def record(
@@ -97,19 +119,27 @@ def record(
     has_image: bool = False,
     label: Optional[str] = None,
 ) -> None:
+    # Every provider path funnels through here, which makes this the one place
+    # that has to know about money. Billing the per-application ledger from
+    # this single choke point keeps the five _call_* methods budget-unaware.
+    from . import budget as _budget
+
+    usd = _budget.charge(provider, model, int(input_tokens or 0), int(output_tokens or 0))
     rec = CallRecord(
-        label=label or _current_label,
+        label=label or _label_var.get(),
         provider=provider,
         model=model,
         input_tokens=int(input_tokens or 0),
         output_tokens=int(output_tokens or 0),
         has_image=has_image,
+        cost_usd=usd,
     )
     with _lock:
-        _session.add(rec)
+        _session_for_thread().add(rec)
     logger.info(
         f"[Tokens] {rec.label} {rec.provider}/{rec.model} "
-        f"in={rec.input_tokens} out={rec.output_tokens} img={rec.has_image}"
+        f"in={rec.input_tokens} out={rec.output_tokens} img={rec.has_image} "
+        f"cost=${usd:.5f} left=${_budget.remaining_usd():.4f}"
     )
 
 
@@ -123,7 +153,7 @@ def estimate_from_text(s: str) -> int:
 
 def get_session() -> SessionTotals:
     with _lock:
-        return _session
+        return _session_for_thread()
 
 
 def log_summary(prefix: str = "[Tokens]") -> None:

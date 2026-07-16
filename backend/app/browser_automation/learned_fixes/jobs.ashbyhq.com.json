@@ -1,0 +1,10 @@
+{
+  "_meta": {
+    "ats": "jobs.ashbyhq.com",
+    "last_updated": 1784041570
+  },
+  "apply_button": [
+    "button:has-text(\"Apply for this Job\")",
+    "a:has-text('Apply for this Job')"
+  ]
+}

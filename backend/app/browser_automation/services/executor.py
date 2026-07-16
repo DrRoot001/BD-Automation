@@ -436,6 +436,16 @@ class ApplicationExecutor:
             f"[M4] execute() ENTRY app={package.application_id} platform={package.platform!r} "
             f"url={(package.job_url or '')[:120]!r} retry={retry_count}"
         )
+        # Open a fresh per-application LLM cost ledger. The browser worker runs
+        # --pool=threads --concurrency=2, so two applies share this process; the
+        # ledger is a ContextVar and each Celery task thread gets its own, which
+        # is what stops one application being billed for the other's tokens.
+        from ..llm import budget as _budget
+        from ..llm import telemetry as _tele
+
+        _tele.reset_session()
+        _budget.start_run(application_id=package.application_id)
+
         start_time = time.monotonic()
         screenshot_path: Optional[str] = None
         confirmation_text: Optional[str] = None
@@ -1125,6 +1135,27 @@ class ApplicationExecutor:
                             f"(Gmail not connected?). {loop_result.error or ''}"
                         )
 
+                    elif loop_result.status == "FORM_COMPLETED":
+                        # The loop filled the form and DELIBERATELY refused to
+                        # submit — either the model claimed 'done' with no submit
+                        # click, or the résumé never committed. (A submit that DID
+                        # fire is caught by the _submit_fired branch above, so we
+                        # cannot be masking a real submission here.)
+                        #
+                        # TERMINAL. Retrying re-opens and re-fills the identical
+                        # form and meets the identical wall: on this portal that
+                        # produced three full re-fills in ~8 minutes, which is an
+                        # anti-bot escalation risk, not a fix. Mirrors the
+                        # ATS_SUBMIT_WALL precedent — fail fast, fail honestly.
+                        logger.error(
+                            f"[M4] AgentLoop filled the form but did NOT submit "
+                            f"({loop_result.error}) — terminal, no retry."
+                        )
+                        raise Exception(
+                            f"FORM_NOT_SUBMITTED: {loop_result.error} "
+                            "Form was filled but never submitted; not retrying."
+                        )
+
                     else:
                         # MAX_STEPS / STUCK / LLM_UNAVAILABLE / ERROR
                         # Mutual Exclusion: We no longer fall back to the deterministic
@@ -1168,6 +1199,17 @@ class ApplicationExecutor:
                         "AgentLoop failed to complete",
                         "EMAIL_VERIFICATION_REQUIRED",
                         "BLOCKED: Email verification",
+                        # The loop filled the form and deliberately refused to
+                        # submit (no submit click, or the résumé never committed).
+                        # Must propagate: the DOM is already filled, so letting
+                        # the scripted pipeline retry it is the exact fallback
+                        # conflict this list exists to prevent — it re-hunts for a
+                        # submit button on the agent's form, fails, and retries.
+                        "FORM_NOT_SUBMITTED",
+                        # A spent LLM budget is terminal too — the scripted
+                        # pipeline would just re-fill the same form for free and
+                        # hit the same wall.
+                        "BUDGET_EXHAUSTED",
                     )
                     if any(m in str(exc) for m in _terminal_markers):
                         raise
@@ -1836,3 +1878,13 @@ class ApplicationExecutor:
                     await context_mgr.close()
                 except Exception as close_exc:
                     logger.warning(f"[M4] context_mgr.close() failed (non-fatal): {close_exc}")
+
+            # What this application actually cost, on every exit path. This is
+            # the number the $0.10 cap is judged against — log it even when the
+            # run failed, since failures are where overspend hides.
+            try:
+                _budget.log_summary(f"[M4] app={package.application_id}")
+                _tele.log_summary(f"[M4] app={package.application_id} [Tokens]")
+                _budget.end_run()
+            except Exception as bexc:
+                logger.debug(f"[M4] budget summary failed (non-fatal): {bexc}")

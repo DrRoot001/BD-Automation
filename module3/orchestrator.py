@@ -52,7 +52,18 @@ def _candidate_with_resume_contact_fallbacks(candidate: dict, resume_data: Resum
 
 def _resume_contact_is_incomplete(resume_data: ResumeData) -> bool:
     sections = resume_data.sections
-    return _is_blank(getattr(sections, "email", None)) or _is_blank(getattr(sections, "phone", None))
+    # `location` is included deliberately: the parser only started extracting it
+    # after the "US" incident, so EVERY parsed_json stored before then has
+    # email+phone but no location. Without it here the re-parse never fires for
+    # those rows, `sections.location` stays None, and the tailored resume falls
+    # back to the (often country-only) DB value — reintroducing the exact bug
+    # the parser change was meant to fix. Checking it makes the re-parse
+    # self-healing: each stale resume is re-scanned once, then cached.
+    return (
+        _is_blank(getattr(sections, "email", None))
+        or _is_blank(getattr(sections, "phone", None))
+        or _is_blank(getattr(sections, "location", None))
+    )
 
 
 async def _refresh_resume_contacts_if_needed(

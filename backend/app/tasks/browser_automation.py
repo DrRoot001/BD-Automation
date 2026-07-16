@@ -519,6 +519,43 @@ def execute_application(self, package_dict: dict):
             ))
             return {"status": "FAILED", "error": err_msg}
 
+        # The loop filled the form but refused to submit it (model said 'done'
+        # with no submit click, or the résumé never committed). TERMINAL: the
+        # form is NOT on file, and a retry re-fills the same form into the same
+        # wall. Distinct reason so the operator can tell this apart from a
+        # submitted-but-unconfirmed run — nothing was sent.
+        if "FORM_NOT_SUBMITTED" in err_msg:
+            logger.error(
+                f"[M4] form filled but never submitted for "
+                f"{package_dict.get('application_id')} — not retrying"
+            )
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="FORM_NOT_SUBMITTED",
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
+        # The run spent its entire per-application LLM cap (see
+        # browser_automation/llm/budget.py) without finishing. TERMINAL: a retry
+        # starts a fresh ledger and buys the same failure again at full price,
+        # which is exactly the spend the cap exists to prevent. The operator
+        # either raises LLM_BUDGET_USD_PER_APPLICATION for this portal or fixes
+        # why it needed so many turns.
+        if "BUDGET_EXHAUSTED" in err_msg or "LLM budget exhausted" in err_msg:
+            logger.error(
+                f"[M4] LLM budget exhausted for {package_dict.get('application_id')} "
+                "— not retrying (a retry would re-spend the cap)"
+            )
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="BUDGET_EXHAUSTED",
+            ))
+            return {"status": "FAILED", "error": err_msg}
+
         # Ashby/Workday/Lever anti-bot returns 200 + a "flagged as possible spam"
         # banner. Retrying re-submits and escalates the flag to an IP-level
         # block. TERMINAL with a clear, distinct reason so the operator can

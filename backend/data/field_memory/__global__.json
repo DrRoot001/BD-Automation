@@ -999,6 +999,30 @@
     "source": "profile_direct",
     "value": "Senior Software Engineer"
   },
+  "must be a us citizen": {
+    "count": 5,
+    "field_type": "select",
+    "label": "Must be a US Citizen*",
+    "last_seen": 1784232562,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "must have bachelor's degree in computer science, software engineering, it, or related field. 8+ years of software development experience. 5+ years developing microsoft dynamics 365 and power platform solutions": {
+    "count": 5,
+    "field_type": "select",
+    "label": "Must have Bachelor's degree in Computer Science, Software Engineering, IT, or related field. 8+ years of software development experience. 5+ years developing Microsoft Dynamics 365 and Power Platform solutions.*",
+    "last_seen": 1784232562,
+    "source": "llm:0.85",
+    "value": "Yes"
+  },
+  "must have experience with: dynamics 365 customer service power apps power automate power pages dataverse power bi rest apis azure integration services microsoft graph api c#, .net, javascript experience supporting agile software development": {
+    "count": 5,
+    "field_type": "select",
+    "label": "Must have Experience with: Dynamics 365 Customer Service Power Apps Power Automate Power Pages Dataverse Power BI REST APIs Azure Integration Services Microsoft Graph API C#, .NET, JavaScript Experience supporting Agile software development.*",
+    "last_seen": 1784232563,
+    "source": "llm:0.70",
+    "value": "Yes"
+  },
   "org": {
     "count": 1,
     "field_type": "text",
@@ -1517,6 +1541,14 @@
     "label": "Yes, I have read and consent to the terms and conditions",
     "last_seen": 1783643208,
     "source": "rules",
+    "value": "Yes"
+  },
+  "yes, western computer can contact me directly about specific future job opportunities": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "Yes, Western Computer can contact me directly about specific future job opportunities.",
+    "last_seen": 1784218324,
+    "source": "screening",
     "value": "Yes"
   },
   "zip": {

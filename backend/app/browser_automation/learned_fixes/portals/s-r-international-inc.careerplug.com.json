@@ -1,0 +1,13 @@
+{
+  "_meta": {
+    "host": "s-r-international-inc.careerplug.com",
+    "updated": 1784057546,
+    "runs": 1,
+    "successes": 0
+  },
+  "ats": "www.remoterocketship.com",
+  "notes": [
+    "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed"
+  ],
+  "last_outcome": "ERROR"
+}

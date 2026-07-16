@@ -1,0 +1,66 @@
+{
+  "current company / employer": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your most recent company?",
+    "last_seen": 1784036850,
+    "source": "agent_loop",
+    "value": "Klarity Labs"
+  },
+  "current job title": {
+    "count": 1,
+    "field_type": "text",
+    "label": "What is your most recent job title?",
+    "last_seen": 1784036883,
+    "source": "agent_loop",
+    "value": "Senior Machine Learning Engineer"
+  },
+  "email": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Email",
+    "last_seen": 1784037604,
+    "source": "agent_loop",
+    "value": "franklindavis.dev@gmail.com"
+  },
+  "location": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Location",
+    "last_seen": 1784041610,
+    "source": "agent_loop",
+    "value": "Austin, TX, USA"
+  },
+  "name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Name",
+    "last_seen": 1784037577,
+    "source": "agent_loop",
+    "value": "FRANKLIN DAVIS"
+  },
+  "phone": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Phone",
+    "last_seen": 1784037626,
+    "source": "agent_loop",
+    "value": "+1 (512) 6900089"
+  },
+  "race": {
+    "count": 2,
+    "field_type": "text",
+    "label": "Race",
+    "last_seen": 1784037434,
+    "source": "agent_loop",
+    "value": "Asian (Not Hispanic or Latino)"
+  },
+  "website": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Website",
+    "last_seen": 1784036799,
+    "source": "agent_loop",
+    "value": "N/A"
+  }
+}

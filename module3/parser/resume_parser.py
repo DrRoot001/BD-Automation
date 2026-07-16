@@ -54,6 +54,23 @@ class ResumeSection(BaseModel):
     email: Optional[str] = Field(None, description="Email address found in the resume contact section. Return None if absent.")
     phone: Optional[str] = Field(None, description="Phone number found in the resume contact section. Return None if absent.")
     linkedin_url: Optional[str] = Field(None, description="LinkedIn URL found in the resume contact section. Return None if absent.")
+    # The resume header is the candidate's own statement of where they live, and
+    # it is often the ONLY place the real city/state/ZIP exists — the candidates
+    # DB row is frequently just a country code. Without extracting it here, the
+    # tailored resume can only echo that thin DB value, which then becomes the
+    # ONLY location the browser agent ever sees (it reads the tailored PDF), so
+    # location questions get answered "not provided" on live forms.
+    location: Optional[str] = Field(
+        None,
+        description=(
+            "The candidate's own location from the resume contact/header section, "
+            "VERBATIM and COMPLETE — keep city, state/province, ZIP/postal code and "
+            "country exactly as written (e.g. 'Austin, Texas 78701', "
+            "'Austin, TX 78701, USA', 'London, UK'). Do NOT abbreviate, normalise, "
+            "reformat, or drop the ZIP/postal code. This is a work/home location, "
+            "NOT an employer's address. Return None if absent."
+        ),
+    )
 
     @field_validator("summary", mode="before")
     @classmethod

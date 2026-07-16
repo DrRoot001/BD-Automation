@@ -1,4 +1,20 @@
 {
+  "address": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Address",
+    "last_seen": 1784229093,
+    "source": "screening",
+    "value": "Not specified in profile"
+  },
+  "are you legally authorized to work in the united states or canadarequired": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Are you legally authorized to work in the United States or Canada?*Required",
+    "last_seen": 1784218324,
+    "source": "llm:1.00",
+    "value": "true"
+  },
   "are you legally authorized to work in the us (if you are a canadian citizen and eligible to work/travel on a tn visa, please select \"yes\")": {
     "count": 1,
     "field_type": "text",
@@ -31,6 +47,14 @@
     "source": "agent_loop",
     "value": "0% travel"
   },
+  "city": {
+    "count": 1,
+    "field_type": "text",
+    "label": "City",
+    "last_seen": 1784229093,
+    "source": "profile_direct",
+    "value": "US"
+  },
   "confirm the ability to perform the requisite duties of the role with or without reasonable accommodations": {
     "count": 1,
     "field_type": "text",
@@ -38,6 +62,14 @@
     "last_seen": 1783432067,
     "source": "agent_loop",
     "value": "Yes"
+  },
+  "current company / employer": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Recent Employer",
+    "last_seen": 1784229096,
+    "source": "profile_direct",
+    "value": "Freelance"
   },
   "eeo[gender]": {
     "count": 1,
@@ -71,6 +103,14 @@
     "source": "agent_loop",
     "value": "mark.anderson4543@gmail.com"
   },
+  "email required": {
+    "count": 1,
+    "field_type": "email",
+    "label": "Email* Required",
+    "last_seen": 1784218322,
+    "source": "profile_direct",
+    "value": "mark.anderson4543@gmail.com"
+  },
   "expected salary": {
     "count": 1,
     "field_type": "text",
@@ -79,6 +119,46 @@
     "source": "agent_loop",
     "value": "150000"
   },
+  "first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First Name*",
+    "last_seen": 1784229091,
+    "source": "profile_direct",
+    "value": "Mark"
+  },
+  "first name required": {
+    "count": 1,
+    "field_type": "text",
+    "label": "First name* Required",
+    "last_seen": 1784218321,
+    "source": "profile_direct",
+    "value": "Mark"
+  },
+  "last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last Name*",
+    "last_seen": 1784229091,
+    "source": "profile_direct",
+    "value": "Anderson"
+  },
+  "last name required": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Last name* Required",
+    "last_seen": 1784218321,
+    "source": "profile_direct",
+    "value": "Anderson"
+  },
+  "linkedin profile url required": {
+    "count": 1,
+    "field_type": "text",
+    "label": "LinkedIn profile URL* Required",
+    "last_seen": 1784218319,
+    "source": "profile_direct",
+    "value": "https://linkedin.com/usermarkanderson/"
+  },
   "location": {
     "count": 2,
     "field_type": "text",
@@ -86,6 +166,30 @@
     "last_seen": 1783436200,
     "source": "agent_loop",
     "value": "US"
+  },
+  "must be a us citizen": {
+    "count": 5,
+    "field_type": "select",
+    "label": "Must be a US Citizen*",
+    "last_seen": 1784232562,
+    "source": "llm:0.95",
+    "value": "Yes"
+  },
+  "must have bachelor's degree in computer science, software engineering, it, or related field. 8+ years of software development experience. 5+ years developing microsoft dynamics 365 and power platform solutions": {
+    "count": 5,
+    "field_type": "select",
+    "label": "Must have Bachelor's degree in Computer Science, Software Engineering, IT, or related field. 8+ years of software development experience. 5+ years developing Microsoft Dynamics 365 and Power Platform solutions.*",
+    "last_seen": 1784232562,
+    "source": "llm:0.85",
+    "value": "Yes"
+  },
+  "must have experience with: dynamics 365 customer service power apps power automate power pages dataverse power bi rest apis azure integration services microsoft graph api c#, .net, javascript experience supporting agile software development": {
+    "count": 5,
+    "field_type": "select",
+    "label": "Must have Experience with: Dynamics 365 Customer Service Power Apps Power Automate Power Pages Dataverse Power BI REST APIs Azure Integration Services Microsoft Graph API C#, .NET, JavaScript Experience supporting Agile software development.*",
+    "last_seen": 1784232563,
+    "source": "llm:0.70",
+    "value": "Yes"
   },
   "name": {
     "count": 1,
@@ -109,6 +213,14 @@
     "label": "phone",
     "last_seen": 1783436391,
     "source": "agent_loop",
+    "value": "+15122777059"
+  },
+  "phone number with country code": {
+    "count": 1,
+    "field_type": "phone",
+    "label": "Phone number with country code",
+    "last_seen": 1784218323,
+    "source": "profile_direct",
     "value": "+15122777059"
   },
   "type your response": {
@@ -143,6 +255,14 @@
     "source": "agent_loop",
     "value": "30-39"
   },
+  "will you now, or in the future, require sponsorship for employment visa status (e.g. h-1b status)required": {
+    "count": 1,
+    "field_type": "radio",
+    "label": "Will you now, or in the future, require sponsorship for employment visa status (e.g. H-1B status)?*Required",
+    "last_seen": 1784218324,
+    "source": "llm:1.00",
+    "value": "false"
+  },
   "will you now, or in the future, require sponsorship for employment visa status (e.g. h-1b visa status)": {
     "count": 1,
     "field_type": "text",
@@ -150,5 +270,13 @@
     "last_seen": 1783436032,
     "source": "agent_loop",
     "value": "No"
+  },
+  "yes, western computer can contact me directly about specific future job opportunities": {
+    "count": 1,
+    "field_type": "checkbox",
+    "label": "Yes, Western Computer can contact me directly about specific future job opportunities.",
+    "last_seen": 1784218324,
+    "source": "screening",
+    "value": "Yes"
   }
 }
