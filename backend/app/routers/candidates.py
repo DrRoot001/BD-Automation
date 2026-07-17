@@ -329,6 +329,40 @@ async def trigger_apply(
     # WebSocket events to only the correct BD user's browser session.
     bd_user_id = str(current_user.supabase_user_id) if current_user.supabase_user_id else None
 
+    # Pre-compute the in-flight count so the RESPONSE can tell the operator the
+    # truth. The task re-checks this authoritatively before queueing (see
+    # run_matching_for_candidate), but until now a blocked run was INVISIBLE:
+    # this endpoint said "queued", the frontend toasted success, and the task
+    # silently no-opped with limit_reached — which reads as "the pipeline never
+    # started" and cost an operator (and a teammate on the shared DB, since
+    # in-flight rows are per-candidate, not per-machine) a debugging session.
+    inflight_count = 0
+    inflight_titles: list[str] = []
+    try:
+        from app.services.matching import get_active_application_count
+        inflight_count = await get_active_application_count(
+            candidate_uuid, db, inflight_only=True
+        )
+        if inflight_count > 0:
+            from app.models.application import Application
+            from app.models.job import Job
+            rows = (await db.execute(
+                select(Application.status, Job.title)
+                .join(Job, Job.id == Application.job_id)
+                .where(
+                    Application.candidate_id == candidate_uuid,
+                    Application.status.in_([
+                        "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
+                        "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED",
+                    ]),
+                    Application.paused == 0,
+                )
+                .limit(5)
+            )).all()
+            inflight_titles = [f"{t or 'Unknown role'} ({s})" for s, t in rows]
+    except Exception as cnt_exc:
+        _bg_log.warning(f"[Apply] inflight pre-count failed (non-fatal): {cnt_exc}")
+
     from app.tasks.dynamic_apply import dynamic_apply
     import asyncio, functools
 
@@ -356,7 +390,23 @@ async def trigger_apply(
             detail=f"Could not queue apply pipeline — broker unavailable: {e}",
         )
 
-    return {"status": "queued", "candidate_id": candidate_id, "max_apps": request_body.max_apps}
+    response: dict = {
+        "status": "queued",
+        "candidate_id": candidate_id,
+        "max_apps": request_body.max_apps,
+        "inflight": inflight_count,
+    }
+    if inflight_count >= (request_body.max_apps or 1):
+        # The dispatched task will hit limit_reached and queue NOTHING. Say so
+        # NOW, in the response, so the frontend can warn instead of celebrating.
+        response["warning"] = (
+            f"{inflight_count} application(s) already in flight for this candidate "
+            f"— max of {request_body.max_apps} leaves no free slot, so no new "
+            f"application will start. In flight: {'; '.join(inflight_titles) or 'unknown'}. "
+            "Wait for them to finish (stale ones clear automatically within "
+            "~20 minutes) or raise the max."
+        )
+    return response
 
 
 # ── Pipeline stop / resume (BG-08) ────────────────────────────────────────────

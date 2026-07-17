@@ -132,6 +132,14 @@ _DONE_WITHOUT_SUBMIT_LIMIT = 2
 # past a few the upload is genuinely broken, not merely slow.
 _RESUME_GATE_BLOCK_LIMIT = 3
 
+# How many times a captcha may be (successfully) solved in one run before we treat
+# it as a re-challenge wall and abort cleanly. A normal form needs ONE solve; a
+# form that keeps re-issuing a fresh captcha after each solve (observed on some
+# Lever/hCaptcha tenants) would otherwise loop until the wall-clock timeout and
+# then Celery-retry the whole thing. Bail after this many so the failure is fast,
+# honest, and terminal instead of a 25-minute spin.
+_MAX_CAPTCHA_SOLVES = int(__import__("os").getenv("AGENT_LOOP_MAX_CAPTCHA_SOLVES", "4"))
+
 # ── Deep (Pro-model) tier rationing ──────────────────────────────────────────
 # Deep reasoning is an EXCEPTION bought out of the per-application cap (see
 # llm/budget.py), never a mode. An unknown ATS earns a deep FIRST LOOK — not a
@@ -172,6 +180,15 @@ _ALREADY_APPLIED_PATTERNS = (
     "you've already applied",
     "you have already applied",
     "already have an application on file",
+    # CareerPlug's duplicate rejection ("You cannot apply to the same job
+    # within 90 days."). Live miss 2026-07-17: this phrasing matched nothing
+    # here, so a duplicate re-run was misclassified as BOT_DETECTED/FAILED
+    # instead of ALREADY_APPLIED. Kept phrase-specific — a bare "within 90
+    # days" would false-positive on job-description boilerplate.
+    "cannot apply to the same job",
+    "can't apply to the same job",
+    "cannot apply to this job again",
+    "cannot reapply",
 )
 _POST_SUBMIT_REJECTION_PATTERNS = _SPAM_REJECTION_PATTERNS + _ALREADY_APPLIED_PATTERNS
 STEP_TIMEOUT_S = 45.0   # per-step LLM call timeout (was 30s — bumped after observing
@@ -3184,6 +3201,9 @@ class AgentLoop:
         self._teamtailor_hosts: Dict[str, bool] = {}
         # Times the résumé-commit gate has blocked a submit this run.
         self._resume_gate_blocks: int = 0
+        # Count of successful captcha solves this run. A re-challenging captcha
+        # (solve → fresh captcha) would otherwise loop to wall-timeout.
+        self._captcha_solves: int = 0
         # Auto-populate hints from registry if not explicitly provided
         platform = str(job_context.get("platform") or "generic").lower()
         self._hints = platform_hints if platform_hints is not None else get_platform_hints(platform)
@@ -5386,11 +5406,22 @@ class AgentLoop:
                     const i = document.querySelector(
                         'input[name="cf-turnstile-response"],textarea[name="cf-turnstile-response"]');
                     const ifr = document.querySelector("iframe[src*='challenges.cloudflare.com']");
-                    const div = document.querySelector('.cf-turnstile,[data-sitekey],[id*="turnstile"]');
+                    // A GENUINE Turnstile marker only. Do NOT use a bare
+                    // [data-sitekey] here: hCaptcha (.h-captcha[data-sitekey]) and
+                    // reCAPTCHA (.g-recaptcha[data-sitekey]) also carry data-sitekey,
+                    // so the old selector reported EVERY hCaptcha form as a Turnstile
+                    // and ran the turnstile solver every turn (observed firing 12x on
+                    // a Lever hCaptcha form — wasted Anti-Captcha + CF calls, no-op).
+                    const tsMarker = document.querySelector('.cf-turnstile,[id*="turnstile" i],[class*="turnstile" i]');
+                    // A data-sitekey element counts ONLY if it isn't an hCaptcha /
+                    // reCAPTCHA widget (or nested in one).
+                    const skEl = document.querySelector('[data-sitekey]');
+                    const skIsTurnstile = !!(skEl && !skEl.closest(
+                        '.h-captcha,.g-recaptcha,[class*="hcaptcha" i],[class*="recaptcha" i]'));
                     const send = Array.from(document.querySelectorAll('button')).find(
                         b => /send application|submit application/i.test(b.innerText||''));
                     return {
-                        widget: !!(i || ifr || div),
+                        widget: !!(i || ifr || tsMarker || skIsTurnstile),
                         token: i ? (i.value || '') : '',
                         send_disabled: send ? !!send.disabled : null,
                     };
@@ -7880,7 +7911,13 @@ class AgentLoop:
                 action.ok = ok
 
                 try:
-                    import time
+                    # NOTE: do NOT `import time` here. `time` is imported at
+                    # module scope (top of file); a local import inside run()
+                    # makes Python treat `time` as a local for the ENTIRE method,
+                    # so every earlier time.time()/time.monotonic() in run()
+                    # raises UnboundLocalError and the whole AgentLoop crashes at
+                    # step 1 → silent fallback to the weaker filler that never
+                    # confirms submit. This was the "no thank-you page" bug.
                     if getattr(self, "history", None):
                         self.history.record(TurnRecord(
                             step=step,
@@ -7913,6 +7950,38 @@ class AgentLoop:
                         steps_taken=step,
                         actions=actions,
                     )
+
+                # ── Captcha re-challenge wall → clean terminal ───────────────
+                # A normal form needs ONE captcha solve. If we've SOLVED the
+                # captcha repeatedly and are still being asked to solve again,
+                # the form is re-issuing a fresh challenge after each solve
+                # (observed on some Lever/hCaptcha tenants). Left unchecked the
+                # loop re-solves until the wall-clock timeout, then Celery
+                # retries the whole run — a 25-minute spin for nothing. Bail now
+                # with a clear, terminal, non-retryable BLOCKED so the operator
+                # sees the real reason (needs residential IP / manual solve)
+                # instead of an opaque timeout.
+                if action.kind == "solve_captcha" and ok:
+                    self._captcha_solves += 1
+                    if self._captcha_solves >= _MAX_CAPTCHA_SOLVES:
+                        logger.error(
+                            f"[AgentLoop] captcha solved {self._captcha_solves}x but the "
+                            "form keeps re-challenging — treating as a captcha wall and "
+                            "aborting (no wall-timeout spin)."
+                        )
+                        actions.append(action)
+                        return LoopResult(
+                            success=False,
+                            status="ABORTED",
+                            error=(
+                                "BLOCKED: CAPTCHA_UNSUPPORTED: captcha re-challenge wall — "
+                                f"solved {self._captcha_solves}x without clearing the gate. "
+                                "This tenant re-issues a fresh captcha after each solve; a "
+                                "residential proxy IP is the reliable fix."
+                            ),
+                            steps_taken=step,
+                            actions=actions,
+                        )
 
                 # A successful fill/upload is self-evident proof we are on a
                 # real application form — satisfy the verify-page gate even if

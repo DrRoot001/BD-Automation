@@ -1,7 +1,7 @@
 {
   "_meta": {
     "ats": "www.remoterocketship.com",
-    "last_updated": 1784233281
+    "last_updated": 1784320858
   },
   "how_did_you_hear_about_this_job": [
     "input[name='job_application[source_id]']",
@@ -21,6 +21,8 @@
     "a:has-text(\"Apply now\")"
   ],
   "apply_button": [
+    "a.postings-btn:has-text(\"Apply for this Job\")",
+    "a:has-text(\"START YOUR APPLICATION\")",
     "a[href*='book-a-demo'], .button-primary, a.w-button[href*='demo']",
     "a[href*='book-a-demo'], a.button-primary, .nav-menu a[href*='demo']",
     "a:has-text(\"%BUTTON_APPLY_TO_POSITION%\")",
