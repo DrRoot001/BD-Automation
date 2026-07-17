@@ -65,6 +65,38 @@ $CeleryConc   = if ($env:CELERY_CONCURRENCY) { $env:CELERY_CONCURRENCY } else { 
 # --------------------------------------------------------------------------
 if ($Stop) {
     Write-Host "Stopping BD-Automator services..." -ForegroundColor Yellow
+    # ── Graceful Celery shutdown BEFORE the hard kill ─────────────────────────
+    # taskkill /F is a SIGKILL: any task message already DELIVERED to a worker
+    # but not yet finished stays in the broker's 'unacked' hash and is invisible
+    # to every other worker until the 2-HOUR visibility timeout. Operators hit
+    # this as "I clicked Auto Apply and the pipeline never started" — the
+    # click's task was black-holed by a previous stop_all, then fired as a
+    # surprise run hours later. 'celery control shutdown' asks workers to
+    # finish/restore their messages and exit cleanly; whatever is still alive
+    # after the grace window gets the hard kill below as before.
+    try {
+        $GracePython = $null
+        foreach ($p in @(
+            (Join-Path $Root '.venv\Scripts\python.exe'),
+            (Join-Path $Root 'venv\Scripts\python.exe'),
+            (Join-Path $Backend '.venv\Scripts\python.exe'),
+            (Join-Path $Backend 'venv\Scripts\python.exe')
+        )) { if (Test-Path $p) { $GracePython = $p; break } }
+        if (-not $GracePython) {
+            $cmd = Get-Command python -ErrorAction SilentlyContinue
+            if ($cmd) { $GracePython = $cmd.Source }
+        }
+        if ($GracePython) {
+            Write-Host "  Asking Celery workers to shut down gracefully (restores in-flight tasks to the queue)..." -ForegroundColor DarkGray
+            Push-Location $Backend
+            & $GracePython -m celery -A app.celery_app control shutdown 2>$null | Out-Null
+            Pop-Location
+            Start-Sleep -Seconds 6
+        }
+    } catch {
+        # Graceful path is best-effort — never let it block the stop.
+        try { Pop-Location } catch {}
+    }
     if (Test-Path $PidFile) {
         Get-Content $PidFile | ForEach-Object {
             $procId = $_.Trim()

@@ -1,0 +1,9 @@
+{
+  "_meta": {
+    "ats": "www.adzuna.com",
+    "last_updated": 1784278861
+  },
+  "apply_button": [
+    "a:has-text(\"Apply Now\")"
+  ]
+}

@@ -1,17 +1,27 @@
 {
   "_meta": {
     "host": "dice.com",
-    "updated": 1783767127,
-    "runs": 1,
-    "successes": 1
+    "updated": 1784319390,
+    "runs": 2,
+    "successes": 2
   },
   "ats": "www.dice.com",
   "working_selectors": {
     "click": [
+      "#react-aria3332096698-_r_1q_",
+      "#react-aria3332096698-_r_2i_",
       "button:has-text('Submit')"
+    ],
+    "fill_field": [
+      "select[name=\"workAuthorization\"]",
+      "#react-aria3332096698-_r_1f_"
     ]
   },
   "flow": [
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
     "click"
   ],
   "last_outcome": "SUBMITTED"

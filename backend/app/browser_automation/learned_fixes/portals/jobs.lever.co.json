@@ -1,13 +1,23 @@
 {
   "_meta": {
     "host": "jobs.lever.co",
-    "updated": 1784128690,
-    "runs": 1,
+    "updated": 1784321313,
+    "runs": 4,
     "successes": 0
   },
-  "ats": "lever",
+  "ats": "www.remoterocketship.com",
   "notes": [
+    "DOM unchanged for 4 consecutive steps",
     "wall-clock timeout after 1500s"
   ],
-  "last_outcome": "MAX_STEPS"
+  "last_outcome": "STUCK",
+  "avoid_selectors": {
+    "click": [
+      "#btn-submit",
+      "ul.suggestions li:first-child, [class*='suggestion']"
+    ],
+    "fill_field": [
+      "input[name=\"cards[162a612f-df3a-42c7-9ed0-d67ba1d19b11][field1]\"][value=\"no\"]"
+    ]
+  }
 }

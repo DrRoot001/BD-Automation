@@ -226,6 +226,10 @@ export interface ApplyTriggerResponse {
   message: string
   status: string
   task_id?: string
+  /** In-flight (not yet terminal) applications for this candidate at dispatch time. */
+  inflight?: number
+  /** Set when inflight >= max_apps: the run will queue nothing (limit_reached). */
+  warning?: string
 }
 
 export interface GoogleCodeResponse {

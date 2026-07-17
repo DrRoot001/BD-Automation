@@ -569,18 +569,46 @@ def execute_application(self, package_dict: dict):
             ))
             return {"status": "FAILED", "error": err_msg}
 
-        # Ashby indicates the candidate already has an application on file for
-        # this job. Not a bot-detection or form-quality problem — retrying
-        # would just hit the same wall every attempt. Distinct reason so the
-        # operator sees "already applied" rather than a misleading FAILED.
+        # The PORTAL states the candidate already has an application on file
+        # for this job (Ashby's "already have an application on file",
+        # CareerPlug's "cannot apply to the same job within 90 days", …).
+        # That is the portal confirming a SUBMISSION EXISTS — so the truthful
+        # terminal state is SUBMITTED, not FAILED. Recording FAILED here put a
+        # genuinely-submitted job (thank-you email on file) on the dashboard
+        # as failed, and the matcher then re-picked and re-ran it on every
+        # Auto Apply. APPLICATION_STARTED → SUBMITTED is a legal transition.
         if "ALREADY_APPLIED" in err_msg:
-            asyncio.run(publish_application_failed(
-                application_id=package_dict.get("application_id", ""),
-                error=err_msg,
-                retry_eligible=False,
-                failure_reason="ALREADY_APPLIED",
-            ))
-            return {"status": "FAILED", "error": err_msg}
+            from app.browser_automation.services.state_machine import transition_status
+            logger.info(
+                f"[M4] portal reports an application already on file for "
+                f"{package_dict.get('application_id')} — recording SUBMITTED "
+                "(already-applied), not FAILED"
+            )
+            ok = False
+            try:
+                ok = asyncio.run(transition_status(
+                    package_dict.get("application_id", ""),
+                    "SUBMITTED",
+                    {
+                        "info": "Portal refused a duplicate application — an "
+                                "application for this candidate is already on "
+                                "file. Recorded as SUBMITTED (already applied).",
+                        "already_applied": True,
+                    },
+                ))
+            except Exception as ts_exc:
+                logger.warning(f"[M4] SUBMITTED transition failed (already-applied): {ts_exc}")
+            if not ok:
+                # Fallback: keep the old behaviour rather than leave the row
+                # dangling in APPLICATION_STARTED for the watchdog to reap.
+                asyncio.run(publish_application_failed(
+                    application_id=package_dict.get("application_id", ""),
+                    error=err_msg,
+                    retry_eligible=False,
+                    failure_reason="ALREADY_APPLIED",
+                ))
+                return {"status": "FAILED", "error": err_msg}
+            return {"status": "SUBMITTED", "error": None, "note": "already applied — on file at portal"}
 
         if "PLATFORM_NEEDS_REVIEW" in err_msg or "flagged as needing review" in err_msg.lower():
             asyncio.run(publish_application_failed(
@@ -608,6 +636,24 @@ def execute_application(self, package_dict: dict):
         # wall (the "fills halfway, vanishes, reopens" retry-storm), and risks
         # tripping anti-abuse. TERMINAL — fail fast with a distinct reason.
         _lower = err_msg.lower()
+        # Captcha that can't be cleared (managed-mode Turnstile on a datacenter
+        # IP, or a form that re-challenges after every solve — see the
+        # _MAX_CAPTCHA_SOLVES guard in agent/loop.py). Retrying re-hammers the
+        # same captcha and can trip anti-abuse. TERMINAL, no retry — the operator
+        # needs a residential proxy IP, not another attempt.
+        if "CAPTCHA_UNSUPPORTED" in err_msg or "captcha re-challenge wall" in _lower:
+            logger.error(
+                f"[M4] unsolvable/looping captcha for {package_dict.get('application_id')} "
+                "— NOT retrying (needs residential IP)."
+            )
+            asyncio.run(publish_application_failed(
+                application_id=package_dict.get("application_id", ""),
+                error=err_msg,
+                retry_eligible=False,
+                failure_reason="BOT_DETECTED",
+            ))
+            return {"status": "BLOCKED", "error": err_msg}
+
         if ("submit clicked" in _lower and "without success" in _lower) or "ATS_SUBMIT_WALL" in err_msg:
             logger.error(
                 f"[M4] ATS submit wall for {package_dict.get('application_id')} — "

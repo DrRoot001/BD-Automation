@@ -1,0 +1,10 @@
+{
+  "_meta": {
+    "ats": "www.dice.com",
+    "last_updated": 1784318464
+  },
+  "submit": [
+    "button:has-text(\"Next\")",
+    "button[type='submit']"
+  ]
+}

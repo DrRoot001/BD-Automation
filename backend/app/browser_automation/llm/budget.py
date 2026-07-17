@@ -71,9 +71,28 @@ DEFAULT_BUDGET_USD = float(os.getenv("LLM_BUDGET_USD_PER_APPLICATION", "0.10"))
 #: exception rather than the default.
 DEEP_RESERVE_FRACTION = float(os.getenv("LLM_BUDGET_DEEP_RESERVE_FRACTION", "0.40"))
 
-#: When True, exceeding the cap only warns (useful for measuring a new portal
-#: before committing to a number). When False (default) the governor degrades.
-BUDGET_SOFT_MODE = os.getenv("LLM_BUDGET_SOFT_MODE", "false").lower() == "true"
+#: When True, there is NO cost cap of any kind: spend is metered and logged, but
+#: nothing is ever rationed, throttled, or abandoned — every run may use the best
+#: (deep/Pro) model as often as it wants and take as many steps as it needs.
+#:
+#: DEFAULT True by operator decision (2026-07-18): "remove the cap, I don't care
+#: how much it costs, I want browser automation perfect without errors." The
+#: telemetry still records $/run so cost stays VISIBLE; it just isn't enforced.
+#: Set LLM_BUDGET_SOFT_MODE=false to re-enable rationing (then LLM_BUDGET_HARD_STOP
+#: controls whether the ceiling is terminal).
+BUDGET_SOFT_MODE = os.getenv("LLM_BUDGET_SOFT_MODE", "true").lower() == "true"
+
+#: Whether hitting the cap ABANDONS the run (returns BUDGET_EXHAUSTED and the
+#: application FAILS). Default FALSE — and deliberately so.
+#:
+#: $0.10 buys only ~22-25 flash steps; a multi-step wizard (Dice Easy Apply,
+#: iCIMS, Workday) legitimately needs far more. Abandoning at ~step 23 left the
+#: form half-filled and the application FAILED — which read to operators as "the
+#: AI has a 23-step limit". A cost ceiling must throttle model QUALITY (stop
+#: buying the expensive Pro/deep tier — see allow_deep), never abandon a form
+#: that is actively being filled. So by default the cap degrades to fast-only and
+#: the run finishes; set LLM_BUDGET_HARD_STOP=true to make the ceiling terminal.
+BUDGET_HARD_STOP = os.getenv("LLM_BUDGET_HARD_STOP", "false").lower() == "true"
 
 #: $ per 1M tokens, keyed "<provider>/<model>". VERIFY against provider pricing
 #: and override via LLM_PRICE_TABLE — see the module warning above.
@@ -300,7 +319,27 @@ def note_deep_call() -> None:
 
 
 def exhausted() -> bool:
-    """True when the run has spent its entire cap and must stop calling the LLM."""
+    """True only when the run must be ABANDONED for cost.
+
+    Requires the operator to have explicitly opted into a terminal ceiling
+    (``LLM_BUDGET_HARD_STOP=true``). By default this stays False even over the
+    cap: the run keeps going on the cheap (fast) tier — see ``over_budget`` /
+    ``allow_deep`` — so a legitimate long wizard finishes instead of failing at
+    ~step 23. Soft mode disables all rationing.
+    """
+    rb = _current.get()
+    if rb is None or BUDGET_SOFT_MODE or not BUDGET_HARD_STOP:
+        return False
+    return rb.spent_usd >= rb.limit_usd
+
+
+def over_budget() -> bool:
+    """True when spend has passed the cap, regardless of hard-stop.
+
+    Unlike ``exhausted`` this never abandons the run — the loop uses it only to
+    stop buying the expensive deep tier once the cap is reached, while still
+    finishing the form on fast-tier turns.
+    """
     rb = _current.get()
     if rb is None or BUDGET_SOFT_MODE:
         return False
