@@ -55,6 +55,7 @@ export default function CandidateDetailPage() {
 
   const [activeTab, setActiveTab] = useState<'history' | 'profile'>('history')
   const [isApplying, setIsApplying] = useState(false)
+  const [pipelineRunning, setPipelineRunning] = useState(false)
   const [showAutoApply, setShowAutoApply] = useState(false)
   const [maxApps, setMaxApps] = useState(10)
   const [maxAppsError, setMaxAppsError] = useState<string | null>(null)
@@ -106,7 +107,10 @@ export default function CandidateDetailPage() {
       // emptily, or with an error) — stop showing the "Applying..." spinner
       // even if it somehow outlasted the trigger request's own response.
       const step = evt.data?.step as string
-      if (TERMINAL_STEPS.has(step)) setIsApplying(false)
+      if (TERMINAL_STEPS.has(step)) {
+        setIsApplying(false)
+        setPipelineRunning(false)
+      }
     }
   })
 
@@ -285,6 +289,7 @@ export default function CandidateDetailPage() {
     }
     setMaxAppsError(null)
     setIsApplying(true)
+    setPipelineRunning(true)
     setProgressLogs([])
     processedLogsRef.current.clear()
     try {
@@ -298,6 +303,8 @@ export default function CandidateDetailPage() {
     } catch (e: unknown) {
       const errorObj = e as { message?: string }
       toast.error(errorObj.message || 'Auto-Apply trigger failed.')
+      // If the HTTP call itself failed, the pipeline never started
+      setPipelineRunning(false)
     } finally {
       setIsApplying(false)
     }
@@ -494,13 +501,14 @@ export default function CandidateDetailPage() {
               {/* Run Button */}
               <button
                 onClick={triggerApply}
-                disabled={isApplying || !!maxAppsError}
+                disabled={isApplying || pipelineRunning || !!maxAppsError}
                 className="btn-primary h-[38px] min-w-[110px] sm:ml-auto"
+                title={pipelineRunning ? 'Pipeline is already running — wait for it to finish' : undefined}
               >
-                {isApplying ? (
+                {(isApplying || pipelineRunning) ? (
                   <>
                     <Loader2 className="w-4 h-4 animate-spin" />
-                    <span>Applying...</span>
+                    <span>{isApplying ? 'Starting...' : 'Running...'}</span>
                   </>
                 ) : (
                   'Run Now'

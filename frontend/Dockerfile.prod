@@ -1,0 +1,31 @@
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install dependencies first (leverage caching)
+COPY package.json package-lock.json* ./
+RUN npm ci
+
+# Copy code and build
+COPY . .
+ENV NODE_ENV production
+RUN npm run build
+
+# Production runner image
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+ENV NODE_ENV production
+
+# Copy built app and dependencies
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package-lock.json* ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+# Copy public dir only if it exists (graceful — project has no public/ currently)
+RUN mkdir -p ./public
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start"]

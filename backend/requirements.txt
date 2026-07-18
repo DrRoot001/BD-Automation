@@ -136,3 +136,4 @@ pyasn1-modules>=0.4.0
 rsa>=4.9.0
 socksio>=1.0.0
 PySocks>=1.7.1
+email-validator>=2.0.0

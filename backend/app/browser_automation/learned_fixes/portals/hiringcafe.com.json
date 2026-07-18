@@ -1,37 +1,77 @@
 {
   "_meta": {
     "host": "hiringcafe.com",
-    "updated": 1784128099,
-    "runs": 3,
-    "successes": 1
+    "updated": 1784267395,
+    "runs": 30,
+    "successes": 3
   },
-  "ats": "generic",
+  "ats": "hiring.cafe",
   "notes": [
+    "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed",
+    "The job is no longer available.",
+    "Looped on click(\"button:has-text('Cancel')\") 5x",
+    "Scrolled 5 times in a row without acting",
+    "Groq call failed: [Errno 8] nodename nor servname provided, or not known",
+    "screenshot/dom capture failed: Page.screenshot: Connection closed while reading from the driver",
+    "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed\nCall log:\n  - taking page screenshot\n  - waiting for fonts to load...\n  - fonts loaded\n",
+    "Submit clicked 3x without success",
     "DOM unchanged for 4 consecutive steps"
   ],
-  "last_outcome": "SUBMITTED",
+  "last_outcome": "ERROR",
   "working_selectors": {
     "upload_file": [
+      "#attachment-upload-2",
+      "#attachment-upload-3",
+      "#attachment-upload-28",
+      "#attachment-upload-27",
+      "#resume-upload-input",
       "#main-attachment"
     ],
     "fill_field": [
-      "input[name=\"cName\"]",
-      "input[name=\"cEmail\"]",
-      "input[name=\"cPhoneNumber\"]",
-      "#fullAddress",
-      "input[name=\"cSalary\"]"
+      "#primary-email-0",
+      "#country-codes-dropdownphoneNumber",
+      "#fullName-4",
+      "#firstName-21",
+      "#addressLine1-29",
+      "#city-31",
+      "#lastName-19",
+      "#namInformation16-20"
+    ],
+    "click": [
+      "button:has-text(\"Next\")",
+      "button:has-text(\"Fluent\")",
+      "[id=\"300000005180494-12\"]",
+      "li:has-text(\"Job Board\")",
+      "button:has-text(\"No\")[id*=\"sponsorship\"]",
+      "button:has-text(\"Yes\")[id*=\"authorized\"]",
+      "#profileItemsAddButton-1784240012487",
+      "#dq-option-Asia"
     ]
   },
   "flow": [
     "click_apply",
     "click_apply",
+    "fill_field",
+    "click",
+    "upload_file",
     "upload_file",
     "fill_field",
     "fill_field",
     "fill_field",
     "fill_field",
     "fill_field",
-    "click",
-    "done"
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "upload_file",
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field"
   ]
 }

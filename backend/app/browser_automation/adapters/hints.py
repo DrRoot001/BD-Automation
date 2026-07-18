@@ -83,7 +83,7 @@ _HINTS: Dict[str, Dict[str, Any]] = {
         ],
         "submit_selectors": [
             "button[data-qa='btn-submit']",
-            ".template-btn-submit",
+            "button.template-btn-submit, input.template-btn-submit",
             "button[type='submit']",
             "button:has-text('Submit application')",
             "button:has-text('Submit')",

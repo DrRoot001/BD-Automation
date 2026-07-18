@@ -1,7 +1,7 @@
 {
   "_meta": {
     "ats": "www.remoterocketship.com",
-    "last_updated": 1784233281
+    "last_updated": 1784321407
   },
   "how_did_you_hear_about_this_job": [
     "input[name='job_application[source_id]']",
@@ -12,15 +12,20 @@
     "input[type='file'][name='resume']"
   ],
   "submit": [
+    "button:has-text('Accept Cookies')",
+    "button, input[type='submit'], [role='button']",
+    "button#submit-application, input[type='submit'], button:contains('Submit application')",
+    "button[type='submit'], input[type='submit'], .Submit-application, button:has-text('Submit application')",
+    "a.submit-application, .submit-application, a[href*='submit']",
     "input[type='submit']",
     "input[type='submit'], button[type='submit'], .btn-primary, [value='SUBMIT APPLICATION']",
     "a.button",
     "button:has-text(\"Save and Continue\")",
-    "button:has-text(\"I'm Ready\")",
-    "button:has-text(\"Next\")",
-    "a:has-text(\"Apply now\")"
+    "button:has-text(\"I'm Ready\")"
   ],
   "apply_button": [
+    "a:has-text(\"Apply\")",
+    "a:has-text(\"Apply Now\")",
     "a[href*='book-a-demo'], .button-primary, a.w-button[href*='demo']",
     "a[href*='book-a-demo'], a.button-primary, .nav-menu a[href*='demo']",
     "a:has-text(\"%BUTTON_APPLY_TO_POSITION%\")",

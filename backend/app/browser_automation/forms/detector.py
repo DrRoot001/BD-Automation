@@ -188,16 +188,19 @@ async def detect_form(page: Page, container_selector: Optional[str] = None, skip
     if not skip_scroll:
         await pre_scan_scroll(page)
 
+    # Filter out inputs that act as buttons so they aren't incorrectly detected as text fields.
+    target_tags = "input:not([type='button']):not([type='submit']):not([type='reset']):not([type='image']), select, textarea"
+
     # Query all interactive form elements
     if container_selector:
         container = await page.query_selector(container_selector)
         if container:
-            elements = await container.query_selector_all("input, select, textarea")
+            elements = await container.query_selector_all(target_tags)
         else:
             logger.warning(f"Container selector '{container_selector}' not found. Falling back to whole page.")
-            elements = await page.query_selector_all("input, select, textarea")
+            elements = await page.query_selector_all(target_tags)
     else:
-        elements = await page.query_selector_all("input, select, textarea")
+        elements = await page.query_selector_all(target_tags)
 
     fields = []
     has_file_upload = False

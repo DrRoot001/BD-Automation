@@ -529,6 +529,27 @@ async def run_matching_for_candidate(
         )
         app_record = (await session.execute(existing_stmt)).scalars().first()
 
+        # Guard against two concurrent pipeline runs (e.g. "Run Now" clicked twice):
+        # if the record is already being actively processed, skip it so we don't
+        # stomp on the in-flight run and send it into FAILED.
+        _IN_FLIGHT_STATUSES = {
+            "FOUND", "MATCHED", "RESUME_UPDATED", "COVER_LETTER_CREATED",
+            "QUEUED", "APPLICATION_STARTED", "FORM_COMPLETED",
+        }
+        if app_record is not None and app_record.status in _IN_FLIGHT_STATUSES:
+            logger.info(
+                f"[Matching] Skipping job {job.title} at {job.company}: "
+                f"application {app_record.id} is already in-flight "
+                f"(status={app_record.status}). Concurrent run guard."
+            )
+            skipped_details.append({
+                "job_id": str(job.id),
+                "job_title": job.title,
+                "company": job.company,
+                "reason": f"already_in_flight ({app_record.status})"
+            })
+            continue
+
         if app_record is not None:
             prev_status = app_record.status
             app_record.status = "FOUND"
@@ -536,6 +557,7 @@ async def run_matching_for_candidate(
             app_record.failure_reason = None
             app_record.retry_count = 0
             app_record.resume_id = base_resume.id
+            app_record.created_at = datetime.now(timezone.utc)
             session.add(app_record)
             await session.commit()
             await session.refresh(app_record)

@@ -1,13 +1,56 @@
 {
   "_meta": {
     "host": "jobs.lever.co",
-    "updated": 1784128690,
-    "runs": 1,
-    "successes": 0
+    "updated": 1784233274,
+    "runs": 4,
+    "successes": 2
   },
-  "ats": "lever",
+  "ats": "www.remoterocketship.com",
   "notes": [
+    "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed",
     "wall-clock timeout after 1500s"
   ],
-  "last_outcome": "MAX_STEPS"
+  "last_outcome": "SUBMITTED",
+  "working_selectors": {
+    "upload_file": [
+      "#resume-upload-input"
+    ],
+    "fill_field": [
+      "input[name=\"phone\"]",
+      "input[name=\"urls[LinkedIn]\"]",
+      "input[name=\"cards[77cf32e1-514a-4492-a9c0-cbf64cd06e80][field4]\"]",
+      "select[name=\"eeo[race]\"]",
+      "select[name=\"eeo[veteran]\"]",
+      "#disabilitySelectElement",
+      "input[name=\"eeo[disabilitySignature]\"]",
+      "input[name=\"eeo[disabilitySignatureDate]\"]"
+    ],
+    "click": [
+      "#btn-submit"
+    ]
+  },
+  "flow": [
+    "upload_file",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "fill_field",
+    "click",
+    "done"
+  ]
 }
