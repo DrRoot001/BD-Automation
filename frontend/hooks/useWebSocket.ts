@@ -52,6 +52,16 @@ export function useWebSocket(onEvent?: (evt: WSEvent) => void) {
           const resolvedWsUrl = new URL(details.wsUrl)
           if (typeof window !== 'undefined') {
             resolvedWsUrl.hostname = window.location.hostname
+            
+            // In production behind a reverse proxy, match the protocol (ws vs wss)
+            // and port (use standard 80/443 instead of internal port 8000)
+            if (window.location.protocol === 'https:') {
+              resolvedWsUrl.protocol = 'wss:'
+              resolvedWsUrl.port = '' // Use standard 443
+            } else if (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+              resolvedWsUrl.protocol = 'ws:'
+              resolvedWsUrl.port = '' // Use standard 80
+            }
           }
           wsUrl = resolvedWsUrl.toString()
         } catch (e) {

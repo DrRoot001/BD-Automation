@@ -65,29 +65,30 @@ SCRAPE_PAGE_COOLDOWN_SECONDS = float(os.environ.get("SCRAPE_PAGE_COOLDOWN_SECOND
 SCRAPE_CATEGORY_CONCURRENCY = int(os.environ.get("SCRAPE_CATEGORY_CONCURRENCY", "0"))
 
 
-def run_node_scraper(link: str) -> list[dict[str, Any]]:
-    """Run the Node scraper subprocess for a single link and return parsed items."""
+def run_node_scraper(links: list[str]) -> list[dict[str, Any]]:
+    """Run the Node scraper subprocess for multiple links and return parsed items."""
     try:
         result = subprocess.run(
-            ["node", str(SCRAPER_ENTRYPOINT), link],
+            ["node", str(SCRAPER_ENTRYPOINT)] + links,
             cwd=str(SCRAPER_DIR),
             capture_output=True,
             text=True,
-            timeout=SCRAPE_TIMEOUT_SECONDS,
+            timeout=SCRAPE_TIMEOUT_SECONDS * max(1, len(links)),
             env={**os.environ},
         )
-    except subprocess.TimeoutExpired:
-        print(f"[run_scrape] TIMEOUT scraping {link}")
+    except subprocess.TimeoutExpired as exc:
+        err_msg = exc.stderr.decode('utf-8') if isinstance(exc.stderr, bytes) else str(exc.stderr or '')
+        print(f"[run_scrape] TIMEOUT scraping {len(links)} links. stderr tail: {err_msg[-500:]}")
         return []
 
     if result.returncode not in (0, 2):  # 2 = partial results, still usable
-        print(f"[run_scrape] scraper failed for {link}: {result.stderr.strip()[-500:]}")
+        print(f"[run_scrape] scraper failed for {links[0]}: {result.stderr.strip()[-500:]}")
         return []
 
     try:
         return json.loads(result.stdout.strip() or "[]")
     except json.JSONDecodeError:
-        print(f"[run_scrape] could not parse scraper output for {link}: {result.stdout[:300]}")
+        print(f"[run_scrape] could not parse scraper output for {links[0]}: {result.stdout[:300]}")
         return []
 
 
@@ -293,7 +294,7 @@ def post_jobs(jobs: list[dict[str, Any]]) -> int:
     if not jobs:
         return 0
     try:
-        resp = httpx.post(f"{API_BASE_URL}/api/jobs", json=jobs, timeout=30)
+        resp = httpx.post(f"{API_BASE_URL}/api/jobs", json=jobs, timeout=120)
         resp.raise_for_status()
         created = resp.json()
         return len(created)
@@ -307,33 +308,29 @@ def scrape_link(category: str, link: str) -> dict[str, int]:
     tag = f"[run_scrape][{category}]"
     print(f"{tag} scraping {link}")
 
-    # Pagination: call the Node scraper for multiple pages and aggregate results.
+    # Pagination: generate URLs for all pages and call the Node scraper once.
+    # The Node scraper handles sequential processing, plan caching, early stopping, and cooldowns.
+    urls_to_scrape = [
+        generate_paginated_url(link, page, SCRAPE_PAGE_SIZE)
+        for page in range(1, SCRAPE_PAGES + 1)
+    ]
+    
+    print(f"{tag} batching {len(urls_to_scrape)} pages to Node scraper")
+    page_items = run_node_scraper(urls_to_scrape)
+    
     aggregated_raw = []
     seen_urls = set()
-    for page in range(1, SCRAPE_PAGES + 1):
-        paged_link = generate_paginated_url(link, page, SCRAPE_PAGE_SIZE)
-        print(f"{tag} scraping page {page} -> {paged_link}")
-        page_items = run_node_scraper(paged_link)
-        if not page_items:
-            print(f"{tag} no items from page {page}, stopping pagination for this link")
-            break
+    new_count = 0
+    for item in page_items:
+        # Use source_url or canonical_url as dedupe key when available.
+        key = (item.get('source_url') or item.get('canonical_url') or '').strip()
+        if key:
+            if key in seen_urls:
+                continue
+            seen_urls.add(key)
+        aggregated_raw.append(item)
+        new_count += 1
 
-        new_count = 0
-        for item in page_items:
-            # Use source_url or canonical_url as dedupe key when available.
-            key = (item.get('source_url') or item.get('canonical_url') or '').strip()
-            if key:
-                if key in seen_urls:
-                    continue
-                seen_urls.add(key)
-            aggregated_raw.append(item)
-            new_count += 1
-
-        print(f"{tag} page {page}: {len(page_items)} scraped, {new_count} new")
-
-        if SCRAPE_PAGE_COOLDOWN_SECONDS > 0 and page < SCRAPE_PAGES:
-            print(f"{tag} Sleeping for {SCRAPE_PAGE_COOLDOWN_SECONDS:.2f}s (SCRAPE_PAGE_COOLDOWN_SECONDS)...")
-            time.sleep(SCRAPE_PAGE_COOLDOWN_SECONDS)
 
     mapped = []
     for item in aggregated_raw:

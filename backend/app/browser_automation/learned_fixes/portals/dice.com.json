@@ -2,17 +2,26 @@
   "_meta": {
     "host": "dice.com",
     "updated": 1784319390,
-    "runs": 2,
-    "successes": 2
+    "runs": 25,
+    "successes": 25
   },
   "ats": "www.dice.com",
   "working_selectors": {
     "click": [
+      "#react-aria9956782173-_r_n_",
+      "#react-aria4759243839-_r_1f_",
+      "#react-aria4972350252-_r_1l_",
+      "#react-aria4028337813-_r_16_",
+      "#react-aria6182998165-_r_1l_",
+      "#react-aria2090664409-_r_66_",
+      "#react-aria905952216-_r_n_",
+      "#react-aria9197414219-_r_1n_",
       "#react-aria3332096698-_r_1q_",
       "#react-aria3332096698-_r_2i_",
       "button:has-text('Submit')"
     ],
     "fill_field": [
+      "input[name='1ef95e65-a30f-4c0b-9df1-6d5eecb6404f']",
       "select[name=\"workAuthorization\"]",
       "#react-aria3332096698-_r_1f_"
     ]

@@ -23,6 +23,14 @@
     "source": "agent_loop",
     "value": "Yes"
   },
+  "are you hispanic/latino": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Are you Hispanic/Latino?",
+    "last_seen": 1783952177,
+    "source": "agent_loop",
+    "value": "No"
+  },
   "are you willing to relocate if needed": {
     "count": 2,
     "field_type": "text",
@@ -112,10 +120,10 @@
     "value": "Password123!"
   },
   "country": {
-    "count": 4,
+    "count": 5,
     "field_type": "text",
     "label": "Country",
-    "last_seen": 1783697113,
+    "last_seen": 1783967434,
     "source": "agent_loop",
     "value": "United States"
   },
@@ -240,10 +248,10 @@
     "value": "james12william893@gmail.com"
   },
   "email": {
-    "count": 2,
+    "count": 44,
     "field_type": "text",
     "label": "Email",
-    "last_seen": 1783713083,
+    "last_seen": 1784242779,
     "source": "agent_loop",
     "value": "james12william893@gmail.com"
   },
@@ -271,6 +279,14 @@
     "source": "screening",
     "value": "N/A"
   },
+  "employer name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Employer Name",
+    "last_seen": 1784240317,
+    "source": "agent_loop",
+    "value": "Bluestone Innovations"
+  },
   "expected salary": {
     "count": 1,
     "field_type": "text",
@@ -296,12 +312,20 @@
     "value": "William"
   },
   "first name": {
-    "count": 3,
+    "count": 4,
     "field_type": "text",
-    "label": "First Name",
-    "last_seen": 1783713055,
+    "label": "First Name*",
+    "last_seen": 1783956595,
     "source": "agent_loop",
     "value": "james"
+  },
+  "full name": {
+    "count": 6,
+    "field_type": "text",
+    "label": "Full Name",
+    "last_seen": 1784130337,
+    "source": "agent_loop",
+    "value": "james William"
   },
   "full name✱": {
     "count": 1,
@@ -312,12 +336,12 @@
     "value": "james William"
   },
   "gender": {
-    "count": 1,
-    "field_type": "select",
+    "count": 2,
+    "field_type": "text",
     "label": "Gender",
-    "last_seen": 1783638561,
-    "source": "rules",
-    "value": "Decline To Self Identify"
+    "last_seen": 1784233190,
+    "source": "agent_loop",
+    "value": "Male"
   },
   "github url": {
     "count": 1,
@@ -342,6 +366,14 @@
     "last_seen": 1783608937,
     "source": "rules",
     "value": "Yes"
+  },
+  "if referred, provide employee name. enter \"n/a\" if not applicable": {
+    "count": 1,
+    "field_type": "text",
+    "label": "If referred, provide employee name. Enter \"N/A\" if not applicable*",
+    "last_seen": 1784235787,
+    "source": "agent_loop",
+    "value": "N/A"
   },
   "if you have a college degree, what was your field of study": {
     "count": 4,
@@ -368,10 +400,34 @@
     "value": "Senior Software Engineer"
   },
   "last name": {
-    "count": 2,
+    "count": 3,
     "field_type": "text",
-    "label": "Last Name",
-    "last_seen": 1783713067,
+    "label": "Last Name*",
+    "last_seen": 1783956611,
+    "source": "agent_loop",
+    "value": "William"
+  },
+  "legal first name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Legal First Name",
+    "last_seen": 1784240080,
+    "source": "agent_loop",
+    "value": "james"
+  },
+  "legal last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Legal Last Name",
+    "last_seen": 1784240069,
+    "source": "agent_loop",
+    "value": "William"
+  },
+  "legal middle name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Legal Middle Name",
+    "last_seen": 1784235718,
     "source": "agent_loop",
     "value": "William"
   },
@@ -399,6 +455,14 @@
     "source": "rules",
     "value": "james"
   },
+  "location": {
+    "count": 1,
+    "field_type": "text",
+    "label": "location",
+    "last_seen": 1784127323,
+    "source": "agent_loop",
+    "value": "Newark, NJ"
+  },
   "mobile number": {
     "count": 1,
     "field_type": "text",
@@ -408,12 +472,12 @@
     "value": "5512166306"
   },
   "name": {
-    "count": 1,
+    "count": 14,
     "field_type": "text",
-    "label": "Name",
-    "last_seen": 1783608935,
-    "source": "rules",
-    "value": "james William"
+    "label": "name",
+    "last_seen": 1784129346,
+    "source": "agent_loop",
+    "value": "James Williams"
   },
   "other website": {
     "count": 1,
@@ -432,10 +496,10 @@
     "value": "Password123!"
   },
   "phone": {
-    "count": 4,
+    "count": 7,
     "field_type": "text",
-    "label": "Phone*",
-    "last_seen": 1783610223,
+    "label": "phone",
+    "last_seen": 1784129142,
     "source": "agent_loop",
     "value": "+15512166306"
   },
@@ -448,12 +512,12 @@
     "value": "+15512166306"
   },
   "phone number": {
-    "count": 6,
+    "count": 11,
     "field_type": "text",
-    "label": "Phone Number*",
-    "last_seen": 1783696748,
+    "label": "Phone Number",
+    "last_seen": 1784130377,
     "source": "agent_loop",
-    "value": "5512166306"
+    "value": "+15512166306"
   },
   "portfolio url": {
     "count": 1,
@@ -470,6 +534,14 @@
     "last_seen": 1783638548,
     "source": "rules",
     "value": "james"
+  },
+  "preferred last name": {
+    "count": 1,
+    "field_type": "text",
+    "label": "Preferred Last Name",
+    "last_seen": 1784240049,
+    "source": "agent_loop",
+    "value": "William"
   },
   "receive similar jobs by email": {
     "count": 1,
@@ -599,6 +671,14 @@
     "source": "screening",
     "value": "https://www.linkedin.com/in/james-william"
   },
+  "what location region do you currently reside in": {
+    "count": 2,
+    "field_type": "text",
+    "label": "What location region do you currently reside in?",
+    "last_seen": 1784234935,
+    "source": "agent_loop",
+    "value": "Eastern (ET)"
+  },
   "where": {
     "count": 1,
     "field_type": "text",
@@ -632,10 +712,10 @@
     "value": "Yes"
   },
   "your name": {
-    "count": 2,
+    "count": 4,
     "field_type": "text",
     "label": "Your Name*",
-    "last_seen": 1783610378,
+    "last_seen": 1783967562,
     "source": "agent_loop",
     "value": "james William"
   },

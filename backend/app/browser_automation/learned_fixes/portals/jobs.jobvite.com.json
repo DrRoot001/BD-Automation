@@ -1,11 +1,11 @@
 {
   "_meta": {
     "host": "jobs.jobvite.com",
-    "updated": 1784127721,
-    "runs": 13,
-    "successes": 5
+    "updated": 1784235866,
+    "runs": 14,
+    "successes": 6
   },
-  "ats": "jobvite",
+  "ats": "www.remoterocketship.com",
   "notes": [
     "Page unavailable; job listings are currently unavailable.",
     "Gemini HTTP 429: {\n  \"error\": {\n    \"code\": 429,\n    \"message\": \"Your project has exceeded its monthly spending cap. Please go to AI Studio at https://ai.studio/spend to manage your project spend cap.",
@@ -21,16 +21,17 @@
       "#file-input-1"
     ],
     "fill_field": [
-      "#jv-field-yANc0fwj",
-      "#jv-field-yDNc0fwm",
-      "#jv-field-ydP4ZfwP",
-      "#jv-field-yeP4ZfwQ",
+      "#jv-field-yJkg2fw5",
+      "#jv-field-yCkg2fwY",
+      "#jv-field-yKkg2fw6",
+      "#jv-field-yLkg2fw7",
+      "#jv-field-yHkg2fw3",
       "#jv-edit-resume-textarea0",
-      "#jv-field-yfP4ZfwR",
-      "#jv-field-ygP4ZfwS",
-      "#jv-field-yzNc0fwi"
+      "#jv-paste-resume-textarea0",
+      "#jv-field-yRkg2fwd"
     ],
     "click": [
+      "#jv-field-yGkg2fw2-2",
       "button:has-text(\"Next →\")",
       "a:has-text('View Full Application Form')",
       "#jv-field-yOUVXfwk-0",
@@ -55,9 +56,9 @@
     "fill_field",
     "fill_field",
     "fill_field",
-    "fill_field",
-    "fill_field",
     "click",
+    "click",
+    "fill_field",
     "fill_field",
     "fill_field",
     "fill_field",

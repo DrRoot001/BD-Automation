@@ -32,6 +32,8 @@ class DashboardKPIs(BaseModel):
 class ApplicationSummary(BaseModel):
     application_id: str
     job_id: str
+    candidate_id: Optional[str] = None
+    resume_id: Optional[str] = None
     job_title: str
     company: str
     platform: str
@@ -231,7 +233,8 @@ async def get_applications(
     where = "WHERE " + " AND ".join(filters)
 
     rows = await db.execute(text(f"""
-        SELECT a.id, a.job_id, j.title, j.company, j.source AS platform,
+        SELECT a.id, a.job_id, a.candidate_id, a.resume_id,
+               j.title, j.company, j.source AS platform,
                a.status, a.paused, a.fit_score, a.ats_score,
                a.submitted_at, a.created_at, a.error_message, a.failure_reason,
                r.file_url AS resume_url,
@@ -271,6 +274,8 @@ async def get_applications(
         ApplicationSummary(
             application_id=str(r.id),
             job_id=str(r.job_id),
+            candidate_id=str(r.candidate_id) if r.candidate_id else None,
+            resume_id=str(r.resume_id) if r.resume_id else None,
             job_title=r.title or "",
             company=r.company or "",
             platform=r.platform or "",

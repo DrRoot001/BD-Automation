@@ -136,3 +136,7 @@ lever_*.png
 
 # Chrome extension local secrets (copy config.example.js -> config.js and fill in)
 bd-indeed-extension/config.js
+
+# Local database backups and storage dumps
+local_backup/
+

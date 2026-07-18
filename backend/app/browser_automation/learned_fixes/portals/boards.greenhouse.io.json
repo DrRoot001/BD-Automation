@@ -1,11 +1,11 @@
 {
   "_meta": {
-    "host": "sigital-llc.breezy.hr",
-    "updated": 1784130476,
-    "runs": 3,
+    "host": "boards.greenhouse.io",
+    "updated": 1784266275,
+    "runs": 1,
     "successes": 0
   },
-  "ats": "generic",
+  "ats": "www.remoterocketship.com",
   "notes": [
     "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed"
   ],

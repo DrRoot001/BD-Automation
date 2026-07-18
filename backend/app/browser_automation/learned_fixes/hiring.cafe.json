@@ -1,7 +1,7 @@
 {
   "_meta": {
     "ats": "hiring.cafe",
-    "last_updated": 1784128217
+    "last_updated": 1784267358
   },
   "apply_button": [
     "button:has-text('Apply')"

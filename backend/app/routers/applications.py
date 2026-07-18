@@ -356,6 +356,7 @@ async def retry_application(
     app.retry_count = 0
     app.error_message = None
     app.failure_reason = None
+    app.created_at = datetime.utcnow()
     
     # 6. Write history
     history = ApplicationHistory(
