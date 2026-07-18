@@ -1,6 +1,6 @@
 # VPS Deployment & Conflict Resolution Complete: BD-Automator-Agent
 
-We have successfully deployed the entire application stack to the production VPS server, enabled SSL, secured cookie authorization, and pushed all updates to GitHub on a clean feature branch.
+We have successfully deployed the entire application stack to the production VPS server, enabled SSL, secured cookie authorization, configured a high-performance local storage system (disabling Supabase Storage completely), and pushed all updates to GitHub on a clean feature branch.
 
 ---
 
@@ -15,11 +15,18 @@ We have successfully deployed the entire application stack to the production VPS
    - Set `SECURE_COOKIE=true` in `docker-compose.prod.yml`.
    - The auth cookie now runs with the `Secure` flag enabled, meaning it will only be transmitted over secure HTTPS channels.
 
-3. **Restored Database Data:**
+3. **Supabase Storage Replaced with Local Storage:**
+   - **Local Storage Fallback:** Updated `module3/utils/storage.py` so that if Supabase credentials are not configured, it falls back to saving files directly in the backend's local `files/` folder (returning path: `/files/{bucket}/{filename}`).
+   - **Validation Support:** Updated the resume upload verification in `backend/app/routers/candidates.py` to allow path references starting with `/files/`.
+   - **Shared Docker Volume:** Configured a shared `local_storage` volume in `docker-compose.prod.yml` mounted at `/app/backend/files` for both `api` and `celery_worker` containers so they can access the same static uploads.
+   - **Nginx Static Proxying:** Added a proxy block in the VPS Nginx config mapping `/files` requests directly to FastAPI, and updated `resolveFileUrl` in `frontend/components/utils.ts` to allow `/files/` as a valid route.
+   - **Zero Supabase Dependency:** Cleared out Supabase storage environment variables in `backend/.env`.
+
+4. **Restored Database Data:**
    - Created the missing system table `alembic_version` in the PostgreSQL database container.
    - Successfully imported the full data backup (7,425 jobs, 632 resumes, and 724 applications).
 
-4. **Git Branch & Conflict Resolution:**
+5. **Git Branch & Conflict Resolution:**
    - Created the feature branch `feature/vps-deployment-and-fixes`.
    - Ignored large backup assets/database dumps in `.gitignore`.
    - Merged `origin/main` into the feature branch.
