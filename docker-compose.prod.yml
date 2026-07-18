@@ -18,6 +18,9 @@ services:
       - db
       - redis
     restart: always
+    volumes:
+      - local_storage:/app/backend/files
+
     # No source code volumes mounted in production - codebase is built into the image
 
   db:
@@ -57,6 +60,8 @@ services:
       - db
       - redis
     restart: always
+    volumes:
+      - local_storage:/app/backend/files
 
   celery_beat:
     build:
@@ -92,3 +97,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  local_storage:

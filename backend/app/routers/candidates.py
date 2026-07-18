@@ -202,7 +202,7 @@ async def upload_candidate_resume(
             tmp.write(content)
         # Upload now that the file handle is closed
         uploaded_url = await _upload(temp_path, "resume", supabase_name, clean_local=True)
-        if uploaded_url and uploaded_url.startswith("http"):
+        if uploaded_url and (uploaded_url.startswith("http") or uploaded_url.startswith("/files/")):
             file_url = uploaded_url
     finally:
         # Ensure cleanup in case upload failed or didn't delete the file
@@ -213,7 +213,7 @@ async def upload_candidate_resume(
                 pass
 
     if not file_url:
-        raise HTTPException(status_code=500, detail="Failed to upload resume to Supabase. Check server logs for details.")
+        raise HTTPException(status_code=500, detail="Failed to save resume. Check server logs for details.")
 
     # Parse boolean
     is_base_bool = is_base.lower() == "true"

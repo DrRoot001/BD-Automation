@@ -27,7 +27,7 @@ export function formatDistanceToNow(isoString: string | null | undefined): strin
  */
 export function resolveFileUrl(fileUrl: string | null | undefined): string | null {
   if (!fileUrl) return null
-  if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://')) return fileUrl
+  if (fileUrl.startsWith('http://') || fileUrl.startsWith('https://') || fileUrl.startsWith('/files/')) return fileUrl
   // Legacy absolute OS path — nothing we can serve anymore
   return null
 }

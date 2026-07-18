@@ -54,8 +54,25 @@ async def upload_file_to_supabase(file_path: str, bucket_name: str, file_name: s
     Uploads a file to Supabase storage and returns the public URL.
     """
     if not SUPABASE_URL or not SUPABASE_KEY:
-        print(f"[STORAGE] Warning: Supabase credentials not found. Falling back to local file path: {file_path}")
-        return file_path
+        print(f"[STORAGE] Warning: Supabase credentials not found. Falling back to local file storage.")
+        try:
+            dest_dir = os.path.join(_project_root, "backend", "files", bucket_name)
+            os.makedirs(dest_dir, exist_ok=True)
+            dest_path = os.path.join(dest_dir, file_name)
+            import shutil
+            shutil.copy2(file_path, dest_path)
+            print(f"[STORAGE] Successfully saved file locally to {dest_path}")
+            if clean_local:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                except Exception:
+                    pass
+            return f"/files/{bucket_name}/{file_name}"
+        except Exception as e:
+            print(f"[STORAGE] Failed to save file locally: {e}")
+            return file_path
+
         
     url = f"{SUPABASE_URL}/storage/v1/object/{bucket_name}/{file_name}"
     headers = {

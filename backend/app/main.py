@@ -147,6 +147,13 @@ def create_app() -> FastAPI:
         response.headers["X-Request-ID"] = rid
         return response
 
+    # Mount local files directory to serve static assets (resumes, cover letters, screenshots)
+    import os
+    files_dir = Path(__file__).resolve().parent.parent / "files"
+    os.makedirs(files_dir, exist_ok=True)
+    from fastapi.staticfiles import StaticFiles
+    app.mount("/files", StaticFiles(directory=str(files_dir)), name="files")
+
     # ── Module 1 routers ──────────────────────────────────────────────────────
     app.include_router(auth.router)
     app.include_router(candidates.router)
