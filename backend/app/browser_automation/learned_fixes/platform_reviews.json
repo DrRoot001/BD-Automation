@@ -818,6 +818,22 @@
       {
         "timestamp": "2026-07-17T05:44:07.672707",
         "error": "Submit click failed \u2014 no submit button found or click unsuccessful"
+      },
+      {
+        "timestamp": "2026-07-17T08:26:16.629643",
+        "error": "BLOCKED: vision-agent flagged page state: The page displays a 403 Forbidden error, indicating access is blocked."
+      },
+      {
+        "timestamp": "2026-07-17T20:31:30.832280",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-17T20:39:17.391986",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
+      },
+      {
+        "timestamp": "2026-07-17T20:48:33.177686",
+        "error": "AgentLoop failed to complete (STUCK): DOM unchanged for 4 consecutive steps. Failing application to prevent deterministic fallback conflict."
       }
     ]
   },

@@ -78,6 +78,14 @@ async def get_active_application_count(
     # tailoring hand-off states (MATCHED/RESUME_UPDATED/COVER_LETTER_CREATED) which
     # would otherwise pin the cap forever if their pipeline died mid-tailor.
     STALE_THRESHOLDS_MIN = {
+        # FOUND was MISSING here: it is counted as in-flight (see active_statuses)
+        # but had no staleness cutoff, so a FOUND row whose pipeline died before
+        # tailoring pinned the cap FOREVER — and with max_apps=1 that silently
+        # blocked every future Auto Apply for the candidate (the run no-ops with
+        # limit_reached). 30 min mirrors the watchdog's FOUND threshold in
+        # app/services/state_machine.py, so the cap never counts a row the
+        # watchdog is about to reap.
+        "FOUND": 30,
         "QUEUED": 15,
         "APPLICATION_STARTED": 20,
         "FORM_COMPLETED": 20,

@@ -374,6 +374,7 @@ async def get_jobs_for_matching(
 
     resume_embedding = None
     candidate_category = None
+    cand_uuid = None
     if candidate_id:
         try:
             cand_uuid = UUID(candidate_id)
@@ -394,7 +395,58 @@ async def get_jobs_for_matching(
         except Exception as e:
             logger.error(f"Error fetching resume embedding for candidate {candidate_id}: {e}")
 
-    stmt = select(Job).options(defer(Job.embedding), defer(Job.description)).where(~exclusions)
+    # Duplicate scrapes must never be selected for application. NOTE: isnot(True)
+    # keeps rows where the column is NULL (untagged legacy rows), it only drops
+    # rows explicitly flagged as duplicates.
+    stmt = (
+        select(Job)
+        .options(defer(Job.embedding), defer(Job.description))
+        .where(~exclusions, Job.is_duplicate.isnot(True))
+    )
+
+    # ── Applied-jobs exclusion ────────────────────────────────────────────────
+    # THIS endpoint is what the Auto-Apply matcher (dynamic_apply) calls. It
+    # previously had no exclusion at all — that logic lived only in get_jobs
+    # (the dashboard listing), so the matcher happily re-selected jobs the
+    # candidate had already applied to. Live consequence: a job that was
+    # genuinely submitted (thank-you email on file) was re-picked on every
+    # Auto Apply, re-filled, and rejected by the portal's 90-day duplicate
+    # rule, burning the run's application quota each time.
+    if cand_uuid is not None:
+        from app.models.application import Application
+        from sqlalchemy import literal
+        from sqlalchemy.orm import aliased
+
+        # 1) Same job row: any existing application, whatever its status.
+        #    (A FAILED attempt still means "do not auto-pick this again" — the
+        #    operator can retry explicitly from the application view.)
+        applied_ids = select(Application.job_id).where(
+            Application.candidate_id == cand_uuid
+        )
+        stmt = stmt.where(Job.id.not_in(applied_ids))
+
+        # 2) Same POSITION scraped into a different row by another source
+        #    (RemoteRocketship + talent.com + hiring.cafe all list the same
+        #    opening). Match on lower(company)+lower(title) via NOT EXISTS —
+        #    NULL-safe, unlike NOT IN over a subquery that can yield NULLs —
+        #    and skip blank pairs so a data gap can't exclude everything.
+        AppliedJob = aliased(Job)
+        same_position = (
+            select(literal(1))
+            .select_from(Application)
+            .join(AppliedJob, AppliedJob.id == Application.job_id)
+            .where(
+                Application.candidate_id == cand_uuid,
+                func.coalesce(AppliedJob.company, "") != "",
+                func.coalesce(AppliedJob.title, "") != "",
+                func.lower(func.coalesce(AppliedJob.company, ""))
+                == func.lower(func.coalesce(Job.company, "")),
+                func.lower(func.coalesce(AppliedJob.title, ""))
+                == func.lower(func.coalesce(Job.title, "")),
+            )
+            .exists()
+        )
+        stmt = stmt.where(~same_position)
 
     # Category scoping: exclude jobs tagged with a DIFFERENT category than the
     # candidate's, but keep uncategorized jobs. Same-category jobs rank first

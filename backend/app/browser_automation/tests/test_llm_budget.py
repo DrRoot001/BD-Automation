@@ -26,11 +26,14 @@ from backend.app.browser_automation.llm import telemetry  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def _clean_ledger(monkeypatch):
-    # BUDGET_SOFT_MODE is read from the environment at import time, so an
-    # operator toggling LLM_BUDGET_SOFT_MODE in .env would otherwise silently
-    # flip these tests from "asserts enforcement" to "asserts nothing". Pin it
-    # OFF here; the soft-mode test opts back in explicitly.
+    # Both flags are read from the environment at import time, so an operator
+    # toggling them in .env would otherwise silently flip these tests between
+    # "asserts enforcement" and "asserts nothing". Pin soft OFF. HARD_STOP is
+    # pinned ON here because most tests below assert the terminal-ceiling
+    # semantics (exhausted() True over cap); the degrade-by-default tests opt
+    # back out explicitly.
     monkeypatch.setattr(budget, "BUDGET_SOFT_MODE", False)
+    monkeypatch.setattr(budget, "BUDGET_HARD_STOP", True)
     budget.end_run()
     yield
     budget.end_run()
@@ -105,6 +108,40 @@ def test_exhausted_is_false_until_the_cap_is_hit():
 
 def test_exhausted_is_false_with_no_active_run():
     assert budget.exhausted() is False
+
+
+# ── degrade-not-abandon is the DEFAULT (the Dice-at-step-23 fix) ─────────────
+
+
+def test_over_budget_does_not_abandon_the_run_by_default(monkeypatch):
+    """Default (hard-stop OFF): blowing the cap must NOT abandon the run.
+
+    A multi-step wizard (Dice/iCIMS/Workday) needs far more than the ~22-25
+    steps $0.10 buys. exhausted() staying False keeps the loop filling on the
+    fast tier instead of failing the application at ~step 23.
+    """
+    monkeypatch.setattr(budget, "BUDGET_HARD_STOP", False)
+    budget.start_run(application_id="app-1", limit_usd=0.10)
+    budget.charge("gemini", "gemini-2.5-pro", 1_000_000, 0)  # $1.25, way over
+    assert budget.exhausted() is False           # run continues
+    assert budget.over_budget() is True          # ...but we KNOW we're over
+    assert budget.allow_deep(estimated_usd=0.001) is False  # deep tier stops
+
+
+def test_hard_stop_opt_in_makes_the_ceiling_terminal(monkeypatch):
+    monkeypatch.setattr(budget, "BUDGET_HARD_STOP", True)
+    budget.start_run(application_id="app-1", limit_usd=0.10)
+    budget.charge("gemini", "gemini-2.5-pro", 1_000_000, 0)
+    assert budget.exhausted() is True
+
+
+def test_over_budget_is_false_before_the_cap():
+    budget.start_run(application_id="app-1", limit_usd=0.10)
+    assert budget.over_budget() is False
+
+
+def test_over_budget_is_false_with_no_run():
+    assert budget.over_budget() is False
 
 
 # ── The governor: deep tier is a rationed exception ──────────────────────────

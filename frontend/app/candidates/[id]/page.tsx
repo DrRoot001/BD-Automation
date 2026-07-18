@@ -293,13 +293,22 @@ export default function CandidateDetailPage() {
     setProgressLogs([])
     processedLogsRef.current.clear()
     try {
-      await api.triggerApply(
-        id as string, 
+      const res = await api.triggerApply(
+        id as string,
         maxApps,
         past24Only ? '24h' : undefined,
         selectedPlatform || undefined
       )
-      toast.success(`Auto-Apply started for up to ${maxApps} applications.`)
+      // The backend pre-counts in-flight applications: when every slot is
+      // already taken the dispatched run will queue NOTHING (limit_reached).
+      // Showing a success toast for that reads as "the pipeline never started"
+      // — surface the backend's warning instead so the operator knows exactly
+      // what is blocking and that it self-clears.
+      if (res?.warning) {
+        toast.error(res.warning, { duration: 12000 })
+      } else {
+        toast.success(`Auto-Apply started for up to ${maxApps} applications.`)
+      }
     } catch (e: unknown) {
       const errorObj = e as { message?: string }
       toast.error(errorObj.message || 'Auto-Apply trigger failed.')

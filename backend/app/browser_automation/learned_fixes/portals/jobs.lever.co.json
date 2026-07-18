@@ -1,16 +1,17 @@
 {
   "_meta": {
     "host": "jobs.lever.co",
-    "updated": 1784233274,
-    "runs": 4,
+    "updated": 1784321313,
+    "runs": 8,
     "successes": 2
   },
   "ats": "www.remoterocketship.com",
   "notes": [
     "screenshot/dom capture failed: Page.screenshot: Target page, context or browser has been closed",
-    "wall-clock timeout after 1500s"
+    "wall-clock timeout after 1500s",
+    "DOM unchanged for 4 consecutive steps"
   ],
-  "last_outcome": "SUBMITTED",
+  "last_outcome": "STUCK",
   "working_selectors": {
     "upload_file": [
       "#resume-upload-input"
@@ -27,6 +28,15 @@
     ],
     "click": [
       "#btn-submit"
+    ]
+  },
+  "avoid_selectors": {
+    "click": [
+      "#btn-submit",
+      "ul.suggestions li:first-child, [class*='suggestion']"
+    ],
+    "fill_field": [
+      "input[name=\"cards[162a612f-df3a-42c7-9ed0-d67ba1d19b11][field1]\"][value=\"no\"]"
     ]
   },
   "flow": [
