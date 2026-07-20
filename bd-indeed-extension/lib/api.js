@@ -5,7 +5,7 @@
 import { DEFAULT_CONFIG } from '../config.js';
 
 export const DEFAULT_SETTINGS = {
-  apiBase: DEFAULT_CONFIG.apiBase || 'http://51.75.72.98/api',
+  apiBase: DEFAULT_CONFIG.apiBase || 'https://bd-autoamation.maverickslabs.io/api',
   geminiKey: DEFAULT_CONFIG.geminiKey || '',
   geminiModel: DEFAULT_CONFIG.geminiModel || 'gemini-3.5-flash',
   anthropicKey: DEFAULT_CONFIG.anthropicKey || '',

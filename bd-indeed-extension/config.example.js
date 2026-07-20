@@ -22,7 +22,7 @@ export const DEFAULT_CONFIG = {
   anthropicKey: '',
 
   // Backend API base — change if the backend isn't on localhost.
-  apiBase: 'http://51.75.72.98/api',
+  apiBase: 'https://bd-autoamation.maverickslabs.io/api',
 
   // Strong default password used when the extension CREATES an account on a job
   // portal (Workday/iCIMS/Taleo/etc.). The candidate's gmail password usually
