@@ -94,6 +94,21 @@ popup also has Pause / Skip job / Stop controls and a live activity log.
 > `localhost` / `*.supabase.co`? Add it to `host_permissions` in
 > `manifest.json` and reload the extension.
 
+## Packaging for Distribution
+
+You can package the extension into a ZIP file for easy distribution and deployment.
+
+Run the packaging script from the extension directory:
+```bash
+python3 package_extension.py
+```
+This generates a `bd-indeed-extension.zip` containing all the extension code. By default, it replaces the local config with a clean `config.example.js` mapping to `config.js` so that your private API keys or settings are **not** leaked in the zip file.
+
+To force including your local `config.js` with your active configuration, use the `--local` flag:
+```bash
+python3 package_extension.py --local
+```
+
 ## CSV format
 
 Any of these work:
