@@ -1,6 +1,6 @@
 # VPS Deployment & Conflict Resolution Complete: BD-Automator-Agent
 
-We have successfully deployed the entire application stack to the production VPS server, enabled SSL, secured cookie authorization, configured a high-performance local storage system (disabling Supabase Storage completely), and pushed all updates to GitHub on a clean feature branch.
+We have successfully deployed the entire application stack to the production VPS server, enabled SSL, secured cookie authorization, configured a high-performance local storage system (disabling Supabase Storage completely), shifted all authentication to a self-hosted PostgreSQL/JWT backend (disabling Supabase Auth completely), and pushed all updates to GitHub on a clean feature branch.
 
 ---
 
@@ -22,11 +22,17 @@ We have successfully deployed the entire application stack to the production VPS
    - **Nginx Static Proxying:** Added a proxy block in the VPS Nginx config mapping `/files` requests directly to FastAPI, and updated `resolveFileUrl` in `frontend/components/utils.ts` to allow `/files/` as a valid route.
    - **Zero Supabase Dependency:** Cleared out Supabase storage environment variables in `backend/.env`.
 
-4. **Restored Database Data:**
+4. **Self-Hosted Local Authentication Integration:**
+   - **Local Auth Fallback:** Implemented a full local authentication path in `/api/auth/login` and `/api/auth/me`. When Supabase credentials are not provided, it authenticates users directly against the local PostgreSQL `users` table.
+   - **TOFU Hashing:** Implemented a Trust-On-First-Use password hashing flow. Since user accounts exist in the restored PostgreSQL backup, the very first login attempt hashes their typed password and saves it to the database, securing the account for all subsequent attempts.
+   - **Bcrypt & JWT:** Uses the direct `bcrypt` package (with 72-byte safe truncation) for password hashing and validation to avoid `passlib` compatibility issues under Python 3.12, and issues locally-signed HS256 JWT tokens.
+   - **Decoded Locally:** The API token verification dependency `validate_supabase_token` now attempts to decode JWTs locally first using the VPS backend's `secret_key`, eliminating all round-trips to Supabase GoTrue APIs.
+
+5. **Restored Database Data:**
    - Created the missing system table `alembic_version` in the PostgreSQL database container.
    - Successfully imported the full data backup (7,425 jobs, 632 resumes, and 724 applications).
 
-5. **Git Branch & Conflict Resolution:**
+6. **Git Branch & Conflict Resolution:**
    - Created the feature branch `feature/vps-deployment-and-fixes`.
    - Ignored large backup assets/database dumps in `.gitignore`.
    - Merged `origin/main` into the feature branch.
@@ -45,6 +51,7 @@ We have successfully deployed the entire application stack to the production VPS
 - **HTTP to HTTPS Redirection:** `http://51.75.72.98` -> `301 Moved Permanently` to `https://51.75.72.98/`
 - **API Health Endpoint:** `https://51.75.72.98/api/health` -> `{"status":"ok", ...}`
 - **Readiness Probe Endpoint:** `https://51.75.72.98/api/health/ready` -> `{"database":"ok","redis":"ok"}`
+- **Local Login Verification:** `https://51.75.72.98/api/auth/login` -> returns `{"access_token": "...", "token_type": "bearer"}` successfully.
 
 ---
 
