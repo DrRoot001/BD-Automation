@@ -15,6 +15,28 @@ from app.models.user import User, UserRole
 from pydantic import EmailStr
 from fastapi import Body, Path
 
+from passlib.context import CryptContext
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
+
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    return pwd_context.verify(plain_password, hashed_password)
+
+def get_password_hash(password: str) -> str:
+    return pwd_context.hash(password)
+
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
+    to_encode = data.copy()
+    if expires_delta:
+        expire = datetime.utcnow() + expires_delta
+    else:
+        expire = datetime.utcnow() + timedelta(minutes=settings.access_token_expire_minutes)
+    to_encode.update({"exp": expire})
+    encoded_jwt = jwt.encode(to_encode, settings.secret_key, algorithm="HS256")
+    return encoded_jwt
+
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 settings = get_settings()
@@ -102,12 +124,34 @@ class MergeUsersRequest(BaseModel):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(payload: LoginRequest):
+async def login(payload: LoginRequest, db: AsyncSession = Depends(get_db)):
     if not settings.supabase_url or not settings.supabase_anon_key:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Supabase is not configured on the backend"
+        # Local database authentication fallback
+        query = select(User).where(User.email == payload.email)
+        result = await db.execute(query)
+        user = result.scalars().first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid credentials"
+            )
+        
+        if not user.hashed_password:
+            user.hashed_password = get_password_hash(payload.password)
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+        else:
+            if not verify_password(payload.password, user.hashed_password):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Invalid credentials"
+                )
+        
+        access_token = create_access_token(
+            data={"id": user.supabase_user_id, "email": user.email}
         )
+        return {"access_token": access_token, "token_type": "bearer"}
 
     client = get_http_client()
     resp = await client.post(
@@ -145,15 +189,20 @@ async def login(payload: LoginRequest):
 
 
 async def validate_supabase_token(authorization: str | None = Header(None)) -> dict:
-    """Validate a Supabase Bearer token.
-
-    1. Check Redis cache (TTL 120 s) — avoids a Supabase round-trip on every request.
-    2. On cache miss, call Supabase /auth/v1/user with retry logic.
-    3. On success, store payload in Redis for subsequent requests.
+    """Validate a Bearer token.
+    1. First attempt to decode locally using secret key.
+    2. Fallback to Supabase verification if configured.
     """
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing auth token")
     token = authorization.split(" ", 1)[1]
+
+    # Try to decode local HS256 token first
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=["HS256"])
+        return payload
+    except JWTError:
+        pass
 
     # ── Cache hit ────────────────────────────────────────────────────────────
     cached = await _get_cached_payload(token)
@@ -161,6 +210,9 @@ async def validate_supabase_token(authorization: str | None = Header(None)) -> d
         return cached
 
     # ── Cache miss — validate with Supabase ──────────────────────────────────
+    if not settings.supabase_url or not settings.supabase_anon_key:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
     client = get_http_client()
     max_retries = 2
     resp = None
@@ -264,10 +316,38 @@ async def create_bd_user(
     current_admin: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    if not settings.supabase_service_role_key:
-        raise HTTPException(status_code=500, detail="Supabase service role key not configured")
+    # Check if user already exists locally
+    query = select(User).where(User.email == payload.email)
+    result = await db.execute(query)
+    existing_user = result.scalars().first()
+    if existing_user:
+        raise HTTPException(status_code=400, detail="User with this email already exists")
 
     user_name = payload.name or payload.full_name or ""
+    user_role = UserRole.admin if payload.role == "admin" else UserRole.bd_user
+
+    if not settings.supabase_url or not settings.supabase_service_role_key:
+        # Create user locally only
+        import uuid
+        local_uuid = str(uuid.uuid4())
+        user = User(
+            supabase_user_id=local_uuid,
+            email=payload.email,
+            full_name=user_name,
+            role=user_role,
+            hashed_password=get_password_hash(payload.password),
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+
+        return {
+            "id": str(user.id),
+            "supabase_user_id": user.supabase_user_id,
+            "email": user.email,
+            "role": user.role.value if hasattr(user.role, 'value') else user.role,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+        }
 
     # create user in Supabase via Admin API
     async with AsyncClient() as client:
@@ -293,12 +373,12 @@ async def create_bd_user(
     supabase_user = resp.json()
 
     # create local mapping
-    user_role = UserRole.admin if payload.role == "admin" else UserRole.bd_user
     user = User(
         supabase_user_id=supabase_user.get("id"),
         email=supabase_user.get("email") or payload.email,
         full_name=user_name,
         role=user_role,
+        hashed_password=get_password_hash(payload.password),
     )
     db.add(user)
     await db.commit()
@@ -308,7 +388,7 @@ async def create_bd_user(
         "id": str(user.id),
         "supabase_user_id": user.supabase_user_id,
         "email": user.email,
-        "role": user.role,
+        "role": user.role.value if hasattr(user.role, 'value') else user.role,
         "created_at": user.created_at.isoformat() if user.created_at else None,
     }
 
@@ -400,7 +480,7 @@ async def update_user(
     if new_name is not None:
         update_data["user_metadata"] = {"full_name": new_name}
 
-    if update_data:
+    if update_data and settings.supabase_url and settings.supabase_service_role_key:
         async with AsyncClient() as client:
             resp = await client.put(
                 f"{settings.supabase_url}/auth/v1/admin/users/{user.supabase_user_id}",
@@ -455,22 +535,28 @@ async def update_user_password(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Update password in Supabase via Admin API
-    async with AsyncClient() as client:
-        resp = await client.put(
-            f"{settings.supabase_url}/auth/v1/admin/users/{user.supabase_user_id}",
-            headers={
-                "apikey": settings.supabase_service_role_key,
-                "Authorization": f"Bearer {settings.supabase_service_role_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "password": payload.password,
-            },
-            timeout=30.0,
-        )
-        if resp.status_code != 200:
-            raise HTTPException(status_code=resp.status_code, detail=f"Supabase password update error: {resp.text}")
+    # Update password locally
+    user.hashed_password = get_password_hash(payload.password)
+    db.add(user)
+    await db.commit()
+
+    # Update password in Supabase if configured
+    if settings.supabase_url and settings.supabase_service_role_key:
+        async with AsyncClient() as client:
+            resp = await client.put(
+                f"{settings.supabase_url}/auth/v1/admin/users/{user.supabase_user_id}",
+                headers={
+                    "apikey": settings.supabase_service_role_key,
+                    "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "password": payload.password,
+                },
+                timeout=30.0,
+            )
+            if resp.status_code != 200:
+                raise HTTPException(status_code=resp.status_code, detail=f"Supabase password update error: {resp.text}")
 
     return {"message": "Password updated successfully"}
 
@@ -491,19 +577,20 @@ async def delete_user(
     if user.supabase_user_id == current_admin.supabase_user_id:
         raise HTTPException(status_code=400, detail="Cannot delete your own admin account")
 
-    # 1. Delete from Supabase via Admin API
-    async with AsyncClient() as client:
-        resp = await client.delete(
-            f"{settings.supabase_url}/auth/v1/admin/users/{user.supabase_user_id}",
-            headers={
-                "apikey": settings.supabase_service_role_key,
-                "Authorization": f"Bearer {settings.supabase_service_role_key}",
-            },
-            timeout=10.0,
-        )
-        # 404 from Supabase is acceptable in case they are already deleted there
-        if resp.status_code not in (200, 404):
-            raise HTTPException(status_code=resp.status_code, detail=f"Supabase delete error: {resp.text}")
+    # 1. Delete from Supabase via Admin API if configured
+    if settings.supabase_url and settings.supabase_service_role_key:
+        async with AsyncClient() as client:
+            resp = await client.delete(
+                f"{settings.supabase_url}/auth/v1/admin/users/{user.supabase_user_id}",
+                headers={
+                    "apikey": settings.supabase_service_role_key,
+                    "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                },
+                timeout=10.0,
+            )
+            # 404 from Supabase is acceptable in case they are already deleted there
+            if resp.status_code not in (200, 404):
+                raise HTTPException(status_code=resp.status_code, detail=f"Supabase delete error: {resp.text}")
 
     # 2. Delete local mapping
     await db.delete(user)
@@ -554,18 +641,19 @@ async def merge_users(
         .values(user_id=target_user.id)
     )
     
-    # 3. Delete source user from Supabase via Admin API
-    async with AsyncClient() as client:
-        resp = await client.delete(
-            f"{settings.supabase_url}/auth/v1/admin/users/{source_user.supabase_user_id}",
-            headers={
-                "apikey": settings.supabase_service_role_key,
-                "Authorization": f"Bearer {settings.supabase_service_role_key}",
-            },
-            timeout=10.0,
-        )
-        if resp.status_code not in (200, 404):
-            raise HTTPException(status_code=resp.status_code, detail=f"Supabase delete error: {resp.text}")
+    # 3. Delete source user from Supabase via Admin API if configured
+    if settings.supabase_url and settings.supabase_service_role_key:
+        async with AsyncClient() as client:
+            resp = await client.delete(
+                f"{settings.supabase_url}/auth/v1/admin/users/{source_user.supabase_user_id}",
+                headers={
+                    "apikey": settings.supabase_service_role_key,
+                    "Authorization": f"Bearer {settings.supabase_service_role_key}",
+                },
+                timeout=10.0,
+            )
+            if resp.status_code not in (200, 404):
+                raise HTTPException(status_code=resp.status_code, detail=f"Supabase delete error: {resp.text}")
 
     # 4. Delete source user local mapping
     await db.delete(source_user)
