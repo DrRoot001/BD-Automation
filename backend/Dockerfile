@@ -23,11 +23,13 @@ ENV PYTHONUNBUFFERED=1
 # App lives at /app — we copy the entire repo root here so module2-5 are siblings of backend/
 WORKDIR /app
 
-# Install system dependencies required for runtime and Playwright
+# Install system dependencies required for runtime, Playwright, and Node.js
 RUN apt-get update && apt-get install -y \
     libpq5 \
     wget \
     gnupg \
+    nodejs \
+    npm \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy installed python packages from builder
@@ -39,6 +41,9 @@ RUN playwright install --with-deps chromium
 # Copy the entire repo (context = repo root) so module2, module3, module4, module5
 # are available next to backend/ — main.py inserts repo root into sys.path
 COPY . .
+
+# Install Node dependencies for the scraper module
+RUN npm install --prefix module2/scraper
 
 # Install root pyproject.toml so all local packages (module2-5, backend) are importable
 RUN pip install --no-deps .
