@@ -299,13 +299,14 @@ export const api = {
   mergeUsers: (sourceUserId: string, targetUserId: string) =>
     postJSON<{ message: string }>('/auth/admin/users/merge', { source_user_id: sourceUserId, target_user_id: targetUserId }),
 
-  getJobsCount: (params?: { candidateId?: string; search?: string; source?: string; jobType?: string; timeFilter?: string }) => {
+  getJobsCount: (params?: { candidateId?: string; search?: string; source?: string; jobType?: string; timeFilter?: string; category?: string }) => {
     const qs = new URLSearchParams()
     if (params?.candidateId) qs.set('candidate_id', params.candidateId)
     if (params?.search) qs.set('search', params.search)
     if (params?.source) qs.set('source', params.source)
     if (params?.jobType) qs.set('job_type', params.jobType)
     if (params?.timeFilter) qs.set('time_filter', params.timeFilter)
+    if (params?.category) qs.set('category', params.category)
     const query = qs.toString()
     return fetchJSON<{ total_count: number }>(`/jobs/count${query ? `?${query}` : ''}`)
   },
@@ -318,6 +319,7 @@ export const api = {
     source?: string; 
     jobType?: string; 
     timeFilter?: string; 
+    category?: string;
   }) => {
     const qs = new URLSearchParams()
     if (params?.skip != null) qs.set('skip', String(params.skip))
@@ -327,6 +329,7 @@ export const api = {
     if (params?.source) qs.set('source', params.source)
     if (params?.jobType) qs.set('job_type', params.jobType)
     if (params?.timeFilter) qs.set('time_filter', params.timeFilter)
+    if (params?.category) qs.set('category', params.category)
     const query = qs.toString()
     return fetchJSON<JobSummary[]>(`/jobs${query ? `?${query}` : ''}`)
   },

@@ -84,14 +84,20 @@ export default function JobsFeedPage() {
     staleTime: 5 * 60 * 1000,
   })
 
-  // Fetch Jobs
+  // Fetch Jobs with server-side filtering
   const {
     data: jobs,
     isLoading: jobsLoading,
     isError: jobsError,
     refetch: refetchJobs,
     isFetching
-  } = useJobs({ skip: page * PAGE_SIZE, limit: PAGE_SIZE, candidateId: selectedCandidateId || undefined })
+  } = useJobs({
+    skip: page * PAGE_SIZE,
+    limit: PAGE_SIZE,
+    candidateId: selectedCandidateId || undefined,
+    search: search || undefined,
+    category: selectedCategory || undefined,
+  })
 
   // Fetch selected candidate's applications to cross-reference
   const { data: applications } = useQuery({
@@ -115,7 +121,7 @@ export default function JobsFeedPage() {
   const rows = (jobs ?? []) as JobRow[]
   const filteredRows = rows
     .filter(job => !search || job.title.toLowerCase().includes(search.toLowerCase()) || job.company.toLowerCase().includes(search.toLowerCase()))
-    .filter(job => !selectedCategory || (job.job_category ?? '').toLowerCase() === selectedCategory)
+    .filter(job => !selectedCategory || (job.job_category ?? '').toLowerCase() === selectedCategory.toLowerCase())
 
   const notApplied = filteredRows.filter(job => !selectedCandidateId || !appliedJobIds.has(job.id))
   const appliedHiddenCount = filteredRows.length - notApplied.length

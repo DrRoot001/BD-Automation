@@ -5,6 +5,11 @@ interface UseJobsOptions {
   skip?: number
   limit?: number
   candidateId?: string
+  search?: string
+  source?: string
+  jobType?: string
+  timeFilter?: string
+  category?: string
 }
 
 export function useJobs(options: UseJobsOptions = {}) {

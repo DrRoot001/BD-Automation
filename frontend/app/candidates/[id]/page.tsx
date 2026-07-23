@@ -305,7 +305,7 @@ export default function CandidateDetailPage() {
       // — surface the backend's warning instead so the operator knows exactly
       // what is blocking and that it self-clears.
       if (res?.warning) {
-        toast.error(res.warning, { duration: 12000 })
+        toast.error(res.warning)
       } else {
         toast.success(`Auto-Apply started for up to ${maxApps} applications.`)
       }

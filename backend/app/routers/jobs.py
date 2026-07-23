@@ -499,9 +499,10 @@ async def get_jobs(
     source: Optional[str] = None,
     job_type: Optional[str] = None,
     time_filter: Optional[str] = None,
+    category: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
-    from sqlalchemy import select, or_, and_
+    from sqlalchemy import select, or_, and_, func
     from sqlalchemy.orm import defer
     from uuid import UUID
     from datetime import datetime, timezone, timedelta
@@ -526,6 +527,8 @@ async def get_jobs(
             query = query.where(Job.source.ilike(f"%{source}%"))
         if job_type:
             query = query.where(Job.job_type.ilike(f"%{job_type}%"))
+        if category:
+            query = query.where(func.lower(Job.job_category) == category.lower())
         if time_filter:
             now = datetime.now(timezone.utc)
             if time_filter == '24h':
@@ -643,6 +646,7 @@ async def get_jobs_count(
     source: Optional[str] = None,
     job_type: Optional[str] = None,
     time_filter: Optional[str] = None,
+    category: Optional[str] = None,
     db: AsyncSession = Depends(get_db)
 ):
     from sqlalchemy import select, func, or_, and_
@@ -668,6 +672,8 @@ async def get_jobs_count(
             query = query.where(Job.source.ilike(f"%{source}%"))
         if job_type:
             query = query.where(Job.job_type.ilike(f"%{job_type}%"))
+        if category:
+            query = query.where(func.lower(Job.job_category) == category.lower())
         if time_filter:
             now = datetime.now(timezone.utc)
             if time_filter == '24h':
