@@ -134,8 +134,9 @@ lever_*.png
 *.bak_before_*
 .env.bak.*
 
-# Chrome extension local secrets (copy config.example.js -> config.js and fill in)
+# Chrome extension local secrets and build outputs
 bd-indeed-extension/config.js
+bd-indeed-extension/*.zip
 
 # Local database backups and storage dumps
 local_backup/

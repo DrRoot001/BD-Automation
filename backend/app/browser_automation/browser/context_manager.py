@@ -1,4 +1,5 @@
 import os
+import sys
 import json
 import secrets
 import logging
@@ -284,7 +285,21 @@ class BrowserContextManager:
             # Use the real installed Chrome (channel="chrome") to get an authentic TLS fingerprint
             # that bypasses CloudFront/Akamai WAF bot detection which blocks bundled Chromium.
             # headless=False avoids the HeadlessChrome user-agent token and related signals.
-            headless = os.getenv("PLAYWRIGHT_HEADLESS", "false").lower() == "true"
+            # Fall back to headless=True if:
+            # 1. PLAYWRIGHT_HEADLESS or HEADLESS env is explicitly set to true, OR
+            # 2. Environment is production, OR
+            # 3. Running on Linux without a DISPLAY environment variable set.
+            raw_headless = os.getenv("PLAYWRIGHT_HEADLESS")
+            if raw_headless is None:
+                raw_headless = os.getenv("HEADLESS")
+
+            if raw_headless is not None:
+                headless = raw_headless.strip().lower() in ("true", "1", "yes")
+            else:
+                is_production = os.getenv("ENVIRONMENT", "").lower() == "production"
+                has_display = bool(os.getenv("DISPLAY"))
+                is_linux = sys.platform.startswith("linux")
+                headless = is_production or (is_linux and not has_display)
             # PLAYWRIGHT_SLOW_MO=250 inserts a 250ms pause between every Playwright
             # action (click, fill, etc.) so a human can actually watch the run.
             # Default 0 = full speed. Set when demoing or debugging visually.

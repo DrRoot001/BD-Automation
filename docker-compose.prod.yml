@@ -14,6 +14,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:BdAut0m%40t0r_Str0ng%21@db:5432/bd_automator
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=production
+      - PLAYWRIGHT_HEADLESS=true
     depends_on:
       - db
       - redis
@@ -56,6 +57,7 @@ services:
       - DATABASE_URL=postgresql+asyncpg://postgres:BdAut0m%40t0r_Str0ng%21@db:5432/bd_automator
       - REDIS_URL=redis://redis:6379/0
       - ENVIRONMENT=production
+      - PLAYWRIGHT_HEADLESS=true
     depends_on:
       - db
       - redis
